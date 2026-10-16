@@ -1,0 +1,72 @@
+name: Stage 1 prototype checks
+on:
+  push:
+    branches: [feature/stage1-research-prototype]
+  pull_request:
+    branches: [main]
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: stage1_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d stage1_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/stage1_test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create ephemeral researcher credential
+        run: |
+          token=$(openssl rand -hex 32)
+          echo "::add-mask::$token"
+          echo "RESEARCHER_API_TOKEN=$token" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      - name: Install backend
+        run: npm ci --prefix backend
+      - name: Install frontend
+        run: npm ci --prefix frontend
+      - name: Backend typecheck
+        run: npm run typecheck --prefix backend
+      - name: Frontend typecheck
+        run: npm run typecheck --prefix frontend
+      - name: Backend lint
+        run: npm run lint --prefix backend
+      - name: Undo/Redo reducer unit test
+        run: npm run test:undo-redo:unit --prefix backend
+      - name: Frontend lint
+        run: npm run lint --prefix frontend
+      - name: Build
+        run: |
+          npm run build --prefix backend
+          npm run build --prefix frontend
+      - name: Migrate and seed PostgreSQL
+        run: |
+          npm run db:migrate --prefix backend -- up
+          npm run db:seed:dev --prefix backend
+      - name: Start backend service
+        run: |
+          DATABASE_URL="$DATABASE_URL" node backend/dist/index.js > /tmp/stage1-backend.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:3000/api/health; then exit 0; fi
+            sleep 2
+          done
+          cat /tmp/stage1-backend.log
+          exit 1
+      - name: Stage1 integration test
+        run: npm run test:stage1:integration --prefix backend

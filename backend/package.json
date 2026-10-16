@@ -1,0 +1,35 @@
+{
+  "name": "research-mvp-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:migrate": "node-pg-migrate",
+    "db:seed:dev": "tsx src/scripts/seed-dev.ts",
+    "lint": "eslint src migrations",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write src migrations package.json tsconfig.json eslint.config.js",
+    "format:check": "prettier --check src migrations package.json tsconfig.json eslint.config.js",
+    "test:stage1:integration": "tsx src/scripts/verify-stage1.ts",
+    "test:undo-redo:unit": "tsx src/scripts/verify-undo-redo.ts"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "node-pg-migrate": "^8.0.3",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.18.0",
+    "@types/pg": "^8.15.5",
+    "eslint": "^10.11.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.42.0"
+  }
+}
