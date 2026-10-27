@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { apiFetch } from "./auth-client";
+import { apiFetch, uiText } from "./auth-client";
 
 type GoalMap = {
   id: string;
@@ -26,7 +26,7 @@ export default function Stage1GoalMapsPage() {
     } | null;
     if (!response.ok || !payload || !Array.isArray(payload.goalMaps)) {
       throw new Error(
-        payload?.message ?? "Goal Map一覧を取得できませんでした。",
+        payload?.message ?? "ゴールマップ一覧を取得できませんでした。",
       );
     }
     setGoalMaps(payload.goalMaps);
@@ -42,7 +42,7 @@ export default function Stage1GoalMapsPage() {
         } | null;
         if (!response.ok || !payload || !Array.isArray(payload.goalMaps)) {
           throw new Error(
-            payload?.message ?? "Goal Map一覧を取得できませんでした。",
+            payload?.message ?? "ゴールマップ一覧を取得できませんでした。",
           );
         }
         if (active) setGoalMaps(payload.goalMaps);
@@ -51,8 +51,8 @@ export default function Stage1GoalMapsPage() {
         if (active) {
           setError(
             loadError instanceof Error
-              ? loadError.message
-              : "Goal Map一覧を取得できませんでした。",
+              ? uiText(loadError.message)
+              : "ゴールマップ一覧を取得できませんでした。",
           );
         }
       })
@@ -81,14 +81,14 @@ export default function Stage1GoalMapsPage() {
         message?: string;
       } | null;
       if (!response.ok || !payload || typeof payload.id !== "string") {
-        throw new Error(payload?.message ?? "Goal Mapを作成できませんでした。");
+        throw new Error(payload?.message ?? "ゴールマップを作成できませんでした。");
       }
       window.location.assign(`/maps/${encodeURIComponent(payload.id)}`);
     } catch (createError) {
       setError(
         createError instanceof Error
-          ? createError.message
-          : "Goal Mapを作成できませんでした。",
+          ? uiText(createError.message)
+          : "ゴールマップを作成できませんでした。",
       );
       setBusy(false);
     }
@@ -102,8 +102,8 @@ export default function Stage1GoalMapsPage() {
     } catch (loadError) {
       setError(
         loadError instanceof Error
-          ? loadError.message
-          : "Goal Map一覧を取得できませんでした。",
+          ? uiText(loadError.message)
+          : "ゴールマップ一覧を取得できませんでした。",
       );
     } finally {
       setLoading(false);
@@ -115,7 +115,7 @@ export default function Stage1GoalMapsPage() {
       <header className="goal-map-page-heading">
         <div>
           <p className="eyebrow">研究者 / 教材管理</p>
-          <h1>Goal Map</h1>
+          <h1>ゴールマップ</h1>
           <p>
             教師用の完成マップを作成し、概念と関係を配置したあと、Kitとして登録します。
           </p>
@@ -131,7 +131,7 @@ export default function Stage1GoalMapsPage() {
       >
         <div>
           <p className="home-card-kicker">新規作成</p>
-          <h2 id="goal-map-create-title">Goal Mapを作る</h2>
+          <h2 id="goal-map-create-title">ゴールマップを作る</h2>
           <p>
             作成後にマップ編集画面が開きます。ConceptとLinkを編集し、最後にKit名を付けて登録してください。
           </p>
@@ -140,7 +140,7 @@ export default function Stage1GoalMapsPage() {
           className="goal-map-create-form"
           onSubmit={(event) => void createGoalMap(event)}
         >
-          <label htmlFor="goal-map-title">Goal Map名</label>
+          <label htmlFor="goal-map-title">ゴールマップ名</label>
           <div className="goal-map-create-control">
             <input
               id="goal-map-title"
@@ -174,7 +174,7 @@ export default function Stage1GoalMapsPage() {
         <div className="goal-map-list-heading">
           <div>
             <p className="home-card-kicker">保存済み</p>
-            <h2 id="goal-map-list-title">Goal Map一覧</h2>
+            <h2 id="goal-map-list-title">ゴールマップ一覧</h2>
           </div>
           <button
             type="button"
@@ -188,13 +188,13 @@ export default function Stage1GoalMapsPage() {
         {loading ? (
           <p role="status">読み込み中…</p>
         ) : goalMaps.length === 0 ? (
-          <p className="goal-map-empty">Goal Mapはまだありません。</p>
+          <p className="goal-map-empty">ゴールマップはまだありません。</p>
         ) : (
           <ul className="goal-map-list">
             {goalMaps.map((map) => (
               <li key={map.id} className="goal-map-list-item">
                 <div className="goal-map-list-item-main">
-                  <h3>{map.title || map.kitDefinitionName || "Goal Map"}</h3>
+                  <h3>{map.title || map.kitDefinitionName || "ゴールマップ"}</h3>
                   <p>
                     {map.conceptCount} Concept · {map.linkCount} Link
                     {map.kitDefinitionName

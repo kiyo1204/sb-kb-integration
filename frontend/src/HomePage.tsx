@@ -84,46 +84,12 @@ export default function HomePage({
         <div className="home-header-inner">
           <div className="home-brand-lockup">
             <p className="home-brand">研究用学習システム</p>
-            <p className="home-brand-caption">
-              Stage 1 · 再構成過程分析
-            </p>
           </div>
-          <span className="home-environment">Stage 1</span>
         </div>
       </header>
 
       <main className="home-main">
-        <div className="home-page-heading">
-          <p className="home-card-kicker">STAGE 1 </p>
-          <h1>学習フロー</h1>
-        </div>
-
-        <section className="home-flow" aria-label="学習者の4つの活動">
-          <ol className="home-flow-list">
-            <FlowStep
-              number="1" 
-              title="授業動画" 
-              detail="授業内容を視聴" 
-            />
-            <FlowStep
-              number="2"
-              title="スクラッチビルド"
-              detail="既有知識の表出"
-            />
-            <FlowStep 
-              number="3" 
-              title="キットビルド" 
-              detail="授業内容の理解" 
-            />
-            <FlowStep
-              number="4"
-              title="統合"
-              detail="自分のマップと統合"
-            />
-          </ol>
-        </section>
-
-        <div className="home-top-grid">
+        <div className={`home-top-grid${accessMode !== "researcher" ? " is-single" : ""}`}>
           <section
             className="home-card home-entry-card"
             aria-labelledby="home-entry-heading"
@@ -133,7 +99,7 @@ export default function HomePage({
                 <p className="home-card-kicker">参加者・研究者</p>
                 <h2 id="home-entry-heading">アクセスコードで開始</h2>
                 <p className="home-card-description">
-                  研究者から受け取ったコードを入力してください。学習者コードは割り当てられたSession専用です。
+                  研究者から受け取ったコードを入力してください。学習者コードは割り当てられたセッション専用です。
                 </p>
                 <form
                   className="home-access-form"
@@ -168,17 +134,16 @@ export default function HomePage({
               </>
             ) : accessMode === "researcher" ? (
               <>
-                <p className="home-card-kicker">研究者</p>
-                <h2 id="home-entry-heading">研究Session</h2>
+                <h2 id="home-entry-heading">研究セッション</h2>
                 <p className="home-card-description">
-                  Sessionを作成して学習者コードを発行します。分析とデータExportは学習者の作業完了後に行います。
+                  セッションを作成して学習者コードを発行します。分析とデータ出力は学習者の作業完了後に行います。
                 </p>
                 <a className="home-primary-button" href="/research/stage1/new">
-                  Stage 1 Sessionを作成
+                  セッションを作成
                   <span aria-hidden="true">→</span>
                 </a>
                 <a className="home-secondary-link" href="/research/goal-maps">
-                  Goal Mapを作成・管理
+                  ゴールマップを作成・管理
                   <span aria-hidden="true">→</span>
                 </a>
               </>
@@ -187,11 +152,11 @@ export default function HomePage({
                 <p className="home-card-kicker">学習者</p>
                 <h2 id="home-entry-heading">学習を再開</h2>
                 <p className="home-card-description">
-                  割り当てられたSessionを続けます。
+                  割り当てられたセッションを続けます。
                 </p>
                 {learnerSessionHref && (
                   <a className="home-primary-button" href={learnerSessionHref}>
-                    Sessionを開く <span aria-hidden="true">→</span>
+                    セッションを開く <span aria-hidden="true">→</span>
                   </a>
                 )}
               </>
@@ -206,80 +171,102 @@ export default function HomePage({
             )}
           </section>
 
-          <section
-            className="home-card home-system-card"
-            aria-labelledby="system-status-heading"
-          >
-            <div className="home-card-heading-row">
-              <div>
-                <h2 id="system-status-heading">システム状態</h2>
-                <p>MVPの接続状況</p>
+          {accessMode === "researcher" && (
+            <section
+              className="home-card home-system-card"
+              aria-labelledby="system-status-heading"
+            >
+              <div className="home-card-heading-row">
+                <div>
+                  <h2 id="system-status-heading">システム状態</h2>
+                  <p>MVPの接続状況</p>
+                </div>
+                <button
+                  className="home-refresh-button"
+                  type="button"
+                  disabled={health.api === "checking"}
+                  onClick={() => {
+                    setHealth({
+                      api: "checking",
+                      database: "checking",
+                      checkedAt: null,
+                    });
+                    setRefreshKey((current) => current + 1);
+                  }}
+                >
+                  再確認
+                </button>
               </div>
-              <button
-                className="home-refresh-button"
-                type="button"
-                disabled={health.api === "checking"}
-                onClick={() => {
-                  setHealth({
-                    api: "checking",
-                    database: "checking",
-                    checkedAt: null,
-                  });
-                  setRefreshKey((current) => current + 1);
-                }}
-              >
-                再確認
-              </button>
-            </div>
-            <div className="home-system-rows" aria-live="polite">
-              <StatusRow
-                label="API"
-                detail="Backend API / health check"
-                state={health.api}
-              />
-              <StatusRow
-                label="SQL"
-                detail="PostgreSQL database"
-                state={health.database}
-              />
-            </div>
-            <div className="home-last-check">
-              <span>最終確認</span>
-              <time dateTime={health.checkedAt ?? undefined}>
-                {health.checkedAt ? formatDate(health.checkedAt) : "確認中"}
-              </time>
-            </div>
-          </section>
+              <div className="home-system-rows" aria-live="polite">
+                <StatusRow
+                  label="API"
+                  detail="Backend API / health check"
+                  state={health.api}
+                />
+                <StatusRow
+                  label="SQL"
+                  detail="PostgreSQL database"
+                  state={health.database}
+                />
+              </div>
+              <div className="home-last-check">
+                <span>最終確認</span>
+                <time dateTime={health.checkedAt ?? undefined}>
+                  {health.checkedAt ? formatDate(health.checkedAt) : "確認中"}
+                </time>
+              </div>
+            </section>
+          )}
         </div>
 
-        <footer className="home-development-note">
-          学習者にはSession専用コードを渡してください。研究者コードは共有しないでください。
-        </footer>
+        {accessMode === "researcher" && <ResearchSessions />}
+
+        {accessMode !== "learner" && <footer className="home-development-note">学習者にはセッション専用コードを渡してください。研究者コードは共有しないでください。</footer>}
+
       </main>
     </div>
   );
 }
 
-function FlowStep({
-  number,
-  title,
-  detail,
-}: {
-  number: string;
-  title: string;
-  detail: string;
-}) {
-  return (
-    <li className="home-flow-step">
-      <span className="home-flow-number" aria-hidden="true">
-        {number}
-      </span>
-      <div>
-        <h2>{title}</h2>
-        <p>{detail}</p>
-      </div>
-    </li>
-  );
+type ResearchSession = {
+  id: string; participantCode: string | null; studyGroup: "EXPERIMENTAL" | "CONTROL" | null;
+  status: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED"; protocolKey: string;
+  currentStageType: string | null; currentStageOrder: number | null;
+  startedAt: string | null; completedAt: string | null;
+};
+
+const stageNames: Record<string, string> = { LESSON: "授業動画", PRIOR_MAP: "Scratch-Build", KB_MAP: "Kit-Build", INTEGRATION_MAP: "統合マップ", PRE_ASSESSMENT: "事前評価", SELF_STUDY: "自主学習", POST_ASSESSMENT: "事後評価" };
+
+function ResearchSessions() {
+  const [sessions, setSessions] = useState<ResearchSession[] | null>(null);
+  const [error, setError] = useState(false);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    apiFetch("/api/research/stage1/sessions", { signal: controller.signal }).then(async response => {
+      if (!response.ok) throw new Error("session list failed");
+      return await response.json() as { sessions: ResearchSession[] };
+    }).then(result => { if (!controller.signal.aborted) { setSessions(result.sessions); setError(false); } })
+      .catch(() => { if (!controller.signal.aborted) setError(true); });
+    return () => controller.abort();
+  }, [reload]);
+  return <section className="home-card research-session-list" aria-labelledby="research-sessions-heading">
+    <div className="home-card-heading-row"><div><h2 id="research-sessions-heading">セッション一覧</h2><p>新しいセッションから表示します。</p></div>
+      <button type="button" className="home-refresh-button" onClick={() => setReload(value => value + 1)}>更新</button></div>
+    {error && <p className="home-action-error" role="alert">一覧を取得できませんでした。接続を確認して更新してください。</p>}
+    {!sessions && !error && <p role="status">セッションを読み込んでいます…</p>}
+    {sessions?.length === 0 && <p>セッションはまだありません。</p>}
+    {sessions && sessions.length > 0 && <div className="research-session-table-wrap"><table className="research-session-table">
+      <thead><tr><th scope="col">参加者コード</th><th scope="col">群</th><th scope="col">状態</th><th scope="col">現在の活動</th><th scope="col">開始日時</th><th scope="col">完了日時</th><th scope="col">操作</th></tr></thead>
+      <tbody>{sessions.map(session => <tr key={session.id}>
+        <td>{session.participantCode || "—"}</td><td>{session.studyGroup === "EXPERIMENTAL" ? "実験群" : session.studyGroup === "CONTROL" ? "統制群" : "—"}</td>
+        <td>{session.status === "NOT_STARTED" ? "未開始" : session.status === "IN_PROGRESS" ? "進行中" : "完了"}</td>
+        <td>{session.status === "IN_PROGRESS" && session.currentStageType ? `STEP ${(session.currentStageOrder ?? 0) + 1}：${stageNames[session.currentStageType] ?? session.currentStageType}` : "—"}</td>
+        <td>{session.startedAt ? formatDate(session.startedAt) : "—"}</td><td>{session.completedAt ? formatDate(session.completedAt) : "—"}</td>
+        <td><a className="home-secondary-button" href={`/sessions/${session.id}`} aria-label={`${session.participantCode || "参加者コードなし"}のセッションを開く`}>開く</a></td>
+      </tr>)}</tbody>
+    </table></div>}
+  </section>;
 }
 
 function StatusRow({

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { apiFetch, downloadApiFile } from "./auth-client";
+import { apiFetch, downloadApiFile, uiText } from "./auth-client";
 import { ReadOnlyMapSnapshot, type HistoricalMapSnapshot } from "./MapPage";
 
 type Operation = {
@@ -44,6 +44,46 @@ const CATEGORIES = [
   { value:"V", label:"V — Valid：明確で妥当" },
 ] as const;
 
+const operationNames: Record<string, string> = { ADD_CONCEPT: "概念を追加", EDIT_CONCEPT: "概念を変更", MOVE_CONCEPT: "概念を移動", DELETE_CONCEPT: "概念を削除", ADD_LINK: "関係を追加", EDIT_LINK: "関係を変更", RECONNECT_LINK: "関係の接続を変更", DELETE_LINK: "関係を削除", IMPORT_KIT_CONCEPT: "キットの概念を追加", IMPORT_KIT_LINK: "キットの関係を追加", MERGE_CONCEPT: "概念を統合", UNDO: "操作を元に戻す", REDO: "操作をやり直す" };
+const operationName = (type: string) => operationNames[type] ?? `その他の操作（${type}）`;
+const mapName = (type: string) => ({ PRIOR: "Scratch-Build", KB: "Kit-Build", INTEGRATION: "統合マップ" } as Record<string,string>)[type] ?? type;
+const elapsed = (ms: number | null) => ms === null ? "不明" : `${Math.floor(ms / 60000)}分${Math.floor(ms / 1000) % 60}秒`;
+const limitationText: Record<string, string> = {
+  "Counts indicate operations, not learning quality.": "操作件数は学習の質を示すものではありません。",
+  "Kit usage in other non-import events requires provenance-specific analysis.": "インポート以外の操作におけるキットの使用には、由来に基づく分析が必要です。",
+  "Prior/lesson origin reflects observed map stages, not genuine pre-lesson knowledge.": "由来の区分は観察されたマップの活動に基づき、授業前の知識そのものを表すものではありません。",
+  "Maps without a supported initial snapshot cannot be replayed; sequence gaps or incomplete events produce partial replay.": "対応する初期状態のないマップは再生できません。操作の欠落や不完全な記録がある場合は一部だけ再生されます。",
+};
+
+function targetLabel(op: Operation, map: MapData | undefined, replay: HistoryReplay | null) {
+  const value = (op.after ?? op.before) as Record<string, unknown> | null;
+  const label = typeof value?.label === "string" ? value.label : undefined;
+  if (op.targetType === "CONCEPT") return `概念：${label ?? map?.concepts.find(item => item.id === op.targetId)?.label ?? op.targetId}`;
+  if (op.targetType === "LINK") {
+    const link = value && typeof value.sourceConceptId === "string" && typeof value.targetConceptId === "string" ? value : map?.links.find(item => item.id === op.targetId);
+    if (link && typeof link.sourceConceptId === "string" && typeof link.targetConceptId === "string") {
+      const concepts = [...(replay?.beforeState?.concepts ?? []), ...(replay?.afterState?.concepts ?? []), ...(map?.concepts ?? [])];
+      const name = (id: string) => concepts.find(item => item.id === id)?.label ?? id;
+      return `関係：${name(link.sourceConceptId)} → ${label ?? link.label ?? ""} → ${name(link.targetConceptId)}`;
+    }
+    return `関係：${label ?? op.targetId}`;
+  }
+  return `${op.targetType}：${op.targetId}`;
+}
+
+function compareSnapshots(before: HistoricalMapSnapshot, after: HistoricalMapSnapshot) {
+  const difference = <T extends { id: string }>(oldItems: T[], newItems: T[], signature: (item: T) => unknown) => {
+    const oldMap = new Map(oldItems.map(item => [item.id, JSON.stringify(signature(item))]));
+    const newMap = new Map(newItems.map(item => [item.id, JSON.stringify(signature(item))]));
+    const ids = new Set([...oldMap.keys(), ...newMap.keys()].filter(id => oldMap.get(id) !== newMap.get(id)));
+    return { ids, added: [...ids].filter(id => !oldMap.has(id)).length, removed: [...ids].filter(id => !newMap.has(id)).length, changed: [...ids].filter(id => oldMap.has(id) && newMap.has(id)).length };
+  };
+  return {
+    concepts: difference(before.concepts, after.concepts, item => [item.label, item.positionX, item.positionY, item.mergedIntoConceptId]),
+    links: difference(before.links, after.links, item => [item.label, item.sourceConceptId, item.targetConceptId]),
+  };
+}
+
 export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
   const [data,setData]=useState<Analysis|null>(null);
   const [selectedOperationId,setSelectedOperationId]=useState("");
@@ -63,7 +103,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
   const [status,setStatus]=useState("");
   const reload=useCallback(async()=>{
     const response=await apiFetch(`/api/research/stage1/sessions/${sessionId}/analysis`);
-    if(!response.ok)throw new Error("完了したStage 1 Sessionの分析データを取得できませんでした。");
+    if(!response.ok)throw new Error("完了した活動 1 セッションの分析データを取得できませんでした。");
     const next=(await response.json()) as Analysis;
     setData(next);
     if(!selectedMapId) {
@@ -74,7 +114,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
   useEffect(()=>{
     let mounted=true;
     apiFetch(`/api/research/stage1/sessions/${sessionId}/analysis`)
-      .then(async(r)=>{if(!r.ok)throw new Error("分析データを取得できませんでした。Sessionが完了しているか確認してください。");return (await r.json()) as Analysis;})
+      .then(async(r)=>{if(!r.ok)throw new Error("分析データを取得できませんでした。セッションが完了しているか確認してください。");return (await r.json()) as Analysis;})
       .then(d=>{if(mounted){setData(d);const first=d.maps.find(m=>m.type==="PRIOR"||m.type==="KB"||m.type==="INTEGRATION");if(first)setSelectedMapId(current=>current||first.id);}})
       .catch(e=>{if(mounted)setError(String(e instanceof Error?e.message:e));});
     return()=>{mounted=false;};
@@ -88,7 +128,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
     let active=true;
     apiFetch(`/api/research/stage1/sessions/${sessionId}/maps/${selectedMapId}/history?sequenceNumber=${historySequence}`)
       .then(async response=>{
-        if(!response.ok)throw new Error("選択したMapの履歴状態を取得できませんでした。");
+        if(!response.ok)throw new Error("選択したマップの履歴状態を取得できませんでした。");
         return await response.json() as HistoryReplay;
       })
       .then(value=>{if(active)setHistoryReplay(value);})
@@ -99,6 +139,8 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
 
   const operation=data?.operations.find(o=>o.id===selectedOperationId);
   const map=data?.maps.find(m=>m.id===selectedMapId);
+  const displayedReplay = historyReplay?.mapId === selectedMapId && historyReplay.sequenceNumber === historySequence ? historyReplay : null;
+  const changes = displayedReplay?.beforeState && displayedReplay.afterState ? compareSnapshots(displayedReplay.beforeState, displayedReplay.afterState) : null;
   const link=map?.links.find(l=>l.id===selectedLinkId);
   const labels=new Map(map?.concepts.map(c=>[c.id,c.label])??[]);
   const historicalOperations=(data?.operations??[]).filter(op=>
@@ -139,6 +181,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
     });
   }
   function selectReplaySequence(sequence:number){
+    if (sequence === historySequence) return;
     setHistoryLoading(true);
     setHistorySequence(sequence);
     const next=replayOperations[sequence-1];
@@ -146,15 +189,19 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
   }
   return (
     <main className="page stage1-analysis-page">
-      <section className="session-card">
-        <p className="eyebrow">STEP 5 / 研究者用・開発プロトタイプ</p>
-        <h1>再構成行動の分析</h1>
-        <p>Session：{sessionId} 参加者コード：{data?.session.participantCode??"—"}</p>
-        <p><button type="button" onClick={() => void downloadApiFile(`/api/research/sessions/${sessionId}/export`).catch(() => setError("JSONを取得できませんでした。"))}>生データJSON</button>
-          {" · "}<button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/operations.csv`).catch(() => setError("CSVを取得できませんでした。"))}>操作イベントCSV</button>
-          {" · "}<button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/evaluations.csv`).catch(() => setError("CSVを取得できませんでした。"))}>命題評価CSV</button>
-          {" · "}<button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/reflections.csv`).catch(() => setError("CSVを取得できませんでした。"))}>振り返りCSV</button>
-          {" · "}<a href={`/sessions/${sessionId}`}>Sessionへ戻る</a></p>
+      <section className="session-card stage1-analysis-header">
+        <div className="stage1-analysis-heading">
+          <p className="eyebrow">研究者用</p>
+          <h1>再構成行動の分析</h1>
+          <p>セッション：{sessionId} 参加者コード：{data?.session.participantCode??"—"}</p>
+        </div>
+        <div className="stage1-analysis-exports" role="group" aria-label="データ出力">
+          <button type="button" onClick={() => void downloadApiFile(`/api/research/sessions/${sessionId}/export`).catch(() => setError("JSONを取得できませんでした。"))}>生データJSON</button>
+          <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/operations.csv`).catch(() => setError("CSVを取得できませんでした。"))}>操作イベントCSV</button>
+          {data?.session.protocolKey === "STAGE1_4" && <><button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/evaluations.csv`).catch(() => setError("CSVを取得できませんでした。"))}>命題評価CSV</button>
+          <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/reflections.csv`).catch(() => setError("CSVを取得できませんでした。"))}>振り返りCSV</button></>}
+          <a href={`/sessions/${sessionId}`}>セッションへ戻る</a>
+        </div>
         {error&&<p className="session-error" role="alert">{error}</p>}
         {status&&<p role="status">{status}</p>}
       </section>
@@ -162,11 +209,11 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
         <>
           <section className="session-card">
             <h2>保存されたマップ</h2>
-            <p>既存のMap Editorを提出後read-onlyとして再利用します。完成形と操作履歴は別の情報です。</p>
+            <p>既存のマップ Editorを提出後read-onlyとして再利用します。完成形と操作履歴は別の情報です。</p>
             <div className="stage1-analysis-stats">
               {data.maps.map(m=>(
                 <div className="stage1-analysis-stat" key={m.id}>
-                  <strong>{m.researchRole??m.type}</strong>
+                  <strong>{mapName(m.type)}</strong>
                   <span>概念：{m.concepts.length} / 命題：{m.links.length}</span>
                   <a href={`/maps/${m.id}`}>完成マップを表示</a>
                 </div>
@@ -175,19 +222,19 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
           </section>
           <section className="session-card map-history-section">
             <h2>マップ履歴再生</h2>
-            <p>初期状態と操作イベントを順に適用した読み取り専用表示です。MOVE_CONCEPTは位置変更として表示します。</p>
-            <label>対象Map
+            <p>操作を選ぶと、その直前と直後のマップを読み取り専用で比較できます。</p>
+            <label>対象マップ
               <select value={selectedMapId} onChange={e=>{
                 setHistoryLoading(true);setSelectedMapId(e.target.value);setHistorySequence(0);setSelectedOperationId("");
               }}>
-                {replayMaps.map(m=><option key={m.id} value={m.id}>{m.researchRole??m.type} / {m.id}</option>)}
+                {replayMaps.map(m=><option key={m.id} value={m.id}>{mapName(m.type)} / {m.id}</option>)}
               </select>
             </label>
-            {map?.historyReplayStatus!=="AVAILABLE"&&(
-              <p role="status">このMapには初期状態が保存されていません。全体履歴は再生できません。</p>
+            {map && map.historyReplayStatus!=="AVAILABLE"&&(
+              <p role="status">このマップには初期状態が保存されていません。全体履歴は再生できません。</p>
             )}
-            {historyReplay&&historyReplay.status!=="REPLAYABLE"&&(
-              <p role="status">再生状態：{historyReplay.status} — {historyReplay.reason}</p>
+            {displayedReplay&&displayedReplay.status!=="REPLAYABLE"&&(
+              <p role="status">履歴を再生できません：{uiText(displayedReplay.reason ?? "理由を確認できません。")}</p>
             )}
             {historyLoading&&<p role="status">履歴状態を復元しています…</p>}
             {replayOperations.length>0&&(
@@ -198,9 +245,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
                     <button className={op.sequenceNumber===String(historySequence)?"is-selected":""}
                       type="button" key={op.id}
                       onClick={()=>selectReplaySequence(Number(op.sequenceNumber))}>
-                      #{op.sequenceNumber} / {op.operationType} / {op.targetType} {op.targetId}
-                      {op.relatedOperationLogId&&<> / 対象操作 {op.relatedOperationLogId}</>}
-                      {" · "}{new Date(op.serverTimestamp).toLocaleString()}
+                      <strong>#{op.sequenceNumber} {operationName(op.operationType)}</strong><span>{mapName(op.mapType)} · {targetLabel(op, map, op.id === selectedOperationId ? displayedReplay : null)}</span><span>{new Date(op.serverTimestamp).toLocaleString()} · 作業開始から {elapsed(op.elapsedMs)}</span>
                     </button>
                   ))}
                 </div>
@@ -218,29 +263,29 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
               <button type="button" disabled={historySequence>=replayOperations.length||historyLoading}
                 onClick={()=>selectReplaySequence(historySequence+1)}>次へ</button>
             </div>
-            {historyReplay?.operation&&(
+            {operation&&(
               <div className="map-history-operation">
-                <h3>選択中の操作：#{historyReplay.operation.sequenceNumber} / {historyReplay.operation.operationType}</h3>
-                <p>時刻：{new Date(historyReplay.operation.serverTimestamp).toLocaleString()} / 対象：{historyReplay.operation.targetType} {historyReplay.operation.targetId}</p>
-                {historyReplay.operation.relatedOperationLogId&&(
-                  <p>対象となった元操作ID：{historyReplay.operation.relatedOperationLogId}
-                    {" / "}{data.operations.find(op=>op.id===historyReplay.operation?.relatedOperationLogId)?.operationType??"操作種別不明"}
+                <h3>選択中の操作：#{operation.sequenceNumber} {operationName(operation.operationType)}</h3>
+                <p>{mapName(operation.mapType)} / {targetLabel(operation, map, displayedReplay)}<br/>時刻：{new Date(operation.serverTimestamp).toLocaleString()} / 作業開始から：{elapsed(operation.elapsedMs)}</p>
+                {operation.relatedOperationLogId&&(
+                  <p>対象となった元操作ID：{operation.relatedOperationLogId}
+                    {" / "}{operationName(data.operations.find(op=>op.id===operation.relatedOperationLogId)?.operationType??"不明")}
                   </p>
                 )}
-                <div className="stage1-analysis-compare">
-                  <div><h4>変更前の記録</h4><pre>{JSON.stringify(historyReplay.operation.before,null,2)}</pre></div>
-                  <div><h4>変更後の記録</h4><pre>{JSON.stringify(historyReplay.operation.after,null,2)}</pre></div>
-                </div>
+                <details><summary>変更前後の記録（JSON）</summary><div className="stage1-analysis-compare">
+                  <div><h4>変更前の記録</h4><pre>{JSON.stringify(operation.before,null,2)}</pre></div>
+                  <div><h4>変更後の記録</h4><pre>{JSON.stringify(operation.after,null,2)}</pre></div>
+                </div></details>
               </div>
             )}
-            {historyReplay?.status==="REPLAYABLE"&&historyReplay.beforeState&&historyReplay.afterState&&(
-              <div className="map-history-compare">
-                <ReadOnlyMapSnapshot snapshot={historyReplay.beforeState} title="選択操作の直前"/>
-                <ReadOnlyMapSnapshot snapshot={historyReplay.afterState} title="選択操作の直後"/>
-              </div>
+            {displayedReplay?.status==="REPLAYABLE"&&displayedReplay.beforeState&&displayedReplay.afterState&&changes&&(
+              <><p>色枠で変化を表示。概念：追加 {changes.concepts.added}・削除 {changes.concepts.removed}・変更 {changes.concepts.changed}、関係：追加 {changes.links.added}・削除 {changes.links.removed}・変更 {changes.links.changed}</p><div className="map-history-compare">
+                <ReadOnlyMapSnapshot snapshot={displayedReplay.beforeState} title="選択操作の直前" highlightedConceptIds={changes.concepts.ids} highlightedLinkIds={changes.links.ids}/>
+                <ReadOnlyMapSnapshot snapshot={displayedReplay.afterState} title="選択操作の直後" highlightedConceptIds={changes.concepts.ids} highlightedLinkIds={changes.links.ids}/>
+              </div></>
             )}
           </section>
-          <section className="session-card">
+          {data.session.protocolKey === "STAGE1_4" && <section className="session-card">
             <h2>記述的特徴量（v2）</h2>
             <p>「引き継ぎ」はSTEP 2に外化された知識であり、授業前の既有知識を意味しません。
               出現時点に基づいた操作的分類です。操作数を学習の質とみなしません。</p>
@@ -253,57 +298,26 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
                 </div>
               ))}
             </div>
-          </section>
+          </section>}
           <section className="session-card">
             <h2>操作データ</h2>
             <p>操作件数は学習の質を意味しません。</p>
             <div className="stage1-analysis-stats">
               {Object.entries(data.operationCounts).sort(([a],[b])=>a.localeCompare(b)).map(([name,n])=>(
-                <div className="stage1-analysis-stat" key={name}><strong>{name}</strong><span>{n}</span></div>
+                <div className="stage1-analysis-stat" key={name}><strong>{operationName(name)}</strong><span>{n}</span></div>
               ))}
             </div>
-            <h3>操作時系列</h3>
-            <div className="stage1-analysis-log">
-              {data.operations.filter(op=>replayMaps.some(m=>m.id===op.mapId)).map(op=>(
-                <button className={op.id===selectedOperationId?"is-selected":""}
-                  type="button" key={op.id}
-                  onClick={()=>{
-                    setHistoryLoading(true);setSelectedOperationId(op.id);
-                    setSelectedMapId(op.mapId);setHistorySequence(Number(op.sequenceNumber));
-                  }}>
-                  {op.mapType} / #{op.sequenceNumber} / {op.operationType}
-                  {op.relatedOperationLogId&&<> / 対象操作 {op.relatedOperationLogId}</>}
-                  {" · "}{new Date(op.serverTimestamp).toLocaleString()}
-                </button>
-              ))}
-              {data.operations.length===0&&<p>操作記録はありません。</p>}
-            </div>
-            {operation&&(
-              <div>
-                <h3>操作前後の記録：{operation.operationType}</h3>
-                <p>対象ID：{operation.targetId} / 作業開始から：
-                  {operation.elapsedMs==null?"不明":Math.round(operation.elapsedMs/1000)+"秒"}</p>
-                {operation.relatedOperationLogId&&(
-                  <p>対象となった元操作ID：{operation.relatedOperationLogId}
-                    {" / "}{data.operations.find(op=>op.id===operation.relatedOperationLogId)?.operationType??"操作種別不明"}
-                  </p>
-                )}
-                <div className="stage1-analysis-compare">
-                  <div><h4>変更前</h4><pre>{JSON.stringify(operation.before,null,2)}</pre></div>
-                  <div><h4>変更後</h4><pre>{JSON.stringify(operation.after,null,2)}</pre></div>
-                </div>
-              </div>
-            )}
           </section>
+          {data.session.protocolKey === "STAGE1_4" && <>
           <section className="session-card">
             <h2>命題の手動評価</h2>
-            <p>U/I/P/Vは0〜3点の順序尺度ではありません。Goal Mapにない命題でもVにできます。</p>
+            <p>U/I/P/Vは0〜3点の順序尺度ではありません。ゴールマップにない命題でもVにできます。</p>
             <p>ここでは現在残る命題の評価を登録します。過去の命題は操作履歴で確認できます。</p>
             <form className="stage1-form" onSubmit={saveEvaluation}>
               <label>評価対象マップ
-                <select value={selectedMapId} onChange={e=>{setSelectedMapId(e.target.value);setSelectedLinkId("");}} required>
+                <select value={selectedMapId} onChange={e=>{setSelectedMapId(e.target.value);setSelectedLinkId("");setSelectedOperationId("");setHistorySequence(0);}} required>
                   <option value="">選択してください</option>
-                  {replayMaps.map(m=><option key={m.id} value={m.id}>{m.researchRole??m.type}</option>)}
+                  {replayMaps.map(m=><option key={m.id} value={m.id}>{mapName(m.type)}</option>)}
                 </select>
               </label>
               <label>評価対象の時点
@@ -330,7 +344,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
                   <select value={ratingOperationId} onChange={e=>setRatingOperationId(e.target.value)} required>
                     <option value="">操作を選択してください</option>
                     {historicalOperations.map(o=><option key={o.id} value={o.id}>
-                      #{o.sequenceNumber} / {o.operationType} / {o.targetId}
+                      #{o.sequenceNumber} / {operationName(o.operationType)} / {o.targetId}
                     </option>)}
                   </select>
                   {ratedOperation && (
@@ -355,7 +369,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
           </section>
           <section className="session-card">
             <h2>振り返りメモ</h2>
-            <p>操作を選択しておくとその操作IDに紐付きます。操作未選択ならSession全体へのメモです。</p>
+            <p>操作を選択しておくとその操作IDに紐付きます。操作未選択ならセッション全体へのメモです。</p>
             <form className="stage1-form" onSubmit={saveReflection}>
               <label>記録者・報告者コード<input value={evaluatorCode} required maxLength={64} onChange={e=>setEvaluatorCode(e.target.value)}/></label>
               <label>振り返りの記録<textarea value={memo} required onChange={e=>setMemo(e.target.value)}/></label>
@@ -363,8 +377,9 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
             </form>
             <ul>{data.reflectionNotes.map(n=><li key={n.id}>{n.reportedByCode} / {n.operationLogId??"操作未指定"}：{n.noteText}</li>)}</ul>
           </section>
+          </>}
           <section className="session-card"><h2>解釈上の注意</h2>
-            <ul>{data.limitations.map(x=><li key={x}>{x}</li>)}</ul>
+            <ul>{data.limitations.map(x=><li key={x}>{limitationText[x] ?? x}</li>)}</ul>
           </section>
         </>
       )}

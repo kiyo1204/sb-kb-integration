@@ -1,5 +1,12 @@
 const key = "stage1-access-token";
 
+export function uiText(value: string) {
+  return value.replace(/Integration Map/g, "統合マップ").replace(/Goal Map/g, "ゴールマップ")
+    .replace(/SessionStage/g, "セッションの活動").replace(/Session flow/g, "セッション画面")
+    .replace(/Session/g, "セッション").replace(/Stage/g, "活動").replace(/Export/g, "出力")
+    .replace(/\bMap\b/g, "マップ");
+}
+
 export function getAccessToken() { return sessionStorage.getItem(key); }
 export function setAccessToken(token: string) { sessionStorage.setItem(key, token.trim()); }
 export function clearAccessToken() { sessionStorage.removeItem(key); }

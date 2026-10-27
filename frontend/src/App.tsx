@@ -101,9 +101,18 @@ export default function App() {
   if (!token) {
     return renderHomePage();
   }
+  if (principal === undefined) {
+    return (
+      <main className="page">
+        <p role="status">アクセスを確認しています…</p>
+      </main>
+    );
+  }
   return (
     <>
-      <div className="auth-toolbar">
+      <div
+        className={`auth-toolbar${principal?.role === "learner" ? " is-learner" : ""}`}
+      >
         <button
           type="button"
           onClick={() => {
@@ -115,18 +124,32 @@ export default function App() {
           アクセスコードを切り替える
         </button>
       </div>
-      <AuthenticatedApp homePage={renderHomePage()} />
+      <AuthenticatedApp
+        homePage={renderHomePage()}
+        principalRole={principal?.role}
+        learnerSessionId={principal?.role === "learner" ? principal.sessionId : undefined}
+      />
     </>
   );
 }
 
-function AuthenticatedApp({ homePage }: { homePage: ReactNode }) {
+function AuthenticatedApp({
+  homePage,
+  principalRole,
+  learnerSessionId,
+}: {
+  homePage: ReactNode;
+  principalRole?: string;
+  learnerSessionId?: string;
+}) {
   const mapId = window.location.pathname.match(/^\/maps\/([^/]+)\/?$/)?.[1];
   const sessionPath = window.location.pathname.match(
     /^\/sessions\/([^/]+)(?:\/([^/]+))?\/?$/,
   );
 
-  if (mapId) return <MapPage mapId={mapId} />;
+  if (mapId) {
+    return <MapPage mapId={mapId} isLearner={principalRole === "learner"} learnerSessionId={learnerSessionId} />;
+  }
   const analysisSessionId = window.location.pathname.match(
     /^\/research\/stage1\/([a-f0-9-]+)\/analysis\/?$/i,
   )?.[1];
@@ -153,6 +176,7 @@ function AuthenticatedApp({ homePage }: { homePage: ReactNode }) {
       <SessionFlowPage
         sessionId={sessionPath[1]}
         requestedStageSlug={sessionPath[2]}
+        isLearner={principalRole === "learner"}
       />
     );
   }

@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import { buildSessionRawExport, type SessionRawExport } from "./research-export.js";
 import { deriveStage1Features } from "./stage1-features.js";
 import { replayMapAt, type HistoryOperation, type MapHistorySnapshot } from "./map-history.js";
+import { principalOf } from "./access-control.js";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (value: unknown): value is string => typeof value === "string" && uuid.test(value);
@@ -18,12 +19,12 @@ type RawMap = Record<string, unknown> & {
   operationLogs: Array<Record<string, unknown>>;
 };
 
-async function sessionExport(pool: Pool, sessionId: string) {
+async function sessionExport(pool: Pool, sessionId: string, includeSix = false) {
   const client = await pool.connect();
   try {
     const result = await buildSessionRawExport(client, sessionId);
     if (result.kind !== "exported") return result;
-    if (result.value.session.protocolKey !== "STAGE1_4") {
+    if (result.value.session.protocolKey !== "STAGE1_4" && !includeSix) {
       return { kind: "wrong_protocol" as const };
     }
     return result;
@@ -69,10 +70,25 @@ async function assertSessionCompleted(client: PoolClient, id: string) {
 }
 
 export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
+  app.get("/api/research/stage1/sessions", async (_req, res) => {
+    if (principalOf(res).role !== "researcher") return res.status(403).json({ error: "forbidden" });
+    try {
+      const result = await pool.query(`SELECT s.id, s.participant_code AS "participantCode", s.study_group AS "studyGroup",
+        s.status, s.protocol_key AS "protocolKey", s.started_at AS "startedAt", s.completed_at AS "completedAt",
+        current_stage.stage_type AS "currentStageType", current_stage.order_index AS "currentStageOrder"
+        FROM sessions s LEFT JOIN LATERAL (SELECT stage_type, order_index FROM session_stages
+          WHERE session_id=s.id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1) current_stage ON s.status='IN_PROGRESS'
+        WHERE s.protocol_key IN ('STAGE1_4','STAGE1_6') ORDER BY s.created_at DESC, s.id DESC`);
+      return res.json({ sessions: result.rows });
+    } catch (error) {
+      console.error("Stage1 session list failed", error);
+      return res.status(500).json({ error: "session_list_failed" });
+    }
+  });
   app.get("/api/research/stage1/sessions/:sessionId/analysis", async (req,res) => {
     if (!isUuid(req.params.sessionId)) return res.status(400).json({error:"invalid_session_id"});
     try {
-      const result = await sessionExport(pool,req.params.sessionId);
+      const result = await sessionExport(pool,req.params.sessionId,true);
       if (result.kind !== "exported") return res.status(result.kind === "not_found" ? 404 : 409).json({error:result.kind});
       const raw = result.value;
       const operations = flattenOperations(raw);
@@ -104,7 +120,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
          FROM research_reflection_notes WHERE session_id=$1::uuid ORDER BY created_at,id`,[req.params.sessionId]);
       return res.json({
         session: raw.session, stages: raw.stages,
-        features: deriveStage1Features(raw),
+        features: raw.session.protocolKey === "STAGE1_4" ? deriveStage1Features(raw) : {},
         maps: analysisMaps,
         operations, operationCounts: counts,
         propositionEvaluations: evals.rows,
@@ -144,7 +160,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
           [sessionId],
         );
         if (
-          completedSession.rows[0]?.protocolKey !== "STAGE1_4" ||
+          !["STAGE1_4", "STAGE1_6"].includes(completedSession.rows[0]?.protocolKey ?? "") ||
           completedSession.rows[0]?.status !== "COMPLETED"
         ) {
           return res.status(409).json({ error: "session_not_completed" });
@@ -155,7 +171,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
            INNER JOIN session_stages AS stage ON stage.id = map.session_stage_id
            INNER JOIN sessions AS session ON session.id = stage.session_id
            WHERE map.id = $1::uuid AND stage.session_id = $2::uuid
-             AND session.protocol_key = 'STAGE1_4'
+             AND session.protocol_key IN ('STAGE1_4','STAGE1_6')
              AND map.type IN ('PRIOR', 'KB', 'INTEGRATION')`,
           [mapId, sessionId],
         );
@@ -261,7 +277,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
   app.get("/api/research/stage1/sessions/:sessionId/operations.csv", async (req,res) => {
     if (!isUuid(req.params.sessionId)) return res.status(400).json({error:"invalid_session_id"});
     try {
-      const result=await sessionExport(pool,req.params.sessionId);
+      const result=await sessionExport(pool,req.params.sessionId,true);
       if(result.kind!=="exported") return res.status(result.kind==="not_found"?404:409).json({error:result.kind});
       const operations=flattenOperations(result.value).map(op=>({
         sessionId:req.params.sessionId, participantCode:result.value.session.participantCode,

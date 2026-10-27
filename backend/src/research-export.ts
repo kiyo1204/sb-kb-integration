@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { assessmentSnapshot } from "./assessments.js";
 
 const EXPECTED_STAGE_TYPES = [
   "LESSON",
@@ -20,7 +21,7 @@ export type SessionRawExportWarning = {
 };
 
 export type SessionRawExport = {
-  exportVersion: 1;
+  exportVersion: 1 | 2;
   exportedAt: string;
   warnings: SessionRawExportWarning[];
   session: {
@@ -33,11 +34,14 @@ export type SessionRawExport = {
     participantCode: string | null;
     lessonVideoUrl: string | null;
     researchKitDefinitionId: string | null;
+    studyGroup?: string | null;
+    groupActivitySeconds?: number | null;
   };
   stages: Array<Record<string, unknown>>;
   maps: Array<Record<string, unknown>>;
   goalMaps: Array<Record<string, unknown>>;
   kitDefinitions: Array<Record<string, unknown>>;
+  assessment?: Awaited<ReturnType<typeof assessmentSnapshot>>;
 };
 
 export type SessionRawExportResult =
@@ -56,6 +60,8 @@ type SessionRow = {
   participantCode: string | null;
   lessonVideoUrl: string | null;
   researchKitDefinitionId: string | null;
+  studyGroup: string | null;
+  groupActivitySeconds: number | null;
 };
 
 type StageRow = {
@@ -78,6 +84,7 @@ type MapRow = {
   kitDefinitionId: string | null;
   createdAt: Date;
   submittedAt: Date | null;
+  autoSubmittedAt: Date | null;
 };
 
 type ConceptRow = {
@@ -128,13 +135,14 @@ export async function buildSessionRawExport(
             protocol_key AS "protocolKey",
             participant_code AS "participantCode",
             lesson_video_url AS "lessonVideoUrl",
-            research_kit_definition_id AS "researchKitDefinitionId"
+            research_kit_definition_id AS "researchKitDefinitionId",
+            study_group AS "studyGroup", group_activity_seconds AS "groupActivitySeconds"
      FROM sessions WHERE id = $1::uuid`,
     [sessionId],
   );
   const session = sessionResult.rows[0];
   if (!session) return { kind: "not_found" };
-  if (session.protocolKey !== "STAGE1_4") return { kind: "not_found" };
+  if (!["STAGE1_4", "STAGE1_6"].includes(session.protocolKey)) return { kind: "not_found" };
   if (session.status !== "COMPLETED") {
     return { kind: "not_completed", status: session.status };
   }
@@ -153,7 +161,8 @@ export async function buildSessionRawExport(
   if (
     !assertSameSet(
       stages.map((stage) => stage.stageType),
-      EXPECTED_STAGE_TYPES,
+      session.protocolKey === "STAGE1_4" ? EXPECTED_STAGE_TYPES :
+        ["LESSON", "PRIOR_MAP", "KB_MAP", "PRE_ASSESSMENT", session.studyGroup === "EXPERIMENTAL" ? "INTEGRATION_MAP" : "SELF_STUDY", "POST_ASSESSMENT"],
     ) ||
     stages.some(
       (stage, index) =>
@@ -165,7 +174,7 @@ export async function buildSessionRawExport(
   ) {
     return {
       kind: "inconsistent",
-      detail: "COMPLETED Stage 1 Session does not have four ordered completed stages.",
+      detail: "COMPLETED Session does not have the expected ordered completed stages.",
     };
   }
 
@@ -174,7 +183,7 @@ export async function buildSessionRawExport(
     `SELECT id, type, status, based_on_map_id AS "basedOnMapId",
             session_stage_id AS "sessionStageId",
             kit_definition_id AS "kitDefinitionId",
-            created_at AS "createdAt", submitted_at AS "submittedAt"
+            created_at AS "createdAt", submitted_at AS "submittedAt", auto_submitted_at AS "autoSubmittedAt"
      FROM maps
      WHERE session_stage_id = ANY($1::uuid[])
      ORDER BY session_stage_id ASC, created_at ASC, id ASC`,
@@ -260,7 +269,7 @@ export async function buildSessionRawExport(
         `SELECT id, type, status, based_on_map_id AS "basedOnMapId",
                 session_stage_id AS "sessionStageId",
                 kit_definition_id AS "kitDefinitionId",
-                created_at AS "createdAt", submitted_at AS "submittedAt"
+                created_at AS "createdAt", submitted_at AS "submittedAt", auto_submitted_at AS "autoSubmittedAt"
          FROM maps WHERE id = ANY($1::uuid[])
          ORDER BY id ASC`,
         [goalMapIds],
@@ -485,6 +494,7 @@ export async function buildSessionRawExport(
     kitDefinitionId: map.kitDefinitionId,
     createdAt: iso(map.createdAt),
     submittedAt: iso(map.submittedAt),
+    ...(session.protocolKey === "STAGE1_6" && map.type === "INTEGRATION" ? { autoSubmittedAt: iso(map.autoSubmittedAt) } : {}),
     concepts: conceptsByMap.get(map.id) ?? [],
     links: linksByMap.get(map.id) ?? [],
     operationLogs: logsByMap.get(map.id) ?? [],
@@ -586,10 +596,11 @@ export async function buildSessionRawExport(
       })),
   }));
 
+  const assessment = session.protocolKey === "STAGE1_6" ? await assessmentSnapshot(client, sessionId) : undefined;
   return {
     kind: "exported",
     value: {
-      exportVersion: 1,
+      exportVersion: session.protocolKey === "STAGE1_6" ? 2 : 1,
       exportedAt: exportedAt.toISOString(),
       warnings,
       session: {
@@ -602,6 +613,7 @@ export async function buildSessionRawExport(
         participantCode: session.participantCode,
         lessonVideoUrl: session.lessonVideoUrl,
         researchKitDefinitionId: session.researchKitDefinitionId,
+        ...(session.protocolKey === "STAGE1_6" ? { studyGroup: session.studyGroup, groupActivitySeconds: session.groupActivitySeconds } : {}),
       },
       stages: stages.map((stage) => ({
         id: stage.id,
@@ -624,6 +636,7 @@ export async function buildSessionRawExport(
         })),
       goalMaps: mapsWithProvenance.filter((map) => map.type === "GOAL"),
       kitDefinitions: kits,
+      ...(assessment ? { assessment } : {}),
     },
   };
 }
