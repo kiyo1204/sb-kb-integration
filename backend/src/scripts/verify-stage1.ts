@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
+import { createLearnerToken, storeLearnerToken } from "../access-control.js";
+import { getSession } from "../sessions.js";
 
 const apiBase=process.env.API_BASE_URL ?? "http://127.0.0.1:3000";
 const pool=new Pool({connectionString:process.env.DATABASE_URL});
@@ -29,6 +31,30 @@ async function api<T>(path:string,status:number,method="GET",body?:unknown):Prom
 }
 type Stage={id:string;stageType:string;status:string;mapId:string|null};
 type Session={id:string;status:string;protocolKey:string;stages:Stage[];learnerAccessToken:string};
+
+// The public creation API now creates only STAGE1_6. Keep the existing
+// four-stage compatibility checks using a legacy fixture in the test database.
+async function legacySession(participantCode:string):Promise<Session>{
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const result=await client.query<{id:string}>(
+      `INSERT INTO sessions (protocol_key,participant_code,lesson_video_url,research_kit_definition_id)
+       VALUES ('STAGE1_4',$1,'/lesson-test.mp4',$2::uuid) RETURNING id`,[participantCode,kitId]);
+    const id=result.rows[0]!.id;
+    for(const [index,type] of ["LESSON","PRIOR_MAP","KB_MAP","INTEGRATION_MAP"].entries())
+      await client.query("INSERT INTO session_stages (session_id,stage_type,order_index) VALUES ($1::uuid,$2,$3)",[id,type,index]);
+    const credential=createLearnerToken();
+    await storeLearnerToken(client,id,credential.hash);
+    const session=await getSession(client,id);
+    if(!session) throw new Error("Legacy session fixture could not be loaded");
+    await client.query("COMMIT");
+    return {...session,learnerAccessToken:credential.token};
+  }catch(error){
+    await client.query("ROLLBACK").catch(()=>undefined);
+    throw error;
+  }finally{client.release();}
+}
 type MapData={
  id:string;type:string;status:string;sessionProtocolKey:string|null;
  kitDefinitionId:string|null;basedOnMapId:string|null;
@@ -269,9 +295,10 @@ async function run(){
         name:`テスト用部分Kit ${randomUUID()}`,
         conceptIds:[firstGoalConcept.rows[0]!.id],linkIds:[],
       });
+    await api("/research/stage1/settings",200,"PUT",{minutes:10});
     await api("/research/stage1/sessions",422,"POST",{
       participantCode:"TEST-STAGE1-PARTIAL-KIT",
-      videoUrl:"/lesson-test.mp4",kitDefinitionId:incompleteKit.id,
+      videoUrl:"/lesson-test.mp4",kitDefinitionId:incompleteKit.id,studyGroup:"EXPERIMENTAL",
     });
     const retiredSessionId=randomUUID();
     await pool.query(
@@ -288,14 +315,10 @@ async function run(){
     await api(`/sessions/${retiredSessionId}`,404);
     await api(`/sessions/${retiredSessionId}/flow`,404);
     await api(`/sessions/${retiredSessionId}/start`,404,"POST",{});
-    const created=await api<Session>("/research/stage1/sessions",201,"POST",{
-      participantCode:"TEST-STAGE1",videoUrl:"/lesson-test.mp4",kitDefinitionId:kitId,
-    });
+    const created=await legacySession("TEST-STAGE1");
     await api(`/session-stages/${created.stages[0]!.id}/explanation`,404);
     await api(`/session-stages/${created.stages[0]!.id}/tutorial-map`,404,"POST",{});
-    const other=await api<Session>("/research/stage1/sessions",201,"POST",{
-      participantCode:"TEST-STAGE1-B",videoUrl:"/lesson-test.mp4",kitDefinitionId:kitId,
-    });
+    const other=await legacySession("TEST-STAGE1-B");
     await api(`/sessions/${other.id}/start`,200,"POST",{});
     await startStage(other,"LESSON");
     await api(`/session-stages/${stage(other,"LESSON").id}/complete`,200,"POST",{});
@@ -525,15 +548,19 @@ async function run(){
     );
     await runUndoRedo(learner.id,"REDO");
     await api(`/maps/${learner.id}/submit`,200,"POST");
+    await api(`/maps/${learner.id}`,404);
+    await api(`/maps/${learner.id}/undo-redo`,404);
+    currentToken=researcherToken;
     prior=await api<MapData>(`/maps/${learner.id}`,200);
     assert.equal(prior.status,"SUBMITTED");
     const submittedUndoState=await api<UndoRedoState>(`/maps/${learner.id}/undo-redo`,200);
     assert.equal(submittedUndoState.canUndo,false);
     assert.equal(submittedUndoState.canRedo,false);
-    await api(`/maps/${learner.id}/undo-redo`,409,"POST",{
+    await api(`/maps/${learner.id}/undo-redo`,403,"POST",{
       action:"UNDO",expectedSequenceNumber:submittedUndoState.sequenceNumber,
       idempotencyKey:randomUUID(),
     });
+    currentToken=created.learnerAccessToken;
 
     await startStage(created,"KB_MAP");
     const kb=await api<MapData>(`/kits/${kitId}/kb-map`,201,"POST",
@@ -614,9 +641,8 @@ async function run(){
     await api(`/maps/${kb.id}/submit`,200,"POST");
 
     await startStage(created,"INTEGRATION_MAP");
-    const integration=await api<MapData>(`/maps/${learner.id}/integration`,201,"POST",
-      {sessionStageId:stage(created,"INTEGRATION_MAP").id});
-    assert.equal(integration.basedOnMapId,learner.id);
+    const integration=await api<MapData>(`/session-stages/${stage(created,"INTEGRATION_MAP").id}/integration-map`,201,"POST");
+    assert.equal(integration.basedOnMapId,null);
     await api(`/research/stage1/sessions/${created.id}/maps/${integration.id}/history?sequenceNumber=0`,403);
     await api(`/maps/${integration.id}/kit-definition`,200,"PATCH",
       {kitDefinitionId:kitId});
