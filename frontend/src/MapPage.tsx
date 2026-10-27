@@ -1,14 +1,16 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type FormEvent,
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
+  type CSSProperties,
 } from "react";
-import { apiFetch } from "./auth-client";
+import { apiFetch, uiText } from "./auth-client";
 
 type Concept = {
   id: string;
@@ -335,13 +337,44 @@ type KitBuildFeedbackResult = {
   concepts: { matched: number; total: number };
   relations: { matched: number; total: number };
   message: string;
+  mapSignature: string;
 };
 
-type KitBuildFeedbackState =
-  | { signature: string; status: "ready"; result: KitBuildFeedbackResult }
-  | { signature: string; status: "error"; message: string };
+type KitBuildFeedbackState = {
+  result: KitBuildFeedbackResult;
+  verifiedSignature: string | null;
+  requestId: number;
+};
 
-type KitBuildFeedbackDisplay = KitBuildFeedbackState | { status: "loading" };
+type KitFeedbackDialog =
+  | { status: "loading" }
+  | { status: "result"; fromSubmission: boolean }
+  | { status: "error"; message: string };
+
+type KitFeedbackFreshness = "current" | "stale" | "saving" | "unknown";
+
+function kitMapSignature(map: MapResponse): string {
+  const byId = (a: { id: string }, b: { id: string }) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  return JSON.stringify([
+    map.id,
+    map.kitDefinitionId,
+    [...map.concepts].sort(byId).map(({ id, label }) => [id, label]),
+    [...map.links].sort(byId).map(({ id, label, sourceConceptId, targetConceptId }) => [
+      id, label, sourceConceptId, targetConceptId,
+    ]),
+  ]);
+}
+
+function isKitBuildFeedback(value: unknown): value is KitBuildFeedbackResult {
+  if (typeof value !== "object" || value === null) return false;
+  const result = value as Partial<KitBuildFeedbackResult>;
+  return typeof result.configurationComplete === "boolean" &&
+    typeof result.matched === "boolean" && typeof result.message === "string" &&
+    typeof result.mapSignature === "string" &&
+    Number.isInteger(result.concepts?.matched) && Number.isInteger(result.concepts?.total) &&
+    Number.isInteger(result.relations?.matched) && Number.isInteger(result.relations?.total);
+}
 
 type LoadState =
   | { status: "loading" }
@@ -355,15 +388,35 @@ type LoadState =
   | { status: "error"; message: string };
 
 type SessionFlowResponse = {
-  session: { status: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED" };
-  currentStage: { id: string; stageType: string } | null;
+  session: { status: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED"; protocolKey: string; groupActivitySeconds: number | null };
+  serverNow: string;
+  currentStage: { id: string; stageType: string; startedAt: string | null } | null;
   stages: { id: string; status: "PENDING" | "IN_PROGRESS" | "COMPLETED" }[];
 };
 
-export default function MapPage({ mapId }: { mapId: string }) {
+function stageDisplayName(type: string) {
+  return ({ LESSON: "授業動画", PRIOR_MAP: "Scratch-Build", KB_MAP: "Kit-Build", INTEGRATION_MAP: "統合マップ", PRE_ASSESSMENT: "事前評価", POST_ASSESSMENT: "事後評価", SELF_STUDY: "自主学習" } as Record<string, string>)[type] ?? type;
+}
+
+function mapDisplayName(type: MapResponse["type"]) {
+  return ({ GOAL: "ゴールマップ", PRIOR: "Scratch-Build マップ", KB: "Kit-Build マップ", INTEGRATION: "統合マップ" })[type];
+}
+
+export default function MapPage({
+  mapId,
+  isLearner = false,
+  learnerSessionId,
+}: {
+  mapId: string;
+  isLearner?: boolean;
+  learnerSessionId?: string;
+}) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [integrationDeadline, setIntegrationDeadline] = useState<number | null>(null);
   const [kitBuildFeedback, setKitBuildFeedback] =
     useState<KitBuildFeedbackState | null>(null);
+  const [kitFeedbackChecking, setKitFeedbackChecking] = useState(false);
+  const [kitFeedbackDialog, setKitFeedbackDialog] = useState<KitFeedbackDialog | null>(null);
   const [undoRedoState, setUndoRedoState] = useState<UndoRedoState | null>(null);
   const [undoRedoBusy, setUndoRedoBusy] = useState(false);
   const [undoRedoFeedback, setUndoRedoFeedback] = useState<string | null>(null);
@@ -383,28 +436,58 @@ export default function MapPage({ mapId }: { mapId: string }) {
     useState<PositionSaveFeedback | null>(null);
   const mapEditorMutationsRef = useRef({ inFlight: 0, failed: false });
   const undoRedoRequestRef = useRef(0);
-  const kitFeedbackMapId =
-    state.status === "success" && state.map.type === "KB" ? state.map.id : null;
+  const kitFeedbackRequestRef = useRef(0);
   const kitFeedbackSignature =
     state.status === "success" && state.map.type === "KB"
-      ? JSON.stringify([
-          state.map.id,
-          state.map.concepts.map(({ id, label }) => [id, label]),
-          state.map.links.map(
-            ({ id, label, sourceConceptId, targetConceptId }) => [
-              id,
-              label,
-              sourceConceptId,
-              targetConceptId,
-            ],
-          ),
-        ])
+      ? kitMapSignature(state.map)
       : null;
-  const currentKitBuildFeedback: KitBuildFeedbackDisplay =
-    kitFeedbackSignature &&
-    kitBuildFeedback?.signature === kitFeedbackSignature
-      ? kitBuildFeedback
-      : { status: "loading" };
+  const kitFeedbackFreshness: KitFeedbackFreshness =
+    kitBuildFeedback &&
+    (kitBuildFeedback.result.mapSignature !== kitFeedbackSignature ||
+      (kitBuildFeedback.verifiedSignature !== null &&
+        kitBuildFeedback.result.mapSignature !== kitBuildFeedback.verifiedSignature))
+      ? "stale"
+      : mapEditorSaveStatus === "saving" || undoRedoBusy
+        ? "saving"
+        : mapEditorSaveStatus === "error" || !kitBuildFeedback?.verifiedSignature
+          ? "unknown"
+          : "current";
+
+  async function fetchCurrentKitMapSignature(targetMapId: string): Promise<string> {
+    const response = await apiFetch(`/api/maps/${encodeURIComponent(targetMapId)}/kit-graph-signature`);
+    if (!response.ok) throw new Error("マップの状態を確認できませんでした。");
+    const result = (await response.json()) as { mapSignature?: unknown };
+    if (typeof result.mapSignature !== "string") {
+      throw new Error("マップの状態を確認できませんでした。");
+    }
+    return result.mapSignature;
+  }
+
+  async function checkKitBuildFeedback() {
+    if (state.status !== "success" || state.map.type !== "KB" || kitFeedbackChecking || submitting) return;
+    const targetMapId = state.map.id;
+    const requestId = ++kitFeedbackRequestRef.current;
+    setKitFeedbackChecking(true);
+    setKitFeedbackDialog({ status: "loading" });
+    try {
+      const response = await apiFetch(`/api/maps/${encodeURIComponent(targetMapId)}/kit-feedback`);
+      const result: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isKitBuildFeedback(result)) throw new Error("feedback request failed");
+      const verifiedSignature = await fetchCurrentKitMapSignature(targetMapId).catch(() => null);
+      if (requestId !== kitFeedbackRequestRef.current) return;
+      setKitBuildFeedback({ result, verifiedSignature, requestId });
+      setKitFeedbackDialog({ status: "result", fromSubmission: false });
+    } catch {
+      if (requestId === kitFeedbackRequestRef.current) {
+        setKitFeedbackDialog({
+          status: "error",
+          message: "一致状況を確認できませんでした。接続を確認してもう一度お試しください。",
+        });
+      }
+    } finally {
+      if (requestId === kitFeedbackRequestRef.current) setKitFeedbackChecking(false);
+    }
+  }
 
   const reloadUndoRedoState = useCallback(
     async (targetMapId = mapId) => {
@@ -467,7 +550,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       action === "UNDO" ? undoRedoState?.undoOperation : undoRedoState?.redoOperation;
     if (
       !currentMap ||
-      currentMap.sessionProtocolKey !== "STAGE1_4" ||
+      ! ["STAGE1_4", "STAGE1_6"].includes(currentMap.sessionProtocolKey ?? "") ||
       (currentMap.type !== "PRIOR" &&
         currentMap.type !== "KB" &&
         currentMap.type !== "INTEGRATION") ||
@@ -509,8 +592,8 @@ export default function MapPage({ mapId }: { mapId: string }) {
         await reloadMapFromServer().catch(() => undefined);
         setUndoRedoFeedback(
           response.status === 409
-            ? "履歴が更新されました。現在のMapを再取得しました。"
-            : "操作を適用できませんでした。現在のMapを再取得しました。",
+            ? "履歴が更新されました。現在のマップを再取得しました。"
+            : "操作を適用できませんでした。現在のマップを再取得しました。",
         );
         return;
       }
@@ -519,7 +602,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       setUndoRedoFeedback(action === "UNDO" ? "操作を元に戻しました。" : "操作をやり直しました。");
     } catch {
       await reloadMapFromServer().catch(() => undefined);
-      setUndoRedoFeedback("Undo/Redoの結果を確認できませんでした。Mapを再読み込みしてください。");
+      setUndoRedoFeedback("Undo/Redoの結果を確認できませんでした。マップを再読み込みしてください。");
     } finally {
       setUndoRedoBusy(false);
       setMapEditorSaveStatus("saved");
@@ -533,6 +616,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
         state.map.type !== "KB" &&
         state.map.type !== "INTEGRATION") ||
       state.map.status !== "DRAFT" ||
+      (state.map.type === "INTEGRATION" && state.map.sessionProtocolKey === "STAGE1_6") ||
       submitting ||
       positionSaving ||
       mergingConcepts
@@ -542,9 +626,9 @@ export default function MapPage({ mapId }: { mapId: string }) {
 
     const mapLabel =
       state.map.type === "KB"
-        ? "KB Map"
+        ? "KB マップ"
         : state.map.type === "INTEGRATION"
-          ? "Integration Map"
+          ? "統合マップ"
           : "学習者マップ（Scratch-Build）";
     if (
       !window.confirm(`提出後はこの${mapLabel}を編集できません。提出しますか？`)
@@ -552,6 +636,8 @@ export default function MapPage({ mapId }: { mapId: string }) {
       return;
     }
 
+    const submissionFeedbackRequestId = ++kitFeedbackRequestRef.current;
+    setKitFeedbackChecking(false);
     setSubmitting(true);
     setSubmitFeedback({ type: "saving", message: `${mapLabel}を提出中…` });
 
@@ -563,18 +649,32 @@ export default function MapPage({ mapId }: { mapId: string }) {
 
       if (!response.ok) {
         const errorBody = (await response.json().catch(() => null)) as {
+          error?: unknown;
           message?: unknown;
+          feedback?: unknown;
         } | null;
         const message =
           response.status === 404
-            ? "Mapが見つからないため、提出できませんでした。"
+            ? "マップが見つからないため、提出できませんでした。"
             : response.status === 409 && typeof errorBody?.message !== "string"
               ? `この${mapLabel}は既に提出されています。状態を再取得しました。`
               : typeof errorBody?.message === "string"
-                ? errorBody.message
+                ? uiText(errorBody.message)
                 : `${mapLabel}を提出できませんでした。時間をおいて再度お試しください。`;
 
-        if (response.status === 409) {
+        if (response.status === 409 && errorBody?.error === "kit_build_not_matched" &&
+            isKitBuildFeedback(errorBody.feedback)) {
+          await reloadMapFromServer().catch(() => null);
+          const verifiedSignature = await fetchCurrentKitMapSignature(state.map.id).catch(() => null);
+          setKitBuildFeedback({
+            result: errorBody.feedback,
+            verifiedSignature,
+            requestId: submissionFeedbackRequestId,
+          });
+          setKitFeedbackDialog({ status: "result", fromSubmission: true });
+        } else if (response.status === 409 && errorBody?.error === "kit_build_not_matched") {
+          setKitFeedbackDialog({ status: "error", message: "提出時の一致状況を確認できませんでした。もう一度お試しください。" });
+        } else if (response.status === 409) {
           await reloadMapFromServer().catch(() => undefined);
         }
         setSubmitFeedback({ type: "error", message });
@@ -589,8 +689,14 @@ export default function MapPage({ mapId }: { mapId: string }) {
         typeof submittedMap.submittedAt !== "string"
       ) {
         throw new Error(
-          "提出結果を確認できませんでした。Mapを再読み込みしてください。",
+          "提出結果を確認できませんでした。マップを再読み込みしてください。",
         );
+      }
+
+      if (isLearner && learnerSessionId) {
+        setState({ status: "loading" });
+        window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId)}`);
+        return;
       }
 
       setState((current) =>
@@ -616,7 +722,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
         message:
           error instanceof Error
             ? error.message
-            : `${mapLabel}を提出できませんでした。Mapを再読み込みしてください。`,
+            : `${mapLabel}を提出できませんでした。マップを再読み込みしてください。`,
       });
     } finally {
       setSubmitting(false);
@@ -766,7 +872,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
         response.status === 404
           ? "Conceptが見つからないため、labelを保存できませんでした。"
           : typeof errorBody?.message === "string"
-            ? errorBody.message
+            ? uiText(errorBody.message)
             : "Conceptのlabelを保存できませんでした。時間をおいて再度お試しください。";
 
       throw new Error(message);
@@ -779,7 +885,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       updated.label !== label
     ) {
       throw new Error(
-        "保存結果を確認できませんでした。Mapを再読み込みして状態を確認してください。",
+        "保存結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
@@ -820,9 +926,9 @@ export default function MapPage({ mapId }: { mapId: string }) {
       } | null;
       const message =
         response.status === 404
-          ? "Conceptが見つからないため、削除できませんでした。Mapを再読み込みしてください。"
+          ? "Conceptが見つからないため、削除できませんでした。マップを再読み込みしてください。"
           : typeof errorBody?.message === "string"
-            ? errorBody.message
+            ? uiText(errorBody.message)
             : "Conceptを削除できませんでした。時間をおいて再度お試しください。";
 
       throw new Error(message);
@@ -831,7 +937,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
     const deleted = (await response.json()) as { id?: unknown };
     if (deleted.id !== conceptId) {
       throw new Error(
-        "削除結果を確認できませんでした。Mapを再読み込みして状態を確認してください。",
+        "削除結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
@@ -882,8 +988,8 @@ export default function MapPage({ mapId }: { mapId: string }) {
         } | null;
         throw new Error(
           typeof errorBody?.message === "string"
-            ? errorBody.message
-            : "ConceptをMergeできませんでした。Mapを再読み込みしてください。",
+            ? uiText(errorBody.message)
+            : "ConceptをMergeできませんでした。マップを再読み込みしてください。",
         );
       }
 
@@ -913,7 +1019,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
 
       if (!validResult) {
         throw new Error(
-          "Merge結果を確認できませんでした。Mapを再読み込みしてください。",
+          "Merge結果を確認できませんでした。マップを再読み込みしてください。",
         );
       }
 
@@ -953,7 +1059,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       throw error instanceof Error
         ? error
         : new Error(
-            "ConceptをMergeできませんでした。Mapを再読み込みしてください。",
+            "ConceptをMergeできませんでした。マップを再読み込みしてください。",
           );
     } finally {
       setMergingConcepts(false);
@@ -969,7 +1075,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       !currentMap ||
       (currentMap.type !== "PRIOR" && currentMap.type !== "INTEGRATION")
     ) {
-      throw new Error("Mapを読み込んでからConceptを追加してください。");
+      throw new Error("マップを読み込んでからConceptを追加してください。");
     }
 
     const response = await apiFetch(
@@ -993,9 +1099,9 @@ export default function MapPage({ mapId }: { mapId: string }) {
       } | null;
       throw new Error(
         response.status === 404
-          ? "Mapが見つからないため、Conceptを保存できませんでした。"
+          ? "マップが見つからないため、Conceptを保存できませんでした。"
           : typeof errorBody?.message === "string"
-            ? errorBody.message
+            ? uiText(errorBody.message)
             : "Conceptを保存できませんでした。時間をおいて再度お試しください。",
       );
     }
@@ -1010,7 +1116,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       typeof created.updatedAt !== "string"
     ) {
       throw new Error(
-        "保存結果を確認できませんでした。Mapを再読み込みして状態を確認してください。",
+        "保存結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
@@ -1054,11 +1160,11 @@ export default function MapPage({ mapId }: { mapId: string }) {
       } | null;
       const message =
         response.status === 404
-          ? "Mapまたは選択したConceptが見つかりません。Mapを再読み込みしてください。"
+          ? "マップまたは選択したConceptが見つかりません。マップを再読み込みしてください。"
           : response.status === 422
-            ? "sourceとtargetはこのMap内のConceptを選んでください。"
+            ? "sourceとtargetはこのマップ内のConceptを選んでください。"
             : typeof errorBody?.message === "string"
-              ? errorBody.message
+              ? uiText(errorBody.message)
               : "Linkを保存できませんでした。時間をおいて再度お試しください。";
 
       throw new Error(message);
@@ -1074,7 +1180,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       typeof created.createdAt !== "string"
     ) {
       throw new Error(
-        "保存結果を確認できませんでした。Mapを再読み込みして状態を確認してください。",
+        "保存結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
@@ -1106,7 +1212,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
         : undefined;
     if (!kitLink || kitLink.used) {
       throw new Error(
-        "未使用のKit Linkを選択してください。Mapを再読み込みしてください。",
+        "未使用のKit Linkを選択してください。マップを再読み込みしてください。",
       );
     }
 
@@ -1129,8 +1235,8 @@ export default function MapPage({ mapId }: { mapId: string }) {
       } | null;
       throw new Error(
         typeof errorBody?.message === "string"
-          ? errorBody.message
-          : "Kit LinkからLinkを作成できませんでした。Mapを再読み込みしてください。",
+          ? uiText(errorBody.message)
+          : "Kit LinkからLinkを作成できませんでした。マップを再読み込みしてください。",
       );
     }
 
@@ -1147,7 +1253,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       typeof created.createdAt !== "string"
     ) {
       throw new Error(
-        "保存結果を確認できませんでした。Mapを再読み込みして状態を確認してください。",
+        "保存結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
@@ -1180,14 +1286,14 @@ export default function MapPage({ mapId }: { mapId: string }) {
       state.status !== "success" ||
       state.map.type !== "INTEGRATION"
     ) {
-      throw new Error("Kit Importに対応したMapを読み込んでください。");
+      throw new Error("Kit Importに対応したマップを読み込んでください。");
     }
     const kitLink = state.map.kitLinks.find(
       (item) => item.kitLinkItemId === kitLinkItemId,
     );
     if (!kitLink || kitLink.used) {
       throw new Error(
-        "未ImportのKit Linkを選択してください。Mapを再読み込みしてください。",
+        "未ImportのKit Linkを選択してください。マップを再読み込みしてください。",
       );
     }
 
@@ -1213,8 +1319,8 @@ export default function MapPage({ mapId }: { mapId: string }) {
       }
       throw new Error(
         typeof errorBody?.message === "string"
-          ? errorBody.message
-          : "Kit LinkをImportできませんでした。Mapを再読み込みしてください。",
+          ? uiText(errorBody.message)
+          : "Kit LinkをImportできませんでした。マップを再読み込みしてください。",
       );
     }
 
@@ -1232,7 +1338,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
     ) {
       await reloadMapFromServer().catch(() => undefined);
       throw new Error(
-        "Import結果を確認できませんでした。Mapを再読み込みして状態を確認してください。",
+        "Import結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
@@ -1274,9 +1380,9 @@ export default function MapPage({ mapId }: { mapId: string }) {
       } | null;
       const message =
         response.status === 404
-          ? "Linkが見つからないため、labelを保存できませんでした。Mapを再読み込みしてください。"
+          ? "Linkが見つからないため、labelを保存できませんでした。マップを再読み込みしてください。"
           : typeof errorBody?.message === "string"
-            ? errorBody.message
+            ? uiText(errorBody.message)
             : "Link labelを保存できませんでした。時間をおいて再度お試しください。";
 
       throw new Error(message);
@@ -1292,7 +1398,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       typeof updated.updatedAt !== "string"
     ) {
       throw new Error(
-        "保存結果を確認できませんでした。Mapを再読み込みして状態を確認してください。",
+        "保存結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
@@ -1337,9 +1443,9 @@ export default function MapPage({ mapId }: { mapId: string }) {
       } | null;
       const message =
         response.status === 404
-          ? "LinkまたはConceptが見つからないため、再接続できませんでした。Mapを再読み込みしてください。"
+          ? "LinkまたはConceptが見つからないため、再接続できませんでした。マップを再読み込みしてください。"
           : typeof errorBody?.message === "string"
-            ? errorBody.message
+            ? uiText(errorBody.message)
             : "Linkを再接続できませんでした。時間をおいて再度お試しください。";
 
       throw new Error(message);
@@ -1355,7 +1461,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       typeof updated.updatedAt !== "string"
     ) {
       throw new Error(
-        "再接続結果を確認できませんでした。Mapを再読み込みして状態を確認してください。",
+        "再接続結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
@@ -1393,9 +1499,9 @@ export default function MapPage({ mapId }: { mapId: string }) {
       } | null;
       const message =
         response.status === 404
-          ? "Linkが見つからないため、削除できませんでした。Mapを再読み込みしてください。"
+          ? "Linkが見つからないため、削除できませんでした。マップを再読み込みしてください。"
           : typeof errorBody?.message === "string"
-            ? errorBody.message
+            ? uiText(errorBody.message)
             : "Linkを削除できませんでした。時間をおいて再度お試しください。";
 
       throw new Error(message);
@@ -1404,7 +1510,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
     const deleted = (await response.json()) as { id?: unknown };
     if (deleted.id !== linkId) {
       throw new Error(
-        "削除結果を確認できませんでした。Mapを再読み込みして状態を確認してください。",
+        "削除結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
@@ -1430,7 +1536,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
 
   async function assignIntegrationKit(kitDefinitionId: string) {
     if (state.status !== "success" || state.map.type !== "INTEGRATION") {
-      throw new Error("Integration Mapを読み込んでからKitを設定してください。");
+      throw new Error("統合マップを読み込んでからKitを設定してください。");
     }
 
     const response = await apiFetch(
@@ -1447,8 +1553,8 @@ export default function MapPage({ mapId }: { mapId: string }) {
       } | null;
       throw new Error(
         typeof errorBody?.message === "string"
-          ? errorBody.message
-          : "KitDefinitionを設定できませんでした。Mapを再読み込みしてください。",
+          ? uiText(errorBody.message)
+          : "KitDefinitionを設定できませんでした。マップを再読み込みしてください。",
       );
     }
 
@@ -1463,7 +1569,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       typeof assigned.kitDefinitionName !== "string"
     ) {
       throw new Error(
-        "Kit設定の結果を確認できませんでした。Mapを再読み込みしてください。",
+        "Kit設定の結果を確認できませんでした。マップを再読み込みしてください。",
       );
     }
 
@@ -1478,7 +1584,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       state.status !== "success" ||
       (state.map.type !== "KB" && state.map.type !== "INTEGRATION")
     ) {
-      throw new Error("Kit Importに対応したMapを読み込んでください。");
+      throw new Error("Kit Importに対応したマップを読み込んでください。");
     }
     const targetMapId = state.map.id;
     const response = await apiFetch(
@@ -1502,8 +1608,8 @@ export default function MapPage({ mapId }: { mapId: string }) {
       }
       throw new Error(
         typeof errorBody?.message === "string"
-          ? errorBody.message
-          : "Kit ConceptをImportできませんでした。Mapを再読み込みしてください。",
+          ? uiText(errorBody.message)
+          : "Kit ConceptをImportできませんでした。マップを再読み込みしてください。",
       );
     }
 
@@ -1522,7 +1628,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       typeof created.updatedAt !== "string"
     ) {
       throw new Error(
-        "Import結果を確認できませんでした。Mapを再読み込みして状態を確認してください。",
+        "Import結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
@@ -1556,6 +1662,10 @@ export default function MapPage({ mapId }: { mapId: string }) {
         });
 
         if (response.status === 404) {
+          if (isLearner && learnerSessionId) {
+            window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId)}`);
+            return;
+          }
           setState({ status: "not-found" });
           return;
         }
@@ -1565,20 +1675,29 @@ export default function MapPage({ mapId }: { mapId: string }) {
             status: "error",
             message:
               response.status === 400
-                ? "Map IDの形式が正しくありません。"
-                : "Mapを読み込めませんでした。時間をおいて再度お試しください。",
+                ? "マップ IDの形式が正しくありません。"
+                : "マップを読み込めませんでした。時間をおいて再度お試しください。",
           });
           return;
         }
 
         const map = (await response.json()) as MapResponse;
         if (map.sessionStageId && map.sessionId) {
+          const flowRequestedAt = performance.now();
           const flowResponse = await apiFetch(
             `/api/sessions/${encodeURIComponent(map.sessionId)}/flow`,
             { signal: controller.signal },
           );
           if (!flowResponse.ok) throw new Error("Session flow refresh failed");
           const flow = (await flowResponse.json()) as SessionFlowResponse;
+          if (isLearner && map.type === "INTEGRATION" && flow.session.protocolKey === "STAGE1_6" && flow.currentStage?.id === map.sessionStageId && flow.currentStage.startedAt && flow.session.groupActivitySeconds !== null) {
+            const deadline = flowRequestedAt + Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000 - Date.parse(flow.serverNow);
+            if (deadline <= performance.now()) {
+              window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId ?? map.sessionId)}`);
+              return;
+            }
+            setIntegrationDeadline(deadline);
+          }
           const stage = flow.stages.find(
             (item) => item.id === map.sessionStageId,
           );
@@ -1612,58 +1731,111 @@ export default function MapPage({ mapId }: { mapId: string }) {
 
     void loadMap();
     return () => controller.abort();
-  }, [mapId, reloadUndoRedoState]);
+  }, [mapId, reloadUndoRedoState, isLearner, learnerSessionId]);
 
   useEffect(() => {
-    if (!kitFeedbackMapId || !kitFeedbackSignature) return;
+    if (!isLearner || !learnerSessionId || integrationDeadline === null) return;
+    const leave = () => {
+      setState({ status: "loading" });
+      window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId)}`);
+    };
+    const timer = window.setTimeout(leave, Math.max(0, integrationDeadline - performance.now()));
+    const onVisible = () => { if (performance.now() >= integrationDeadline) leave(); };
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.clearTimeout(timer); window.removeEventListener("focus", onVisible); document.removeEventListener("visibilitychange", onVisible); };
+  }, [integrationDeadline, isLearner, learnerSessionId]);
 
-    const targetMapId = kitFeedbackMapId;
-    const signature = kitFeedbackSignature;
+  const isSubmittedMap = state.status === "success" && state.map.status === "SUBMITTED";
+
+  useEffect(() => {
+    if (!isLearner || !learnerSessionId || state.status !== "success") return;
     const controller = new AbortController();
-
-    async function loadKitBuildFeedback() {
+    let checking = false;
+    function leaveMap() {
+      setState({ status: "loading" });
+      window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId!)}`);
+    }
+    async function checkAccess() {
+      if (checking || document.visibilityState !== "visible") return;
+      checking = true;
       try {
-        const response = await apiFetch(
-          `/api/maps/${encodeURIComponent(targetMapId)}/kit-feedback`,
-          { signal: controller.signal },
-        );
-        if (!response.ok) throw new Error("Kit-Build feedback request failed");
-        const result = (await response.json()) as KitBuildFeedbackResult;
-        if (
-          typeof result.configurationComplete !== "boolean" ||
-          typeof result.matched !== "boolean" ||
-          typeof result.message !== "string" ||
-          !Number.isInteger(result.concepts?.matched) ||
-          !Number.isInteger(result.concepts?.total) ||
-          !Number.isInteger(result.relations?.matched) ||
-          !Number.isInteger(result.relations?.total)
-        ) {
-          throw new Error("Unexpected Kit-Build feedback response");
-        }
-        if (!controller.signal.aborted) {
-          setKitBuildFeedback({ signature, status: "ready", result });
+        const response = await apiFetch(`/api/maps/${encodeURIComponent(mapId)}/access`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (!controller.signal.aborted && !response.ok && (isSubmittedMap || [401, 403, 404].includes(response.status))) {
+          leaveMap();
         }
       } catch {
-        if (!controller.signal.aborted) {
-          setKitBuildFeedback({
-            signature,
-            status: "error",
-            message:
-              "一致状況を確認できませんでした。接続を確認して再読み込みしてください。",
-          });
-        }
+        if (!controller.signal.aborted && isSubmittedMap) leaveMap();
+      } finally {
+        checking = false;
       }
     }
+    const interval = window.setInterval(() => void checkAccess(), 5000);
+    const recheck = () => void checkAccess();
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+    };
+  }, [isLearner, learnerSessionId, mapId, state.status, isSubmittedMap]);
 
-    void loadKitBuildFeedback();
-    return () => controller.abort();
-  }, [kitFeedbackMapId, kitFeedbackSignature]);
+  const checkedKitMapId = state.status === "success" && state.map.type === "KB"
+    ? state.map.id : null;
+  const checkedFeedbackSignature = kitBuildFeedback?.result.mapSignature;
+  const checkedFeedbackRequestId = kitBuildFeedback?.requestId;
+  useEffect(() => {
+    if (!checkedKitMapId || !checkedFeedbackSignature || checkedFeedbackRequestId === undefined) return;
+    const controller = new AbortController();
+    let checking = false;
+    async function refreshGraphSignature() {
+      if (checking || document.visibilityState !== "visible") return;
+      checking = true;
+      let signature: string | null = null;
+      try {
+        const response = await apiFetch(`/api/maps/${encodeURIComponent(checkedKitMapId!)}/kit-graph-signature`, {
+          signal: controller.signal,
+        });
+        if (response.ok) {
+          const result = (await response.json()) as { mapSignature?: unknown };
+          if (typeof result.mapSignature === "string") signature = result.mapSignature;
+        }
+      } catch {
+        // Without a graph signature, the previous result cannot be called current.
+      } finally {
+        checking = false;
+      }
+      if (!controller.signal.aborted) {
+        setKitBuildFeedback((current) =>
+          current && current.requestId === checkedFeedbackRequestId &&
+          current.verifiedSignature !== signature
+            ? { ...current, verifiedSignature: signature }
+            : current,
+        );
+      }
+    }
+    const interval = window.setInterval(() => void refreshGraphSignature(), 5000);
+    const recheck = () => void refreshGraphSignature();
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+    };
+  }, [checkedKitMapId, checkedFeedbackSignature, checkedFeedbackRequestId]);
 
   if (state.status === "loading") {
     return (
       <MapPageFrame>
         <p className="map-message" role="status" aria-live="polite">
-          Mapを読み込んでいます…
+          マップを読み込んでいます…
         </p>
       </MapPageFrame>
     );
@@ -1673,8 +1845,8 @@ export default function MapPage({ mapId }: { mapId: string }) {
     return (
       <MapPageFrame>
         <section className="map-message is-error" role="alert">
-          <h2>Mapが見つかりません</h2>
-          <p>指定されたIDのMapは存在しません。</p>
+          <h2>マップが見つかりません</h2>
+          <p>指定されたIDのマップは存在しません。</p>
         </section>
       </MapPageFrame>
     );
@@ -1684,15 +1856,15 @@ export default function MapPage({ mapId }: { mapId: string }) {
     return (
       <MapPageFrame>
         <section className="map-message" role="status">
-          <h2>このStageはまだ開けません</h2>
+          <h2>この活動はまだ開けません</h2>
           <p>
-            Session flowから現在のStageを開始してください。
-            {state.currentStageType
-              ? ` 現在のStage: ${state.currentStageType}`
-              : " Sessionを開始してください。"}
+            セッション画面から現在の活動を開始してください。
+            {!isLearner && state.currentStageType
+              ? ` 現在の活動: ${stageDisplayName(state.currentStageType)}`
+              : null}
           </p>
           <a className="back-link" href={`/sessions/${state.sessionId}`}>
-            Session flowへ
+            セッション画面へ
           </a>
         </section>
       </MapPageFrame>
@@ -1771,6 +1943,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
     return (
       <MapEditorShell
         map={state.map}
+        isLearner={isLearner && state.map.sessionId !== null}
         readOnly={
           isReadOnlyMap || submitting || (isIntegrationMap && mergingConcepts)
         }
@@ -1783,15 +1956,21 @@ export default function MapPage({ mapId }: { mapId: string }) {
         positionFeedback={positionFeedback}
         saveStatus={mapEditorSaveStatus}
         submitFeedback={submitFeedback}
-        kitBuildFeedback={isKBMap ? currentKitBuildFeedback : null}
+        kitBuildFeedback={isKBMap ? kitBuildFeedback : null}
+        kitFeedbackFreshness={kitFeedbackFreshness}
+        kitFeedbackChecking={kitFeedbackChecking}
+        kitFeedbackDialog={kitFeedbackDialog}
+        onCheckKitFeedback={checkKitBuildFeedback}
+        onShowKitFeedback={() => setKitFeedbackDialog({ status: "result", fromSubmission: false })}
+        onCloseKitFeedback={() => setKitFeedbackDialog(null)}
         canSubmit={
-          state.map.sessionProtocolKey === "STAGE1_4" &&
+          ["STAGE1_4", "STAGE1_6"].includes(state.map.sessionProtocolKey ?? "") &&
           state.map.sessionStageStatus === "IN_PROGRESS"
         }
         supplementalContent={integrationEditorSupplement}
         additionalBusy={mergingConcepts || undoRedoBusy}
         undoRedoState={
-          state.map.sessionProtocolKey === "STAGE1_4" ? undoRedoState : null
+          ["STAGE1_4", "STAGE1_6"].includes(state.map.sessionProtocolKey ?? "") ? undoRedoState : null
         }
         undoRedoFeedback={undoRedoFeedback}
         onUndoRedo={performUndoRedo}
@@ -1845,12 +2024,12 @@ export default function MapPage({ mapId }: { mapId: string }) {
     <MapPageFrame isKBMap={isKBMap}>
       <section className="map-information" aria-labelledby="map-title">
         <div>
-          <p className="eyebrow">{state.map.type} Map</p>
-          <h2 id="map-title">{state.map.title || "Concept Map"}</h2>
+          <p className="eyebrow">{mapDisplayName(state.map.type)}</p>
+          <h2 id="map-title">{state.map.title || "概念マップ"}</h2>
         </div>
         <dl className="map-metadata">
           <div>
-            <dt>Map ID</dt>
+            <dt>マップ ID</dt>
             <dd>{state.map.id}</dd>
           </div>
           <div>
@@ -1870,12 +2049,12 @@ export default function MapPage({ mapId }: { mapId: string }) {
         </dl>
         {state.map.sessionId && (
           <a className="back-link" href={`/sessions/${state.map.sessionId}`}>
-            Session flowへ戻る
+            セッション画面へ戻る
           </a>
         )}
         {state.map.type === "GOAL" && (
           <a className="back-link" href="/research/goal-maps">
-            Goal Map一覧へ戻る
+            ゴールマップ一覧へ戻る
           </a>
         )}
       </section>
@@ -1883,8 +2062,8 @@ export default function MapPage({ mapId }: { mapId: string }) {
       {isReadOnlyMap && (
         <p className="map-read-only-notice" role="status">
           {isRegisteredGoalMap
-            ? `Kit「${state.map.kitDefinitionName ?? "登録済み"}」の原本です。Kit登録後はGoal Mapを編集できません。`
-            : `提出済みの${state.map.type} Mapです。内容は読み取り専用です。`}
+            ? `Kit「${state.map.kitDefinitionName ?? "登録済み"}」の原本です。Kit登録後はゴールマップを編集できません。`
+            : `提出済みの${mapDisplayName(state.map.type)}です。内容は読み取り専用です。`}
         </p>
       )}
 
@@ -1913,8 +2092,8 @@ export default function MapPage({ mapId }: { mapId: string }) {
             if (!response.ok) {
               throw new Error(
                 typeof result?.message === "string"
-                  ? result.message
-                  : "Kitを登録できませんでした。Goal Mapを確認して再試行してください。",
+                  ? uiText(result.message)
+                  : "Kitを登録できませんでした。ゴールマップを確認して再試行してください。",
               );
             }
             await reloadMapFromServer();
@@ -1924,7 +2103,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
 
       {state.map.type === "GOAL" && isRegisteredGoalMap && (
         <p className="goal-kit-registered-note" role="status">
-          このGoal Mapから作成したKitを、Stage 1 Session作成時に選択できます。
+          このゴールマップから作成したKitを、活動 1 セッション作成時に選択できます。
         </p>
       )}
 
@@ -1968,7 +2147,7 @@ export default function MapPage({ mapId }: { mapId: string }) {
       )}
 
       {state.map.concepts.length === 0 && !state.map.kitDefinitionId ? (
-        <p className="map-message">このMapにはConceptがありません。</p>
+        <p className="map-message">このマップにはConceptがありません。</p>
       ) : (
         <ConceptCanvas
           mapId={state.map.id}
@@ -2051,10 +2230,10 @@ function GoalKitRegistrationPanel({
     <section className="goal-kit-registration" aria-labelledby="goal-kit-title">
       <div>
         <p className="home-card-kicker">Kit-Buildの教材</p>
-        <h2 id="goal-kit-title">このGoal MapをKitとして登録</h2>
+        <h2 id="goal-kit-title">このゴールマップをKitとして登録</h2>
         <p>
-          登録すると現在のConceptとLinkを部品にし、Goal Map原本を読み取り専用にします。
-          Sessionで使うにはConceptを1つ以上登録してください。
+          登録すると現在のConceptとLinkを部品にし、ゴールマップ原本を読み取り専用にします。
+          セッションで使うにはConceptを1つ以上登録してください。
         </p>
         <p className="goal-kit-counts">
           現在の内容：{conceptCount} Concept・{linkCount} Link
@@ -2093,6 +2272,7 @@ type MapEditorDrawerState =
 
 function MapEditorShell({
   map,
+  isLearner,
   readOnly,
   canCreateConcept,
   canCreateLink,
@@ -2104,6 +2284,12 @@ function MapEditorShell({
   saveStatus,
   submitFeedback,
   kitBuildFeedback,
+  kitFeedbackFreshness,
+  kitFeedbackChecking,
+  kitFeedbackDialog,
+  onCheckKitFeedback,
+  onShowKitFeedback,
+  onCloseKitFeedback,
   canSubmit,
   supplementalContent,
   additionalBusy,
@@ -2123,6 +2309,7 @@ function MapEditorShell({
   onPositionSave,
 }: {
   map: MapResponse;
+  isLearner: boolean;
   readOnly: boolean;
   canCreateConcept: boolean;
   canCreateLink: boolean;
@@ -2134,7 +2321,13 @@ function MapEditorShell({
   saveStatus: MapEditorSaveStatus;
   submitFeedback:
     { type: "success" | "error" | "saving"; message: string } | undefined;
-  kitBuildFeedback: KitBuildFeedbackDisplay | null;
+  kitBuildFeedback: KitBuildFeedbackState | null;
+  kitFeedbackFreshness: KitFeedbackFreshness;
+  kitFeedbackChecking: boolean;
+  kitFeedbackDialog: KitFeedbackDialog | null;
+  onCheckKitFeedback: () => Promise<void>;
+  onShowKitFeedback: () => void;
+  onCloseKitFeedback: () => void;
   canSubmit: boolean;
   supplementalContent?: React.ReactNode;
   additionalBusy: boolean;
@@ -2451,16 +2644,27 @@ function MapEditorShell({
     ? (map.concepts.find((concept) => concept.id === activeLink.targetConceptId)
         ?.label ?? "概念が見つかりません")
     : "";
-  const mapTitle =
-    map.type === "PRIOR" ? "学習者マップ（Scratch-Build）" : `${map.type} Map`;
+  const mapTitle = isLearner
+    ? map.type === "PRIOR"
+      ? "STEP 2：Scratch-Build"
+      : map.type === "KB"
+        ? "STEP 3：Kit-Build"
+        : map.sessionProtocolKey === "STAGE1_6"
+          ? "STEP 5：統合マップ"
+          : "STEP 4：統合"
+    : map.type === "PRIOR"
+      ? "学習者マップ（Scratch-Build）"
+      : map.type === "INTEGRATION" ? "統合マップ" : "Kit-Build マップ";
   const submittedMapName = mapTitle;
 
   return (
-    <main className={`map-editor-page is-${map.type.toLowerCase()}`}>
+    <main
+      className={`map-editor-page is-${map.type.toLowerCase()}${isLearner ? " is-learner" : ""}`}
+    >
       <header className="map-editor-header">
         <div className="map-editor-title">
           <h1>{mapTitle}</h1>
-          <span>{`${map.type} MAP`}</span>
+          {!isLearner && <span>{mapTitle}</span>}
         </div>
         <div className="map-editor-header-actions">
           <a
@@ -2471,7 +2675,7 @@ function MapEditorShell({
                 : "/"
             }
           >
-            ← {map.sessionId ? "Session flowへ戻る" : "トップへ戻る"}
+            ← {map.sessionId ? "セッション画面へ戻る" : "トップへ戻る"}
           </a>
           <p
             className={`map-editor-save-status${hasSaveError ? " is-error" : isSaving ? " is-saving" : ""}`}
@@ -2512,12 +2716,12 @@ function MapEditorShell({
               </button>
               {(undoRedoFeedback || undoRedoState.reason) && (
                 <span role="status">
-                  {undoRedoFeedback ?? undoRedoState.reason}
+                  {uiText(undoRedoFeedback ?? undoRedoState.reason ?? "")}
                 </span>
               )}
             </div>
           )}
-          {map.status === "DRAFT" && (
+          {map.status === "DRAFT" && !(map.type === "INTEGRATION" && map.sessionProtocolKey === "STAGE1_6") && (
             <button
               className="map-editor-submit-button"
               type="button"
@@ -2527,9 +2731,6 @@ function MapEditorShell({
                 submitting ||
                 drawerSaving ||
                 !canSubmit ||
-                (map.type === "KB" &&
-                  (kitBuildFeedback?.status !== "ready" ||
-                    !kitBuildFeedback.result.matched)) ||
                 linkCreation !== null
               }
               onClick={() => void handleSubmitMap()}
@@ -2555,30 +2756,27 @@ function MapEditorShell({
         </p>
       )}
 
-      {map.type === "KB" && kitBuildFeedback && (
-        <section
-          className={`kit-build-feedback${
-            kitBuildFeedback.status === "ready"
-              ? kitBuildFeedback.result.matched
-                ? " is-matched"
-                : " is-incomplete"
-              : kitBuildFeedback.status === "error"
-                ? " is-error"
-                : " is-loading"
-          }`}
-          aria-labelledby="kit-build-feedback-title"
-        >
-          <h2 id="kit-build-feedback-title">ゴールマップとの一致確認</h2>
-          <p
-            role={kitBuildFeedback.status === "error" ? "alert" : "status"}
-            aria-live="polite"
+      {map.type === "KB" && (
+        <section className="kit-feedback-actions" aria-label="ゴールマップとの一致確認">
+          <button
+            type="button"
+            className="kit-feedback-check-button"
+            disabled={isSaving || submitting || kitFeedbackChecking}
+            onClick={() => void onCheckKitFeedback()}
           >
-            {kitBuildFeedback.status === "loading"
-              ? "一致状況を確認しています…"
-              : kitBuildFeedback.status === "error"
-                ? kitBuildFeedback.message
-                : kitBuildFeedback.result.message}
-          </p>
+            {kitFeedbackChecking ? "確認中…" : "一致状況を確認"}
+          </button>
+          {kitBuildFeedback && (
+            <>
+              <p className="kit-feedback-summary" role="status">
+                前回の結果：{kitBuildFeedback.result.matched ? "一致" : "不一致"}。
+                {kitFeedbackFreshnessText(kitFeedbackFreshness)}
+              </p>
+              <button type="button" className="kit-feedback-review-button" onClick={onShowKitFeedback}>
+                前回の結果を表示
+              </button>
+            </>
+          )}
         </section>
       )}
 
@@ -2880,7 +3078,73 @@ function MapEditorShell({
           </aside>
         )}
       </section>
+      {map.type === "KB" && (
+        <KitBuildFeedbackDialog
+          view={kitFeedbackDialog}
+          feedback={kitBuildFeedback}
+          freshness={kitFeedbackFreshness}
+          onClose={onCloseKitFeedback}
+        />
+      )}
     </main>
+  );
+}
+
+function kitFeedbackFreshnessText(freshness: KitFeedbackFreshness): string {
+  switch (freshness) {
+    case "current": return "前回の結果は最新です。";
+    case "stale": return "前回の結果は古くなっています。";
+    case "saving": return "保存中のため結果の新しさを確認できません。";
+    case "unknown": return "マップの最新状態を確認できていません。";
+  }
+}
+
+function KitBuildFeedbackDialog({
+  view,
+  feedback,
+  freshness,
+  onClose,
+}: {
+  view: KitFeedbackDialog | null;
+  feedback: KitBuildFeedbackState | null;
+  freshness: KitFeedbackFreshness;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const open = view !== null;
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open && !dialog.open) {
+      dialog.showModal();
+      closeRef.current?.focus();
+    } else if (!open && dialog.open) {
+      dialog.close();
+    }
+  }, [open]);
+
+  return (
+    <dialog className="kit-feedback-dialog" ref={dialogRef} onClose={onClose} aria-labelledby="kit-feedback-dialog-title">
+      <h2 id="kit-feedback-dialog-title">ゴールマップとの一致確認</h2>
+      <div className="kit-feedback-dialog-content" aria-live="polite" aria-atomic="true">
+        {view?.status === "loading" && <p role="status">保存済みのマップの一致状況を確認しています…</p>}
+        {view?.status === "error" && <p role="alert">{view.message}</p>}
+        {view?.status === "result" && feedback && (
+          <>
+            {view.fromSubmission && <p>提出できませんでした。</p>}
+            <p className="kit-feedback-result-heading">{feedback.result.matched ? "一致" : "不一致"}</p>
+            <p>{uiText(feedback.result.message)}</p>
+            <p>概念 {feedback.result.concepts.matched}/{feedback.result.concepts.total}、関係 {feedback.result.relations.matched}/{feedback.result.relations.total}</p>
+            <p className={`kit-feedback-freshness is-${freshness}`}>{kitFeedbackFreshnessText(freshness)}</p>
+          </>
+        )}
+      </div>
+      <button type="button" ref={closeRef} onClick={() => dialogRef.current?.close()}>
+        閉じる
+      </button>
+    </dialog>
   );
 }
 
@@ -2898,13 +3162,13 @@ function MapPageFrame({
       </a>
       <header className="map-page-heading">
         <p className="eyebrow">
-          {isKBMap ? "KB Concept / Link再構成" : "Concept Map"}
+          {isKBMap ? "KB Concept / Link再構成" : "概念マップ"}
         </p>
-        <h1>Concept Map</h1>
+        <h1>Concept マップ</h1>
         <p className="description">
           {isKBMap
             ? "Kit PaletteからConceptとLinking Wordを配置し、handleで学習者自身が接続します。"
-            : "Conceptの操作と、Map内のLink作成・編集・削除・再接続ができます。"}
+            : "Conceptの操作と、マップ内のLink作成・編集・削除・再接続ができます。"}
         </p>
       </header>
       {children}
@@ -2939,6 +3203,8 @@ function ConceptCanvas({
   linkCreation = null,
   onMapLinkCreate,
   onMapLinkCreationCancel,
+  highlightedConceptIds,
+  highlightedLinkIds,
 }: {
   mapId: string;
   mapType: MapResponse["type"];
@@ -2948,6 +3214,8 @@ function ConceptCanvas({
   kitConcepts: KitConceptItem[];
   kitLinks: KitLinkItem[];
   readOnly: boolean;
+  highlightedConceptIds?: ReadonlySet<string>;
+  highlightedLinkIds?: ReadonlySet<string>;
   canEditConceptStructure: boolean;
   canEditLinkLabel: boolean;
   positionSaving: boolean;
@@ -3067,12 +3335,18 @@ function ConceptCanvas({
   const [connectionPreview, setConnectionPreview] = useState<{
     start: Point;
     current: Point;
+    kind: "temporary" | "saved";
+    id: string;
+    endpoint: "source" | "target";
   } | null>(null);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const arrowMarkerId = `concept-arrow-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const [canvasViewportWidth, setCanvasViewportWidth] = useState(960);
   const nodeElementsRef = useRef(new Map<string, HTMLElement>());
   const [nodeSizes, setNodeSizes] = useState(new Map<string, NodeSize>());
+  const connectorElementsRef = useRef(new Map<string, HTMLElement>());
+  const [connectorSizes, setConnectorSizes] = useState(new Map<string, NodeSize>());
   const deletingConceptRef = useRef<string | null>(null);
   const selectedLink = links.find((link) => link.id === selectedLinkId) ?? null;
   const selectedSourceConcept = selectedLink
@@ -3107,6 +3381,7 @@ function ConceptCanvas({
     moved: boolean;
   } | null>(null);
   const suppressConnectorClickRef = useRef(false);
+  const connectorDragCleanupRef = useRef<(() => void) | null>(null);
   const touchPaletteDragRef = useRef<{
     pointerId: number;
     part: KitPalettePart;
@@ -3129,6 +3404,13 @@ function ConceptCanvas({
   const temporaryConnectors = mapTemporaryConnector
     ? [...kitTemporaryConnectors, mapTemporaryConnector]
     : kitTemporaryConnectors;
+  const pendingConnectors = temporaryConnectors.filter(connector => !connector.sourceConceptId || !connector.targetConceptId);
+  const showConnectionGuidance = !readOnly && (connectionPreview !== null || pendingConnectors.length > 0);
+
+  useEffect(() => () => {
+    connectorDragCleanupRef.current?.();
+    activeConnectorDragRef.current = null;
+  }, []);
 
   useEffect(() => {
     const observer = new ResizeObserver((entries) => {
@@ -3175,6 +3457,27 @@ function ConceptCanvas({
     return () => observer.disconnect();
   }, [concepts]);
 
+  useEffect(() => {
+    const observer = new ResizeObserver((entries) => {
+      setConnectorSizes(current => {
+        let next = current;
+        for (const entry of entries) {
+          const element = entry.target as HTMLElement;
+          const id = element.dataset.connectorId;
+          if (!id) continue;
+          const size = { width: element.offsetWidth, height: element.offsetHeight };
+          const previous = next.get(id);
+          if (previous?.width === size.width && previous.height === size.height) continue;
+          if (next === current) next = new Map(current);
+          next.set(id, size);
+        }
+        return next;
+      });
+    });
+    connectorElementsRef.current.forEach(element => observer.observe(element));
+    return () => observer.disconnect();
+  }, [links, kitTemporaryConnectors, mapTemporaryConnectorState, linkCreation]);
+
   const canvasWidth = Math.max(
     960,
     canvasViewportWidth,
@@ -3185,6 +3488,7 @@ function ConceptCanvas({
       );
     }),
     ...temporaryConnectors.map((connector) => connector.position.x + 140),
+    ...Array.from(linkConnectorPositions.values(), (position) => position.x + 140),
   );
 
   const canvasHeight = Math.max(
@@ -3198,6 +3502,8 @@ function ConceptCanvas({
         position.positionY + (nodeSizes.get(concept.id)?.height ?? 150) + 100
       );
     }),
+    ...temporaryConnectors.map((connector) => connector.position.y + 100),
+    ...Array.from(linkConnectorPositions.values(), (position) => position.y + 100),
   );
 
   const supportsKitPalette = mapType === "KB" || mapType === "INTEGRATION";
@@ -3390,15 +3696,17 @@ function ConceptCanvas({
     if (readOnly || !event.isPrimary || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    const handleBounds = event.currentTarget.getBoundingClientRect();
+    const handleCenter = clientToCanvasPoint(handleBounds.left + handleBounds.width / 2, handleBounds.top + handleBounds.height / 2) ?? start;
     const connection = {
       kind,
       id,
       endpoint,
       pointerId: event.pointerId,
-      start,
+      start: handleCenter,
     } as const;
     activeConnectionRef.current = connection;
-    setConnectionPreview({ start, current: start });
+    setConnectionPreview({ start: handleCenter, current: handleCenter, kind, id, endpoint });
 
     const handleMove = (pointerEvent: PointerEvent) => {
       if (pointerEvent.pointerId !== connection.pointerId) return;
@@ -3407,7 +3715,7 @@ function ConceptCanvas({
         pointerEvent.clientY,
       );
       if (point)
-        setConnectionPreview({ start: connection.start, current: point });
+        setConnectionPreview({ start: connection.start, current: point, kind: connection.kind, id: connection.id, endpoint: connection.endpoint });
     };
     const finish = (pointerEvent: PointerEvent) => {
       if (pointerEvent.pointerId !== connection.pointerId) return;
@@ -4152,6 +4460,7 @@ function ConceptCanvas({
   ) {
     if (
       readOnly ||
+      activeConnectorDragRef.current !== null ||
       !event.isPrimary ||
       event.button !== 0 ||
       (kind === "temporary" &&
@@ -4173,11 +4482,25 @@ function ConceptCanvas({
       originalPosition: position,
       moved: false,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    const cleanup = () => {
+      window.removeEventListener("pointermove", moveConnectorWithPointer);
+      window.removeEventListener("pointerup", finishConnectorDrag);
+      window.removeEventListener("pointercancel", cancelConnectorDrag);
+      if (connectorDragCleanupRef.current === cleanup) connectorDragCleanupRef.current = null;
+    };
+    connectorDragCleanupRef.current = cleanup;
+    window.addEventListener("pointermove", moveConnectorWithPointer);
+    window.addEventListener("pointerup", finishConnectorDrag);
+    window.addEventListener("pointercancel", cancelConnectorDrag);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Window listeners continue tracking if the browser cannot capture the pointer.
+    }
   }
 
   function moveConnectorWithPointer(
-    event: ReactPointerEvent<HTMLButtonElement>,
+    event: PointerEvent,
   ) {
     const drag = activeConnectorDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
@@ -4199,10 +4522,11 @@ function ConceptCanvas({
     });
   }
 
-  function finishConnectorDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+  function finishConnectorDrag(event: PointerEvent) {
     const drag = activeConnectorDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     moveConnectorWithPointer(event);
+    connectorDragCleanupRef.current?.();
     activeConnectorDragRef.current = null;
     if (drag.moved) {
       suppressConnectorClickRef.current = true;
@@ -4212,9 +4536,10 @@ function ConceptCanvas({
     }
   }
 
-  function cancelConnectorDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+  function cancelConnectorDrag(event: PointerEvent) {
     const drag = activeConnectorDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    connectorDragCleanupRef.current?.();
     activeConnectorDragRef.current = null;
     updateConnectorPosition(drag.kind, drag.id, drag.originalPosition);
   }
@@ -4257,7 +4582,7 @@ function ConceptCanvas({
   return (
     <section
       className={`concept-canvas-section${usesMapEditorDrawers ? " is-map-editor-canvas" : ""}`}
-      aria-label="Concept Map表示領域"
+      aria-label="Concept マップ表示領域"
     >
       {supportsKitPalette && kitDefinitionName && (
         <section className="kit-palette" aria-label="Kit Palette">
@@ -4396,6 +4721,14 @@ function ConceptCanvas({
           )}
         </section>
       )}
+      {!readOnly && <div className="canvas-connection-area">
+      {showConnectionGuidance && <p className="canvas-direction-hint">関係は「始点のConcept → Link → 矢印の先のConcept」の向きにつながります。</p>}
+      <div className="canvas-connection-guidance" role="status" aria-live="polite">
+        {connectionPreview ? <p>「{connectionPreview.endpoint === "source" ? "始点" : "矢印の先"}」を接続するConceptへドラッグしてください。</p> : pendingConnectors.map(connector => <p key={connector.id}>
+          「{connector.label}」：始点 {connector.sourceConceptId ? conceptsById.get(connector.sourceConceptId)?.label ?? "接続済み" : "未接続"} → 矢印の先 {connector.targetConceptId ? conceptsById.get(connector.targetConceptId)?.label ?? "接続済み" : "未接続"}。
+          {!connector.sourceConceptId || !connector.targetConceptId ? ` ${!connector.sourceConceptId && !connector.targetConceptId ? "始点と矢印の先" : !connector.sourceConceptId ? "始点" : "矢印の先"}のハンドルを対応するConceptへドラッグしてください。` : " 保存中です。"}
+        </p>)}
+      </div></div>}
       <div
         className="concept-canvas-viewport"
         ref={canvasViewportRef}
@@ -4422,15 +4755,30 @@ function ConceptCanvas({
           >
             <defs>
               <marker
-                id="concept-link-arrowhead"
-                markerWidth="10"
-                markerHeight="10"
-                refX="9"
-                refY="5"
+                id={`${arrowMarkerId}-normal`}
+                viewBox="0 0 14 12"
+                markerWidth="14"
+                markerHeight="12"
+                refX="15"
+                refY="6"
                 orient="auto"
-                markerUnits="strokeWidth"
+                markerUnits="userSpaceOnUse"
+                overflow="visible"
               >
-                <path d="M 0 0 L 10 5 L 0 10 z" />
+                <path className="concept-arrowhead" d="M 1 1 L 13 6 L 1 11 L 4 6 Z" />
+              </marker>
+              <marker
+                id={`${arrowMarkerId}-selected`}
+                viewBox="0 0 14 12"
+                markerWidth="14"
+                markerHeight="12"
+                refX="15"
+                refY="6"
+                orient="auto"
+                markerUnits="userSpaceOnUse"
+                overflow="visible"
+              >
+                <path className="concept-arrowhead is-selected" d="M 1 1 L 13 6 L 1 11 L 4 6 Z" />
               </marker>
             </defs>
             {edges.map((edge) => {
@@ -4449,7 +4797,7 @@ function ConceptCanvas({
                 conceptsById.get(edge.target)?.label ?? edge.target;
 
               return (
-                <g key={edge.id}>
+                <g key={edge.id} className={highlightedLinkIds?.has(edge.id) ? "is-history-changed" : undefined}>
                   <path
                     className="concept-edge-hit-target"
                     d={geometry.path}
@@ -4475,23 +4823,23 @@ function ConceptCanvas({
                   />
                   {endpoints ? (
                     <>
-                      <path
+                      {!(connectionPreview?.kind === "saved" && connectionPreview.id === edge.id && connectionPreview.endpoint === "source") && <path
                         className={`concept-edge-path${selectedLinkId === edge.id ? " is-selected" : ""}`}
                         d={`M ${endpoints.source.x} ${endpoints.source.y} L ${center.x - 10} ${center.y}`}
                         aria-hidden="true"
-                      />
-                      <path
+                      />}
+                      {!(connectionPreview?.kind === "saved" && connectionPreview.id === edge.id && connectionPreview.endpoint === "target") && <path
                         className={`concept-edge-path${selectedLinkId === edge.id ? " is-selected" : ""}`}
                         d={`M ${center.x + 10} ${center.y} L ${endpoints.target.x} ${endpoints.target.y}`}
-                        markerEnd="url(#concept-link-arrowhead)"
+                        markerEnd={`url(#${arrowMarkerId}-${selectedLinkId === edge.id ? "selected" : "normal"})`}
                         aria-hidden="true"
-                      />
+                      />}
                     </>
                   ) : (
                     <path
                       className={`concept-edge-path${selectedLinkId === edge.id ? " is-selected" : ""}`}
                       d={geometry.path}
-                      markerEnd="url(#concept-link-arrowhead)"
+                      markerEnd={`url(#${arrowMarkerId}-${selectedLinkId === edge.id ? "selected" : "normal"})`}
                       aria-hidden="true"
                     />
                   )}
@@ -4507,30 +4855,53 @@ function ConceptCanvas({
                 connector.targetConceptId,
                 connector.position,
               );
+              const halfWidth = (connectorSizes.get(connector.id)?.width ?? 48) / 2;
               return (
                 <g key={`${connector.id}-paths`}>
-                  {source && (
+                  {source && !(connectionPreview?.kind === "temporary" && connectionPreview.id === connector.id && connectionPreview.endpoint === "source") && (
                     <path
                       className="temporary-connector-path"
                       d={`M ${source.x} ${source.y} L ${connector.position.x - 10} ${connector.position.y}`}
                     />
                   )}
-                  {target && (
+                  {target && !(connectionPreview?.kind === "temporary" && connectionPreview.id === connector.id && connectionPreview.endpoint === "target") && (
                     <path
                       className="temporary-connector-path"
                       d={`M ${connector.position.x + 10} ${connector.position.y} L ${target.x} ${target.y}`}
-                      markerEnd="url(#concept-link-arrowhead)"
+                      markerEnd={`url(#${arrowMarkerId}-normal)`}
                     />
                   )}
+                  {!source && !(connectionPreview?.kind === "temporary" && connectionPreview.id === connector.id && connectionPreview.endpoint === "source") && <path className="connection-preview-path" d={`M ${connector.position.x - halfWidth - 46} ${connector.position.y} L ${connector.position.x - halfWidth - 8} ${connector.position.y}`} markerEnd={`url(#${arrowMarkerId}-normal)`} aria-hidden="true" />}
+                  {!target && !(connectionPreview?.kind === "temporary" && connectionPreview.id === connector.id && connectionPreview.endpoint === "target") && <path className="connection-preview-path" d={`M ${connector.position.x + halfWidth + 8} ${connector.position.y} L ${connector.position.x + halfWidth + 46} ${connector.position.y}`} markerEnd={`url(#${arrowMarkerId}-normal)`} aria-hidden="true" />}
                 </g>
               );
             })}
             {connectionPreview && (
               <path
                 className="connection-preview-path"
-                d={`M ${connectionPreview.start.x} ${connectionPreview.start.y} L ${connectionPreview.current.x} ${connectionPreview.current.y}`}
+                d={(() => {
+                  const from = connectionPreview.endpoint === "source" ? connectionPreview.current : connectionPreview.start;
+                  const to = connectionPreview.endpoint === "source" ? connectionPreview.start : connectionPreview.current;
+                  const middle = { x: from.x + (to.x - from.x) * 0.72, y: from.y + (to.y - from.y) * 0.72 };
+                  return `M ${from.x} ${from.y} L ${middle.x} ${middle.y} L ${to.x} ${to.y}`;
+                })()}
+                markerMid={`url(#${arrowMarkerId}-normal)`}
+                aria-hidden="true"
               />
             )}
+            {!readOnly && connectionPreview?.kind === "saved" && edges.filter(edge => edge.id === connectionPreview.id).map(edge => {
+              const geometry = geometryForEdge(edge);
+              if (!geometry) return null;
+              const center = linkConnectorPositions.get(edge.id) ?? { x: geometry.labelX, y: geometry.labelY };
+              const size = connectorSizes.get(edge.id);
+              if (!size) return null;
+              return <g key={`${edge.id}-endpoint-labels`} aria-hidden="true"><text className="connector-endpoint-label" x={center.x - size.width / 2} y={center.y + size.height / 2 + 14} textAnchor="end">始点</text><text className="connector-endpoint-label" x={center.x + size.width / 2} y={center.y + size.height / 2 + 14}>矢印の先</text></g>;
+            })}
+            {!readOnly && pendingConnectors.map(connector => {
+              const size = connectorSizes.get(connector.id);
+              if (!size) return null;
+              return <g key={`${connector.id}-endpoint-labels`} aria-hidden="true"><text className="connector-endpoint-label" x={connector.position.x - size.width / 2} y={connector.position.y + size.height / 2 + 14} textAnchor="end">始点</text><text className="connector-endpoint-label" x={connector.position.x + size.width / 2} y={connector.position.y + size.height / 2 + 14}>矢印の先</text></g>;
+            })}
           </svg>
           {edges.map((edge) => {
             const geometry = geometryForEdge(edge);
@@ -4543,8 +4914,10 @@ function ConceptCanvas({
             };
             return (
               <div
-                className={`link-connector${selectedLinkId === edge.id ? " is-selected" : ""}`}
+                className={`link-connector${selectedLinkId === edge.id ? " is-selected" : ""}${highlightedLinkIds?.has(edge.id) ? " is-history-changed" : ""}`}
                 key={`${edge.id}-connector`}
+                data-connector-id={edge.id}
+                ref={element => { if (element) connectorElementsRef.current.set(edge.id, element); else connectorElementsRef.current.delete(edge.id); }}
                 style={{
                   left: `${center.x}px`,
                   top: `${center.y}px`,
@@ -4553,7 +4926,8 @@ function ConceptCanvas({
                 <button
                   type="button"
                   className="link-connector-handle is-source"
-                  aria-label={`${edge.label}のsourceを再接続`}
+                  data-endpoint-label="始点"
+                  aria-label={`${edge.label}の始点を再接続`}
                   disabled={readOnly || reconnectingLinkId === edge.id}
                   onPointerDown={(event) =>
                     beginConnection(event, "saved", edge.id, "source", {
@@ -4566,12 +4940,10 @@ function ConceptCanvas({
                   type="button"
                   className="link-connector-label"
                   aria-label={`Link ${edge.label}の中央をドラッグして移動。クリックで選択`}
+                  title={readOnly ? edge.label : "ドラッグで位置を移動、クリックで選択"}
                   onPointerDown={(event) =>
                     beginConnectorDrag(event, "saved", edge.id, center)
                   }
-                  onPointerMove={moveConnectorWithPointer}
-                  onPointerUp={finishConnectorDrag}
-                  onPointerCancel={cancelConnectorDrag}
                   onClick={() => {
                     if (suppressConnectorClickRef.current) {
                       suppressConnectorClickRef.current = false;
@@ -4585,7 +4957,8 @@ function ConceptCanvas({
                 <button
                   type="button"
                   className="link-connector-handle is-target"
-                  aria-label={`${edge.label}のtargetを再接続`}
+                  data-endpoint-label="矢印の先"
+                  aria-label={`${edge.label}の矢印の先を再接続`}
                   disabled={readOnly || reconnectingLinkId === edge.id}
                   onPointerDown={(event) =>
                     beginConnection(event, "saved", edge.id, "target", {
@@ -4601,6 +4974,8 @@ function ConceptCanvas({
             <div
               className={`link-connector is-temporary${connector.saving ? " is-saving" : ""}`}
               key={connector.id}
+              data-connector-id={connector.id}
+              ref={element => { if (element) connectorElementsRef.current.set(connector.id, element); else connectorElementsRef.current.delete(connector.id); }}
               style={{
                 left: `${connector.position.x}px`,
                 top: `${connector.position.y}px`,
@@ -4609,7 +4984,8 @@ function ConceptCanvas({
               <button
                 type="button"
                 className={`link-connector-handle is-source${connector.sourceConceptId ? " is-connected" : ""}`}
-                aria-label={`${connector.label}のsourceを接続`}
+                data-endpoint-label="始点"
+                aria-label={`${connector.label}の始点を接続${connector.sourceConceptId ? "済み" : "、未接続"}`}
                 disabled={connector.saving}
                 onPointerDown={(event) =>
                   beginConnection(event, "temporary", connector.id, "source", {
@@ -4631,16 +5007,14 @@ function ConceptCanvas({
                     connector.position,
                   )
                 }
-                onPointerMove={moveConnectorWithPointer}
-                onPointerUp={finishConnectorDrag}
-                onPointerCancel={cancelConnectorDrag}
               >
                 {connector.saving ? "保存中…" : connector.label}
               </button>
               <button
                 type="button"
                 className={`link-connector-handle is-target${connector.targetConceptId ? " is-connected" : ""}`}
-                aria-label={`${connector.label}のtargetを接続`}
+                data-endpoint-label="矢印の先"
+                aria-label={`${connector.label}の矢印の先を接続${connector.targetConceptId ? "済み" : "、未接続"}`}
                 disabled={connector.saving}
                 onPointerDown={(event) =>
                   beginConnection(event, "temporary", connector.id, "target", {
@@ -4687,7 +5061,7 @@ function ConceptCanvas({
 
             return (
               <article
-                className={`concept-node${isDragging ? " is-dragging" : ""}${editingConceptId === concept.id ? " is-editing" : ""}${positionSaving ? " is-position-saving" : ""}`}
+                className={`concept-node${isDragging ? " is-dragging" : ""}${editingConceptId === concept.id ? " is-editing" : ""}${positionSaving ? " is-position-saving" : ""}${highlightedConceptIds?.has(concept.id) ? " is-history-changed" : ""}`}
                 key={concept.id}
                 role="listitem"
                 tabIndex={canOpenConceptDrawer ? 0 : undefined}
@@ -5004,7 +5378,7 @@ function ConceptCanvas({
             <h3>接続先変更</h3>
             <div className="link-reconnect-fields">
               <label htmlFor="link-reconnect-source">
-                source（始点）
+                始点
                 <select
                   id="link-reconnect-source"
                   value={reconnectSourceConceptId}
@@ -5027,7 +5401,7 @@ function ConceptCanvas({
                 </select>
               </label>
               <label htmlFor="link-reconnect-target">
-                target（終点）
+                矢印の先
                 <select
                   id="link-reconnect-target"
                   value={reconnectTargetConceptId}
@@ -5139,7 +5513,7 @@ function ConceptCanvas({
       )}
       <p className="canvas-caption">
         {readOnly
-          ? "提出済みMapは読み取り専用です。"
+          ? "提出済みマップは読み取り専用です。"
           : "Conceptをドラッグすると、移動後のpositionX / positionYを保存します。"}
       </p>
     </section>
@@ -5149,10 +5523,17 @@ function ConceptCanvas({
 export function ReadOnlyMapSnapshot({
   snapshot,
   title,
+  allowZoom = false,
+  highlightedConceptIds,
+  highlightedLinkIds,
 }: {
   snapshot: HistoricalMapSnapshot;
   title: string;
+  allowZoom?: boolean;
+  highlightedConceptIds?: ReadonlySet<string>;
+  highlightedLinkIds?: ReadonlySet<string>;
 }) {
+  const [zoom, setZoom] = useState(1);
   const concepts: Concept[] = snapshot.concepts.map((item) => ({
     ...item,
     createdAt: "",
@@ -5160,13 +5541,21 @@ export function ReadOnlyMapSnapshot({
   }));
   const links: MapLink[] = snapshot.links;
   return (
-    <section className="map-history-preview" aria-label={title}>
+    <section className={`map-history-preview${allowZoom ? " map-study-preview" : ""}`} aria-label={title} style={allowZoom ? ({ "--snapshot-zoom": zoom } as CSSProperties) : undefined}>
       <h4>{title}</h4>
+      {allowZoom && <div className="map-study-controls" aria-label={`${title}の表示操作`}>
+        <button type="button" className="session-secondary-button" disabled={zoom <= 0.5} onClick={() => setZoom(value => Math.max(0.5, Math.round((value - 0.1) * 10) / 10))} aria-label={`${title}を縮小`}>−</button>
+        <span aria-live="polite">{Math.round(zoom * 100)}%</span>
+        <button type="button" className="session-secondary-button" disabled={zoom >= 1.5} onClick={() => setZoom(value => Math.min(1.5, Math.round((value + 0.1) * 10) / 10))} aria-label={`${title}を拡大`}>＋</button>
+      </div>}
+      {allowZoom && <p className="map-study-instructions">スクロールバーで上下左右に移動できます。</p>}
       <ConceptCanvas
         mapId={snapshot.mapId}
         mapType={snapshot.mapType}
         concepts={concepts}
         links={links}
+        highlightedConceptIds={highlightedConceptIds}
+        highlightedLinkIds={highlightedLinkIds}
         kitDefinitionName={null}
         kitConcepts={[]}
         kitLinks={[]}
@@ -5267,7 +5656,7 @@ function IntegrationConceptMergeForm({
         message:
           error instanceof Error
             ? error.message
-            : "ConceptをMergeできませんでした。Mapを再読み込みしてください。",
+            : "ConceptをMergeできませんでした。マップを再読み込みしてください。",
       });
     } finally {
       setSaving(false);
@@ -5417,9 +5806,9 @@ function AddConceptForm({
         } | null;
         const message =
           response.status === 404
-            ? "Mapが見つからないため、Conceptを保存できませんでした。"
+            ? "マップが見つからないため、Conceptを保存できませんでした。"
             : typeof errorBody?.message === "string"
-              ? errorBody.message
+              ? uiText(errorBody.message)
               : "Conceptを保存できませんでした。時間をおいて再度お試しください。";
 
         setFeedback({ type: "error", message });
@@ -5434,7 +5823,7 @@ function AddConceptForm({
       setFeedback({
         type: "error",
         message:
-          "保存結果を確認できませんでした。接続を確認してからMapを再読み込みしてください。",
+          "保存結果を確認できませんでした。接続を確認してからマップを再読み込みしてください。",
       });
     } finally {
       setSaving(false);
@@ -5638,7 +6027,7 @@ function IntegrationKitAssignmentPanel({
       {availableKitDefinitions.length === 0 ? (
         <p className="integration-kit-empty">
           選択できるKitDefinitionがありません。Goal
-          MapからKitを作成してください。
+          マップからKitを作成してください。
         </p>
       ) : (
         <form

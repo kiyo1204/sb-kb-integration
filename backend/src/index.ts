@@ -1,4 +1,5 @@
 import express, { type Response } from "express";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool, type PoolClient } from "pg";
 import {
   assertStageIsCurrent,
@@ -14,6 +15,7 @@ import {
 } from "./sessions.js";
 import { buildSessionRawExport } from "./research-export.js";
 import { registerStage1AnalysisRoutes } from "./stage1-analysis.js";
+import { registerAssessmentRoutes } from "./assessments.js";
 import { accessControl, createLearnerToken, principalOf, storeLearnerToken } from "./access-control.js";
 import { deriveUndoRedoAvailability, historySnapshotsEqual, historyStateDelta } from "./map-undo-redo.js";
 import type {
@@ -31,6 +33,7 @@ if (!databaseUrl) {
 }
 
 const app = express();
+const deadlineContext = new AsyncLocalStorage<{ mapIds: Set<string>; stageIds: Set<string> }>();
 const pool = new Pool({ connectionString: databaseUrl });
 const port = Number(process.env.PORT ?? 3000);
 const uuidPattern =
@@ -59,9 +62,11 @@ type SubmittedMapRow = {
 };
 type MapSubmitOutcome =
   | { kind: "submitted"; map: SubmittedMapRow }
+  | { kind: "automatic_submission_required" }
+  | { kind: "time_expired" }
   | { kind: "map_not_found" }
   | { kind: "map_type_not_supported"; mapType: MapType }
-  | { kind: "kit_build_not_matched" }
+  | { kind: "kit_build_not_matched"; feedback: KitBuildFeedbackWithSignature }
   | { kind: "session_stage_not_found" }
   | {
       kind: "session_stage_type_mismatch";
@@ -99,6 +104,7 @@ type PriorLinkToClone = {
 type IntegrationCreateOutcome =
   | { kind: "created"; map: IntegrationMapRow }
   | { kind: "existing"; map: IntegrationMapRow }
+  | { kind: "time_expired" }
   | { kind: "map_not_found" }
   | { kind: "session_stage_not_found" }
   | { kind: "session_stage_type_mismatch"; stageType: string }
@@ -562,6 +568,16 @@ async function withTransaction<T>(
     await client.query("BEGIN");
     transactionStarted = true;
     const result = await operation(client);
+    const guarded = deadlineContext.getStore();
+    if (guarded && (guarded.mapIds.size || guarded.stageIds.size)) {
+      const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id
+        LEFT JOIN maps m ON m.session_stage_id=st.id AND m.type='INTEGRATION'
+        WHERE s.protocol_key='STAGE1_6' AND st.stage_type='INTEGRATION_MAP'
+          AND (m.id = ANY($1::uuid[]) OR st.id = ANY($2::uuid[]))
+          AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second' LIMIT 1`,
+        [[...guarded.mapIds], [...guarded.stageIds]]);
+      if (expired.rowCount) throw new SessionFlowGuardError();
+    }
     await client.query("COMMIT");
     transactionStarted = false;
     return result;
@@ -579,6 +595,7 @@ async function refreshKitDefinitionFlag(
   client: PoolClient,
   map: LockedMapState,
 ): Promise<LockedMapState> {
+  deadlineContext.getStore()?.mapIds.add(map.mapId);
   const result = await client.query<{ hasKitDefinition: boolean }>(
     `
       SELECT EXISTS (
@@ -631,7 +648,7 @@ async function lockMapForConcept(
       WHERE concept.id = $1::uuid
         AND (map.type = 'GOAL' OR (
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
-          AND session.protocol_key = 'STAGE1_4'
+          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
         ))
       FOR UPDATE OF map
     `,
@@ -677,7 +694,7 @@ async function lockMapForLink(
       WHERE link.id = $1::uuid
         AND (map.type = 'GOAL' OR (
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
-          AND session.protocol_key = 'STAGE1_4'
+          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
         ))
       FOR UPDATE OF map
     `,
@@ -722,7 +739,7 @@ async function lockMapById(
       WHERE map.id = $1::uuid
         AND (map.type = 'GOAL' OR (
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
-          AND session.protocol_key = 'STAGE1_4'
+          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
         ))
       FOR UPDATE OF map
     `,
@@ -740,6 +757,8 @@ type KitBuildFeedback = {
   relations: { matched: number; total: number };
   message: string;
 };
+
+type KitBuildFeedbackWithSignature = KitBuildFeedback & { mapSignature: string };
 
 async function readKitBuildFeedback(
   client: PoolClient,
@@ -937,6 +956,55 @@ async function readKitBuildFeedback(
         ? "Kit-Buildがゴールマップと一致しました。内容を見直して提出できます。"
         : `一致している部品：概念 ${counts.matchedConcepts}/${counts.expectedConcepts}、関係 ${counts.matchedLinks}/${counts.expectedLinks}。${issues.join("")}`,
   };
+}
+
+// Callers hold a Map row lock; positions do not affect matching.
+async function readKitBuildMapSignature(
+  client: PoolClient,
+  mapId: string,
+): Promise<string | null> {
+  const map = await client.query<{ kitDefinitionId: string | null }>(
+    `SELECT kit_definition_id AS "kitDefinitionId" FROM maps WHERE id = $1::uuid`,
+    [mapId],
+  );
+  if (!map.rows[0]) return null;
+  const concepts = await client.query<{ id: string; label: string }>(
+    `SELECT id, label FROM concepts
+     WHERE map_id = $1::uuid AND merged_into_concept_id IS NULL ORDER BY id`,
+    [mapId],
+  );
+  const links = await client.query<{
+    id: string; label: string; sourceConceptId: string; targetConceptId: string;
+  }>(
+    `SELECT link.id, link.label, link.source_concept_id AS "sourceConceptId",
+            link.target_concept_id AS "targetConceptId"
+     FROM links link
+     JOIN concepts source ON source.id = link.source_concept_id
+       AND source.map_id = link.map_id AND source.merged_into_concept_id IS NULL
+     JOIN concepts target ON target.id = link.target_concept_id
+       AND target.map_id = link.map_id AND target.merged_into_concept_id IS NULL
+     WHERE link.map_id = $1::uuid ORDER BY link.id`,
+    [mapId],
+  );
+  return JSON.stringify([
+    mapId,
+    map.rows[0].kitDefinitionId,
+    concepts.rows.map(({ id, label }) => [id, label]),
+    links.rows.map(({ id, label, sourceConceptId, targetConceptId }) => [
+      id, label, sourceConceptId, targetConceptId,
+    ]),
+  ]);
+}
+
+// The feedback and its signature describe the same saved graph under the Map lock.
+async function readKitBuildFeedbackWithSignature(
+  client: PoolClient,
+  mapId: string,
+): Promise<KitBuildFeedbackWithSignature | null> {
+  const feedback = await readKitBuildFeedback(client, mapId);
+  if (!feedback) return null;
+  const mapSignature = await readKitBuildMapSignature(client, mapId);
+  return mapSignature === null ? null : { ...feedback, mapSignature };
 }
 
 async function getConceptForUpdate(
@@ -1397,7 +1465,7 @@ async function isStage1LearnerMap(client: PoolClient, mapId: string) {
   );
   const row = result.rows[0];
   return Boolean(
-    row?.protocolKey === STAGE1_PROTOCOL_KEY &&
+    (row?.protocolKey === STAGE1_PROTOCOL_KEY || row?.protocolKey === "STAGE1_6") &&
       (row.type === "PRIOR" || row.type === "KB" || row.type === "INTEGRATION"),
   );
 }
@@ -1538,8 +1606,15 @@ async function applyHistoryStateDelta(
 
 app.use(express.json());
 app.use("/api", accessControl(pool));
+app.use("/api", (request, _response, next) => {
+  const guarded = request.method !== "GET" && request.method !== "HEAD" &&
+    (/^\/(maps|concepts|links)\//.test(request.path) || /^\/session-stages\/[^/]+\/integration-map$/.test(request.path));
+  if (guarded) return deadlineContext.run({ mapIds: new Set(), stageIds: new Set() }, next);
+  return next();
+});
 app.get("/api/me", (_request, response) => response.json(principalOf(response)));
 registerStage1AnalysisRoutes(app, pool);
+registerAssessmentRoutes(app, pool);
 
 app.get("/api/research/goal-maps", async (_request, response) => {
   if (principalOf(response).role !== "researcher") {
@@ -1812,6 +1887,17 @@ pool.on("error", (error) => {
   console.error("Unexpected PostgreSQL pool error", error);
 });
 
+app.get("/api/research/stage1/settings", async (_request, response) => {
+  try { const result = await pool.query<{ minutes: number }>("SELECT group_activity_seconds / 60 AS minutes FROM research_settings WHERE id=1"); return response.json({ minutes: result.rows[0]?.minutes ?? null }); }
+  catch { return response.status(500).json({ error: "settings_fetch_failed" }); }
+});
+app.put("/api/research/stage1/settings", async (request, response) => {
+  const minutes = request.body?.minutes;
+  if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 35791394) return response.status(400).json({ error: "invalid_duration", message: "正の整数の分数を指定してください。" });
+  try { await pool.query("INSERT INTO research_settings (id, group_activity_seconds) VALUES (1,$1) ON CONFLICT (id) DO UPDATE SET group_activity_seconds=EXCLUDED.group_activity_seconds", [minutes * 60]); return response.json({ minutes }); }
+  catch { return response.status(500).json({ error: "settings_save_failed" }); }
+});
+
 app.post("/api/research/stage1/sessions", async (request, response) => {
   const body: unknown = request.body;
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -1824,12 +1910,14 @@ app.post("/api/research/stage1/sessions", async (request, response) => {
     typeof data.videoUrl === "string" ? data.videoUrl.trim() : "";
   const videoUrl = requestedVideo || process.env.STAGE1_VIDEO_URL?.trim() || "";
   const kitDefinitionId = data.kitDefinitionId;
+  const studyGroup = data.studyGroup;
   const validVideoUrl =
     videoUrl.length > 0 &&
     videoUrl.length <= 2048 &&
     ((videoUrl.startsWith("/") && !videoUrl.startsWith("//")) ||
       /^https?:\/\//i.test(videoUrl));
   if (
+    (studyGroup !== "EXPERIMENTAL" && studyGroup !== "CONTROL") ||
     !participantCode ||
     participantCode.length > 64 ||
     !validVideoUrl ||
@@ -1843,6 +1931,8 @@ app.post("/api/research/stage1/sessions", async (request, response) => {
   }
   try {
     const result = await withTransaction(async (client) => {
+      const settings = await client.query<{ seconds: number }>("SELECT group_activity_seconds AS seconds FROM research_settings WHERE id=1 FOR SHARE");
+      if (!settings.rows[0]) return { kind: "settings_missing" as const };
       const kit = await client.query<{ id: string; goalMapId: string }>(
         `SELECT kit.id, kit.goal_map_id AS "goalMapId"
          FROM kit_definitions AS kit
@@ -1909,11 +1999,14 @@ app.post("/api/research/stage1/sessions", async (request, response) => {
         participantCode,
         lessonVideoUrl: videoUrl,
         kitDefinitionId,
+        studyGroup: studyGroup as "EXPERIMENTAL" | "CONTROL",
+        groupActivitySeconds: settings.rows[0].seconds,
       });
       const credential = createLearnerToken();
       await storeLearnerToken(client, session.id, credential.hash);
       return { kind: "created" as const, session, learnerAccessToken: credential.token };
     });
+    if (result.kind === "settings_missing") return response.status(409).json({ error: "settings_missing", message: "群別活動の共通時間を設定してください。" });
     if (result.kind === "kit_not_found") {
       return response.status(404).json({ error: "kit_not_found" });
     }
@@ -1937,7 +2030,7 @@ app.post("/api/research/stage1/sessions/:sessionId/learner-token", async (reques
   try {
     const result = await withTransaction(async (client) => {
       const session = await client.query(
-        "SELECT id FROM sessions WHERE id=$1::uuid AND protocol_key='STAGE1_4' FOR UPDATE",
+        "SELECT id FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6') FOR UPDATE",
         [sessionId],
       );
       if (!session.rowCount) return null;
@@ -1952,6 +2045,36 @@ app.post("/api/research/stage1/sessions/:sessionId/learner-token", async (reques
     return response.status(500).json({ error: "learner_token_rotation_failed" });
   }
 });
+
+async function currentLearnerMapState(sessionId: string) {
+  const result = await pool.query<{ id: string; status: string; type: string; expired: boolean; autoSubmittedAt: Date | null }>(
+    `SELECT m.id, m.status, m.type, m.auto_submitted_at AS "autoSubmittedAt",
+       (s.protocol_key = 'STAGE1_6' AND st.stage_type = 'INTEGRATION_MAP' AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second') AS expired
+     FROM sessions s
+     JOIN LATERAL (
+       SELECT id, status, stage_type, started_at FROM session_stages
+       WHERE session_id = s.id AND status <> 'COMPLETED'
+       ORDER BY order_index LIMIT 1
+     ) st ON st.status = 'IN_PROGRESS'
+     JOIN maps m ON m.session_stage_id = st.id
+       AND ((m.type = 'PRIOR' AND st.stage_type = 'PRIOR_MAP')
+         OR (m.type = 'KB' AND st.stage_type = 'KB_MAP')
+         OR (m.type = 'INTEGRATION' AND st.stage_type = 'INTEGRATION_MAP'))
+     WHERE s.id = $1::uuid AND s.status = 'IN_PROGRESS'`,
+    [sessionId],
+  );
+  const map = result.rows[0];
+  return {
+    visibleMapId: map?.status === "DRAFT" && !map.expired ? map.id : null,
+    integrationSubmitted: map?.type === "INTEGRATION" && map.status === "SUBMITTED",
+    integrationExists: map?.type === "INTEGRATION",
+    integrationAutoSubmittedAt: map?.type === "INTEGRATION" ? map.autoSubmittedAt : null,
+  };
+}
+
+function learnerStage<T extends { mapId: string | null }>(stage: T, visibleMapId: string | null): T {
+  return { ...stage, mapId: stage.mapId === visibleMapId ? stage.mapId : null };
+}
 
 app.get("/api/sessions/:sessionId", async (request, response) => {
   const { sessionId } = request.params;
@@ -1968,6 +2091,13 @@ app.get("/api/sessions/:sessionId", async (request, response) => {
       return response.status(404).json({
         error: "session_not_found",
         message: "Sessionが見つかりません。",
+      });
+    }
+    if (principalOf(response).role === "learner") {
+      const { visibleMapId } = await currentLearnerMapState(sessionId);
+      return response.json({
+        ...session,
+        stages: session.stages.map((stage) => learnerStage(stage, visibleMapId)),
       });
     }
     return response.json(session);
@@ -2061,7 +2191,17 @@ app.get("/api/sessions/:sessionId/flow", async (request, response) => {
         message: "Sessionが見つかりません。",
       });
     }
-    return response.json(flow);
+    const clock = await pool.query<{ now: Date }>("SELECT clock_timestamp() AS now");
+    const mapState = await currentLearnerMapState(sessionId);
+    const visibleFlow = principalOf(response).role === "learner"
+      ? {
+          ...flow,
+          stages: flow.stages.map((stage) => learnerStage(stage, mapState.visibleMapId)),
+          currentStage: flow.currentStage && learnerStage(flow.currentStage, mapState.visibleMapId),
+          nextStage: flow.nextStage && learnerStage(flow.nextStage, mapState.visibleMapId),
+        }
+      : flow;
+    return response.json({ ...visibleFlow, currentMapSubmitted: mapState.integrationSubmitted, currentIntegrationMapExists: mapState.integrationExists, currentMapAutoSubmittedAt: mapState.integrationAutoSubmittedAt, serverNow: clock.rows[0]!.now });
   } catch (error) {
     console.error("Failed to fetch Session flow", error);
     return response.status(500).json({
@@ -2069,6 +2209,24 @@ app.get("/api/sessions/:sessionId/flow", async (request, response) => {
       message: "Sessionの進行状況を取得できませんでした。",
     });
   }
+});
+
+app.get("/api/sessions/:sessionId/self-study-maps", async (request, response) => {
+  const { sessionId } = request.params;
+  if (!uuidPattern.test(sessionId)) return response.status(404).json({ error: "not_found" });
+  try {
+    const result = await pool.query<{ id: string; type: string }>(`
+      SELECT m.id, m.type FROM sessions s
+      JOIN session_stages current_stage ON current_stage.session_id=s.id AND current_stage.stage_type='SELF_STUDY' AND current_stage.status='IN_PROGRESS'
+      JOIN session_stages st ON st.session_id=s.id AND st.stage_type IN ('PRIOR_MAP','KB_MAP') AND st.status='COMPLETED'
+      JOIN maps m ON m.session_stage_id=st.id AND m.status='SUBMITTED' AND ((st.stage_type='PRIOR_MAP' AND m.type='PRIOR') OR (st.stage_type='KB_MAP' AND m.type='KB'))
+      WHERE s.id=$1::uuid AND s.protocol_key='STAGE1_6' AND s.study_group='CONTROL' AND s.status='IN_PROGRESS'
+        AND current_stage.id=(SELECT id FROM session_stages WHERE session_id=s.id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1)
+        AND ($2::boolean OR clock_timestamp() < current_stage.started_at + s.group_activity_seconds * interval '1 second')
+      ORDER BY st.order_index`, [sessionId, principalOf(response).role === "researcher"]);
+    if (result.rows.length !== 2) return response.status(409).json({ error: "self_study_unavailable", message: "自主学習用の提出済みMapを取得できません。" });
+    return response.json({ maps: result.rows });
+  } catch { return response.status(500).json({ error: "self_study_fetch_failed" }); }
 });
 
 app.post("/api/sessions/:sessionId/start", async (request, response) => {
@@ -2089,14 +2247,18 @@ app.post("/api/sessions/:sessionId/start", async (request, response) => {
 
   try {
     const outcome = await withTransaction(async (client) => {
-      const current = await client.query<{ status: string }>(
-        "SELECT status FROM sessions WHERE id = $1::uuid AND protocol_key = 'STAGE1_4' FOR UPDATE",
+      const current = await client.query<{ status: string; protocolKey: string }>(
+        "SELECT status, protocol_key AS \"protocolKey\" FROM sessions WHERE id = $1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6') FOR UPDATE",
         [sessionId],
       );
       const session = current.rows[0];
       if (!session) return { kind: "not_found" as const };
       if (session.status !== "NOT_STARTED") {
         return { kind: "conflict" as const, status: session.status };
+      }
+      if (session.protocolKey === "STAGE1_6") {
+        const questions = await client.query<{ count: number }>("SELECT count(*)::int AS count FROM assessment_questions WHERE session_id=$1::uuid AND category='DESCRIPTION'", [sessionId]);
+        if ((questions.rows[0]?.count ?? 0) < 2) return { kind: "questions_missing" as const };
       }
 
       const updated = await client.query<{
@@ -2107,7 +2269,7 @@ app.post("/api/sessions/:sessionId/start", async (request, response) => {
       }>(
         `
           UPDATE sessions
-          SET status = 'IN_PROGRESS', started_at = now()
+          SET status = 'IN_PROGRESS', started_at = clock_timestamp()
           WHERE id = $1::uuid AND status = 'NOT_STARTED'
           RETURNING id, status, started_at AS "startedAt",
             completed_at AS "completedAt"
@@ -2126,6 +2288,7 @@ app.post("/api/sessions/:sessionId/start", async (request, response) => {
         message: "Sessionが見つかりません。",
       });
     }
+    if (outcome.kind === "questions_missing") return response.status(409).json({ error: "questions_missing", message: "Session開始前に記述問題を2問以上登録してください。" });
     return response.status(409).json({
       error: "session_cannot_start",
       message: "NOT_STARTEDのSessionだけ開始できます。",
@@ -2171,6 +2334,12 @@ app.post("/api/session-stages/:stageId/start", async (request, response) => {
         };
       }
       if (stage.status === "IN_PROGRESS") {
+        {
+          const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id
+            WHERE st.id=$1::uuid AND s.protocol_key='STAGE1_6' AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY')
+              AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`, [stageId]);
+          if (expired.rowCount) return { kind: "time_expired" as const };
+        }
         return { kind: "resumed" as const, stage };
       }
       if (stage.status !== "PENDING") {
@@ -2202,6 +2371,7 @@ app.post("/api/session-stages/:stageId/start", async (request, response) => {
     if (outcome.kind === "started" || outcome.kind === "resumed") {
       return response.json(outcome.stage);
     }
+    if (outcome.kind === "time_expired") return response.status(409).json({ error: "time_expired", message: "活動時間が終了しました。Session画面から次の操作を行ってください。" });
     if (outcome.kind === "not_found") {
       return response.status(404).json({
         error: "session_stage_not_found",
@@ -2232,6 +2402,10 @@ app.post("/api/session-stages/:stageId/start", async (request, response) => {
   }
 });
 
+app.post("/api/session-stages/:stageId/submit-expired-integration", (_request, response) => {
+  return response.status(409).json({ error: "automatic_submission_required", message: "統合マップは活動時間の終了時に自動で提出されます。" });
+});
+
 app.post("/api/session-stages/:stageId/complete", async (request, response) => {
   const { stageId } = request.params;
   if (!uuidPattern.test(stageId)) {
@@ -2256,10 +2430,20 @@ app.post("/api/session-stages/:stageId/complete", async (request, response) => {
       if (flow.kind !== "ready") {
         return { kind: "flow_conflict" as const, flow };
       }
+      if (stage.stageType === "PRE_ASSESSMENT" || stage.stageType === "POST_ASSESSMENT") return { kind: "assessment_requires_submission" as const };
+      const timed = await client.query<{ protocol: string; studyGroup: string; elapsed: boolean; submitted: boolean }>(
+        `SELECT s.protocol_key AS protocol, s.study_group AS "studyGroup",
+          clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second' AS elapsed,
+          EXISTS (SELECT 1 FROM maps m WHERE m.session_stage_id=st.id AND m.type='INTEGRATION' AND m.status='SUBMITTED') AS submitted
+         FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid`, [stageId]);
+      const conditions = timed.rows[0];
+      const isTimed = conditions?.protocol === "STAGE1_6" && (stage.stageType === "SELF_STUDY" || stage.stageType === "INTEGRATION_MAP");
+      if (isTimed && (stage.stageType === "SELF_STUDY" ? conditions.studyGroup !== "CONTROL" : conditions.studyGroup !== "EXPERIMENTAL")) return { kind: "group_mismatch" as const };
+      if (isTimed && (!conditions.elapsed || (stage.stageType === "INTEGRATION_MAP" && !conditions.submitted))) return { kind: "timed_incomplete" as const };
       if (
         stage.stageType === "PRIOR_MAP" ||
         stage.stageType === "KB_MAP" ||
-        stage.stageType === "INTEGRATION_MAP"
+        (stage.stageType === "INTEGRATION_MAP" && !isTimed)
       ) {
         return { kind: "map_stage" as const };
       }
@@ -2299,6 +2483,9 @@ app.post("/api/session-stages/:stageId/complete", async (request, response) => {
     if (outcome.kind === "flow_conflict") {
       return currentStageConflictResponse(response, outcome.flow);
     }
+    if (outcome.kind === "assessment_requires_submission") return response.status(409).json({ error: "assessment_requires_submission", message: "評価の回答を提出してください。" });
+    if (outcome.kind === "group_mismatch") return response.status(409).json({ error: "group_mismatch", message: "この群の活動ではありません。" });
+    if (outcome.kind === "timed_incomplete") return response.status(409).json({ error: "timed_incomplete", message: "時間の終了と必要なMapの提出を確認してください。" });
     if (outcome.kind === "map_stage") {
       return response.status(409).json({
         error: "map_stage_completion_requires_submit",
@@ -2386,6 +2573,26 @@ app.post(
   },
 );
 
+app.get("/api/maps/:mapId/kit-graph-signature", async (request, response) => {
+  const { mapId } = request.params;
+  if (!uuidPattern.test(mapId)) return response.status(404).json({ error: "map_not_found" });
+  try {
+    const signature = await withTransaction(async (client) => {
+      const map = await client.query(
+        `SELECT id FROM maps WHERE id = $1::uuid AND type = 'KB' FOR SHARE`,
+        [mapId],
+      );
+      return map.rowCount ? readKitBuildMapSignature(client, mapId) : null;
+    });
+    return signature === null
+      ? response.status(404).json({ error: "map_not_found" })
+      : response.json({ mapSignature: signature });
+  } catch (error) {
+    console.error("Failed to read Kit-Build graph signature", error);
+    return response.status(500).json({ error: "kit_graph_signature_failed" });
+  }
+});
+
 app.get("/api/maps/:mapId/kit-feedback", async (request, response) => {
   const { mapId } = request.params;
   if (!uuidPattern.test(mapId)) {
@@ -2401,7 +2608,7 @@ app.get("/api/maps/:mapId/kit-feedback", async (request, response) => {
       );
       if (!map.rows[0]) return { kind: "not_found" as const };
       if (!map.rows[0].kitDefinitionId) return { kind: "kit_required" as const };
-      const result = await readKitBuildFeedback(client, mapId);
+      const result = await readKitBuildFeedbackWithSignature(client, mapId);
       return result
         ? { kind: "feedback" as const, feedback: result }
         : { kind: "not_found" as const };
@@ -2452,8 +2659,9 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
       }
 
       if (map.mapType === "KB") {
-        const feedback = await readKitBuildFeedback(client, mapId);
-        if (!feedback?.matched) return { kind: "kit_build_not_matched" };
+        const feedback = await readKitBuildFeedbackWithSignature(client, mapId);
+        if (!feedback) throw new Error("Kit-Build feedback returned no Map");
+        if (!feedback.matched) return { kind: "kit_build_not_matched", feedback };
       }
 
       if (map.sessionStageId !== null) {
@@ -2497,6 +2705,10 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
             stageStatus: stage.status,
           };
         }
+        if (map.mapType === "INTEGRATION") {
+          const automatic = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid AND s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL'`, [stage.id]);
+          if (automatic.rowCount) return { kind: "automatic_submission_required" };
+        }
       }
 
       const result = await client.query<SubmittedMapRow>(
@@ -2515,7 +2727,9 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
       const submittedMap = result.rows[0];
       if (!submittedMap) throw new Error("Map submission returned no row");
 
-      if (map.sessionStageId !== null) {
+      const sixIntegration = map.mapType === "INTEGRATION" && map.sessionStageId !== null &&
+        (await client.query("SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid AND s.protocol_key='STAGE1_6'", [map.sessionStageId])).rowCount === 1;
+      if (map.sessionStageId !== null && !sixIntegration) {
         const completedStage = await client.query(
           `
             UPDATE session_stages
@@ -2563,6 +2777,8 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
       return { kind: "submitted", map: submittedMap };
     });
 
+    if (outcome.kind === "automatic_submission_required") return response.status(409).json({ error: "automatic_submission_required", message: "統合マップは活動時間の終了時に自動で提出されます。" });
+    if (outcome.kind === "time_expired") return response.status(409).json({ error: "time_expired", message: "活動時間が終了しました。セッション画面に戻ってください。" });
     if (outcome.kind === "submitted") {
       return response.json(outcome.map);
     }
@@ -2587,6 +2803,7 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
         error: "kit_build_not_matched",
         message:
           "Kit-Buildがゴールマップと一致するまで提出できません。一致状況を確認し、概念の配置と関係の接続を見直してください。",
+        feedback: outcome.feedback,
       });
     }
 
@@ -2644,6 +2861,7 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
       submittedAt: outcome.submittedAt,
     });
   } catch (error) {
+    if (error instanceof SessionFlowGuardError) return response.status(409).json({ error: "time_expired", message: "活動時間が終了しました。Session画面から提出してください。" });
     console.error("Failed to submit Map", error);
     return response.status(500).json({
       error: "map_submit_failed",
@@ -2652,18 +2870,51 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
   }
 });
 
-app.post("/api/maps/:priorMapId/integration", async (request, response) => {
-  const { priorMapId } = request.params;
+app.post(["/api/maps/:priorMapId/integration", "/api/session-stages/:stageId/integration-map"], async (request, response) => {
+  let priorMapId = typeof request.params.priorMapId === "string" ? request.params.priorMapId : null;
+  const stageId = typeof request.params.stageId === "string" ? request.params.stageId : null;
+  let sessionStageId: string | null = null;
+  let sourceKitId: string | null = null;
 
-  if (!uuidPattern.test(priorMapId)) {
+  if (stageId) {
+    if (!uuidPattern.test(stageId) || hasUnexpectedEmptyBody(request.body)) {
+      return response.status(404).json({ error: "not_found" });
+    }
+    try {
+      const sources = await pool.query<{ priorId: string; kitId: string }>(
+        `SELECT prior.id AS "priorId", kb.kit_definition_id AS "kitId"
+         FROM session_stages target
+         JOIN sessions s ON s.id = target.session_id
+         JOIN session_stages prior_stage ON prior_stage.session_id = s.id AND prior_stage.stage_type = 'PRIOR_MAP' AND prior_stage.status = 'COMPLETED'
+         JOIN maps prior ON prior.session_stage_id = prior_stage.id AND prior.type = 'PRIOR' AND prior.status = 'SUBMITTED'
+         JOIN session_stages kb_stage ON kb_stage.session_id = s.id AND kb_stage.stage_type = 'KB_MAP' AND kb_stage.status = 'COMPLETED'
+         JOIN maps kb ON kb.session_stage_id = kb_stage.id AND kb.type = 'KB' AND kb.status = 'SUBMITTED' AND kb.kit_definition_id IS NOT NULL
+         WHERE target.id = $1::uuid AND target.stage_type = 'INTEGRATION_MAP'
+           AND target.status = 'IN_PROGRESS' AND s.status = 'IN_PROGRESS'
+           AND (s.protocol_key = 'STAGE1_4' OR (s.protocol_key = 'STAGE1_6' AND s.study_group = 'EXPERIMENTAL'))
+           AND target.id = (SELECT id FROM session_stages WHERE session_id = s.id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1)`,
+        [stageId],
+      );
+      const source = sources.rows[0];
+      if (!source) return response.status(404).json({ error: "not_found" });
+      priorMapId = source.priorId;
+      sourceKitId = source.kitId;
+      sessionStageId = stageId;
+    } catch (error) {
+      console.error("Failed to resolve Integration sources", error);
+      return response.status(500).json({ error: "integration_initialization_failed" });
+    }
+  }
+
+  if (!priorMapId || !uuidPattern.test(priorMapId)) {
     return response.status(400).json({
       error: "invalid_map_id",
       message: "Map IDの形式が正しくありません。",
     });
   }
 
-  let sessionStageId: string | null = null;
-  if (request.body !== undefined) {
+  const resolvedPriorMapId = priorMapId;
+  if (!stageId && request.body !== undefined) {
     const body: unknown = request.body;
     if (typeof body !== "object" || body === null || Array.isArray(body)) {
       return response.status(400).json({
@@ -2695,7 +2946,7 @@ app.post("/api/maps/:priorMapId/integration", async (request, response) => {
   try {
     const outcome = await withTransaction<IntegrationCreateOutcome>(
       async (client) => {
-        const priorMap = await lockMapById(client, priorMapId);
+        const priorMap = await lockMapById(client, resolvedPriorMapId);
         if (!priorMap) return { kind: "map_not_found" };
 
         if (priorMap.mapType !== "PRIOR") {
@@ -2727,6 +2978,11 @@ app.post("/api/maps/:priorMapId/integration", async (request, response) => {
             validation.kind === "already_assigned"
           ) {
             integrationStageSessionId = validation.stage.sessionId;
+            {
+              const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid AND s.protocol_key='STAGE1_6' AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`, [sessionStageId]);
+              if (expired.rowCount) return { kind: "time_expired" };
+              deadlineContext.getStore()?.stageIds.add(sessionStageId);
+            }
           }
           if (validation.kind === "already_assigned") {
             assignedIntegrationMapId = validation.stage.mapId;
@@ -2766,7 +3022,7 @@ app.post("/api/maps/:priorMapId/integration", async (request, response) => {
               ON stage.id = prior.session_stage_id
             WHERE prior.id = $1::uuid
           `,
-          [priorMapId],
+          [resolvedPriorMapId],
         );
         const priorStage = priorStageResult.rows[0];
         if (!priorStage) return { kind: "map_not_found" };
@@ -2804,7 +3060,7 @@ app.post("/api/maps/:priorMapId/integration", async (request, response) => {
                 AND type = 'INTEGRATION'
                 AND based_on_map_id = $2::uuid
             `,
-            [assignedIntegrationMapId, priorMapId],
+            [assignedIntegrationMapId, resolvedPriorMapId],
           );
           const existingMap = assignedMap.rows[0];
           if (existingMap) return { kind: "existing", map: existingMap };
@@ -2826,7 +3082,7 @@ app.post("/api/maps/:priorMapId/integration", async (request, response) => {
               ORDER BY created_at, id
               LIMIT 1
             `,
-            [priorMapId],
+            [resolvedPriorMapId],
           );
           const existingMap = existingResult.rows[0];
           if (existingMap) {
@@ -2848,7 +3104,7 @@ app.post("/api/maps/:priorMapId/integration", async (request, response) => {
             WHERE map_id = $1::uuid
             ORDER BY created_at, id
           `,
-          [priorMapId],
+          [resolvedPriorMapId],
         );
         const linksResult = await client.query<PriorLinkToClone>(
           `
@@ -2861,7 +3117,7 @@ app.post("/api/maps/:priorMapId/integration", async (request, response) => {
             WHERE map_id = $1::uuid
             ORDER BY created_at, id
           `,
-          [priorMapId],
+          [resolvedPriorMapId],
         );
         const priorConcepts = conceptsResult.rows;
         const priorLinks = linksResult.rows;
@@ -2889,7 +3145,7 @@ app.post("/api/maps/:priorMapId/integration", async (request, response) => {
               session_stage_id AS "sessionStageId",
               submitted_at AS "submittedAt"
           `,
-          [priorMapId, sessionStageId],
+          [resolvedPriorMapId, sessionStageId],
         );
         const integrationMap = mapResult.rows[0];
         if (!integrationMap) {
@@ -2980,12 +3236,19 @@ app.post("/api/maps/:priorMapId/integration", async (request, response) => {
       },
     );
 
-    if (outcome.kind === "created") {
-      return response.status(201).json({ ...outcome.map, created: true });
-    }
-
-    if (outcome.kind === "existing") {
-      return response.json({ ...outcome.map, created: false });
+    if (outcome.kind === "time_expired") return response.status(409).json({ error: "time_expired", message: "活動時間が終了しました。Session画面に戻ってください。" });
+    if (outcome.kind === "created" || outcome.kind === "existing") {
+      if (principalOf(response).role === "learner" && outcome.map.status !== "DRAFT") {
+        return response.status(404).json({ error: "not_found" });
+      }
+      const map = principalOf(response).role === "learner"
+        ? { ...outcome.map, basedOnMapId: null }
+        : outcome.map;
+      return response.status(outcome.kind === "created" ? 201 : 200).json({
+        ...map,
+        created: outcome.kind === "created",
+        ...(sourceKitId ? { kitDefinitionId: sourceKitId } : {}),
+      });
     }
 
     if (outcome.kind === "map_not_found") {
@@ -3084,6 +3347,7 @@ app.post("/api/maps/:priorMapId/integration", async (request, response) => {
         kind: "session_stage_already_assigned",
       });
     }
+    if (error instanceof SessionFlowGuardError) return response.status(409).json({ error: "time_expired", message: "活動時間が終了しました。Session画面に戻ってください。" });
     console.error("Failed to initialize Integration Map", error);
     return response.status(500).json({
       error: "integration_initialization_failed",
@@ -5987,6 +6251,20 @@ app.get("/api/kits/:kitId", async (request, response) => {
   }
 });
 
+app.get("/api/maps/:mapId/access", async (request, response) => {
+  const { mapId } = request.params;
+  if (!uuidPattern.test(mapId)) return response.status(404).json({ error: "not_found" });
+  try {
+    if (principalOf(response).role === "researcher") {
+      const result = await pool.query("SELECT 1 FROM maps WHERE id = $1::uuid", [mapId]);
+      if (!result.rowCount) return response.status(404).json({ error: "not_found" });
+    }
+    return response.status(204).end();
+  } catch {
+    return response.status(500).json({ error: "map_access_check_failed" });
+  }
+});
+
 app.get("/api/maps/:mapId", async (request, response) => {
   const { mapId } = request.params;
 
@@ -6042,7 +6320,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
         WHERE m.id = $1::uuid
           AND (m.type = 'GOAL' OR (
             m.type IN ('PRIOR', 'KB', 'INTEGRATION')
-            AND session.protocol_key = 'STAGE1_4'
+            AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
           ))
         ORDER BY c.created_at NULLS LAST, c.id
       `,
@@ -6188,7 +6466,10 @@ app.get("/api/maps/:mapId", async (request, response) => {
         `,
         [RETIRED_DEVELOPMENT_KIT_ID],
       );
-      availableKitDefinitions = kitOptionsResult.rows;
+      const principal = principalOf(response);
+      availableKitDefinitions = principal.role === "learner"
+        ? kitOptionsResult.rows.filter((kit) => kit.id === principal.kitId)
+        : kitOptionsResult.rows;
     }
 
     return response.json({
@@ -6198,7 +6479,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
       title: map.mapTitle,
       createdAt: map.mapCreatedAt,
       submittedAt: map.mapSubmittedAt,
-      basedOnMapId: map.basedOnMapId,
+      basedOnMapId: principalOf(response).role === "learner" ? null : map.basedOnMapId,
       kitDefinitionId: map.kitDefinitionId,
       sessionStageId: map.sessionStageId,
       sessionId: map.sessionId,
@@ -6257,11 +6538,36 @@ function isPostgresErrorCode(error: unknown, code: string) {
   );
 }
 
+let autoSubmissionRunning = false;
+async function submitExpiredIntegrationMaps() {
+  if (autoSubmissionRunning) return;
+  autoSubmissionRunning = true;
+  try {
+    await pool.query(`WITH submission_clock AS (SELECT clock_timestamp() AS submitted_at)
+      UPDATE maps m SET status='SUBMITTED', submitted_at=clock.submitted_at, auto_submitted_at=clock.submitted_at
+      FROM session_stages st JOIN sessions s ON s.id=st.session_id CROSS JOIN submission_clock clock
+      WHERE m.session_stage_id=st.id AND m.type='INTEGRATION' AND m.status='DRAFT'
+        AND s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL' AND s.status='IN_PROGRESS'
+        AND st.stage_type='INTEGRATION_MAP' AND st.status='IN_PROGRESS' AND st.started_at IS NOT NULL
+        AND st.id=(SELECT current_stage.id FROM session_stages current_stage
+          WHERE current_stage.session_id=s.id AND current_stage.status <> 'COMPLETED' ORDER BY current_stage.order_index LIMIT 1)
+        AND clock.submitted_at >= st.started_at + s.group_activity_seconds * interval '1 second'`);
+  } catch (error) {
+    console.error("Automatic Integration Map submission failed; will retry", error);
+  } finally {
+    autoSubmissionRunning = false;
+  }
+}
+
+const autoSubmissionTimer = setInterval(() => void submitExpiredIntegrationMaps(), 1000);
+autoSubmissionTimer.unref();
 const server = app.listen(port, "0.0.0.0", () => {
+  void submitExpiredIntegrationMaps();
   console.log(`API listening on port ${port}`);
 });
 
 const shutdown = () => {
+  clearInterval(autoSubmissionTimer);
   server.close(() => {
     void pool.end().then(() => process.exit(0));
   });

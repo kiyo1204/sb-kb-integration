@@ -1,4 +1,4 @@
-name: research-mvp
+name: research-system
 
 services:
   db:
@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?Copy .env.example to .env and configure the database values}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and configure the database values}
     ports:
-      - "${STAGE1_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -25,10 +25,12 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3000
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "1000"
       DATABASE_URL: postgres://${POSTGRES_USER:?Copy .env.example to .env}:${POSTGRES_PASSWORD:?Copy .env.example to .env}@db:5432/${POSTGRES_DB:?Copy .env.example to .env}
       RESEARCHER_API_TOKEN: ${RESEARCHER_API_TOKEN:?Set a random researcher credential in .env}
     ports:
-      - "${STAGE1_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-3000}:3000"
+      - "127.0.0.1:${API_PORT:-3000}:3000"
     volumes:
       - ./backend/src:/app/src
       - ./backend/migrations:/app/migrations
@@ -53,7 +55,7 @@ services:
     environment:
       API_PROXY_TARGET: http://api:3000
     ports:
-      - "${STAGE1_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-5173}:5173"
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-5173}:5173"
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/index.html:/app/index.html:ro

@@ -8,7 +8,7 @@ export type SessionStageType =
   | "PRIOR_MAP"
   | "LESSON"
   | "KB_MAP"
-  | "INTEGRATION_MAP";
+  | "INTEGRATION_MAP" | "PRE_ASSESSMENT" | "POST_ASSESSMENT" | "SELF_STUDY";
 
 export type SessionMapType = "PRIOR" | "KB" | "INTEGRATION";
 
@@ -80,7 +80,7 @@ export async function lockSessionStageForMap(
         LIMIT 1
       ) AS current_stage ON true
       WHERE stage.id = $1::uuid
-        AND session.protocol_key = $2
+        AND session.protocol_key IN ($2, 'STAGE1_6')
       FOR UPDATE OF session, stage
     `,
     [stageId, STAGE1_PROTOCOL_KEY],
@@ -129,7 +129,7 @@ export async function lockSessionStageProgress(
       FROM session_stages AS stage
       INNER JOIN sessions AS session ON session.id = stage.session_id
       WHERE stage.id = $1::uuid
-        AND session.protocol_key = $2
+        AND session.protocol_key IN ($2, 'STAGE1_6')
       FOR UPDATE OF session, stage
     `,
     [stageId, STAGE1_PROTOCOL_KEY],
@@ -159,6 +159,8 @@ export type Session = {
   participantCode: string | null;
   lessonVideoUrl: string | null;
   researchKitDefinitionId: string | null;
+  studyGroup: "EXPERIMENTAL" | "CONTROL" | null;
+  groupActivitySeconds: number | null;
   stages: SessionStage[];
 };
 
@@ -203,6 +205,7 @@ export async function getSession(
         session.participant_code AS "participantCode",
         session.lesson_video_url AS "lessonVideoUrl",
         session.research_kit_definition_id AS "researchKitDefinitionId",
+        session.study_group AS "studyGroup", session.group_activity_seconds AS "groupActivitySeconds",
         stage.id AS "stageId",
         stage.session_id AS "stageSessionId",
         stage.stage_type AS "stageType",
@@ -216,7 +219,7 @@ export async function getSession(
       LEFT JOIN session_stages AS stage ON stage.session_id = session.id
       LEFT JOIN maps AS map ON map.session_stage_id = stage.id
       WHERE session.id = $1::uuid
-        AND session.protocol_key = $2
+        AND session.protocol_key IN ($2, 'STAGE1_6')
       ORDER BY stage.order_index
     `,
     [sessionId, STAGE1_PROTOCOL_KEY],
@@ -234,6 +237,7 @@ export async function getSession(
     participantCode: session.participantCode,
     lessonVideoUrl: session.lessonVideoUrl,
     researchKitDefinitionId: session.researchKitDefinitionId,
+    studyGroup: session.studyGroup, groupActivitySeconds: session.groupActivitySeconds,
     stages: result.rows.flatMap((stage) =>
       stage.stageId === null
         ? []
@@ -321,7 +325,7 @@ export async function assertStageIsCurrent(
 
 /**
  * Stage 1 uses PRIOR_MAP as the post-lesson Scratch-Build map.
- * The fifth step is a researcher analysis screen, not a learner activity.
+ * New sessions use the six-activity protocol; existing four-stage sessions stay unchanged.
  */
 export async function createStage1Session(
   client: PoolClient,
@@ -329,17 +333,19 @@ export async function createStage1Session(
     participantCode: string;
     lessonVideoUrl: string;
     kitDefinitionId: string;
+    studyGroup: "EXPERIMENTAL" | "CONTROL";
+    groupActivitySeconds: number;
   },
 ): Promise<Session> {
   const result = await client.query<{ id: string }>(
     `INSERT INTO sessions (
-       protocol_key, participant_code, lesson_video_url, research_kit_definition_id
-     ) VALUES ($1, $2, $3, $4::uuid) RETURNING id`,
-    [STAGE1_PROTOCOL_KEY, input.participantCode, input.lessonVideoUrl, input.kitDefinitionId],
+       protocol_key, participant_code, lesson_video_url, research_kit_definition_id, study_group, group_activity_seconds
+     ) VALUES ($1, $2, $3, $4::uuid, $5, $6) RETURNING id`,
+    ["STAGE1_6", input.participantCode, input.lessonVideoUrl, input.kitDefinitionId, input.studyGroup, input.groupActivitySeconds],
   );
   const id = result.rows[0]?.id;
   if (!id) throw new Error("Stage1 Session insert returned no row");
-  const steps = ["LESSON", "PRIOR_MAP", "KB_MAP", "INTEGRATION_MAP"] as const;
+  const steps = ["LESSON", "PRIOR_MAP", "KB_MAP", "PRE_ASSESSMENT", input.studyGroup === "EXPERIMENTAL" ? "INTEGRATION_MAP" : "SELF_STUDY", "POST_ASSESSMENT"] as const;
   for (let index = 0; index < steps.length; index += 1) {
     await client.query(
       `INSERT INTO session_stages (session_id, stage_type, order_index)
