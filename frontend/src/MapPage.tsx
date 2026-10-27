@@ -2758,6 +2758,7 @@ function MapEditorShell({
 
       {map.type === "KB" && (
         <section className="kit-feedback-actions" aria-label="ゴールマップとの一致確認">
+          {isLearner && <p>部品をマップに配置して接続した後、ボタンで一致状況を確認できます。</p>}
           <button
             type="button"
             className="kit-feedback-check-button"
@@ -2786,6 +2787,7 @@ function MapEditorShell({
         className={`map-editor-workspace${drawer.kind !== "closed" ? " has-drawer" : ""}`}
       >
         <div className="map-editor-canvas-column">
+          {isLearner && !readOnly && <p className="map-editor-operation-hint">{map.type === "KB" ? "部品をマップへドラッグし、リンクの両端を概念へ接続します。" : "概念とリンクを追加し、リンクの両端を概念へドラッグして接続します。"} 矢印の先が関係先です。</p>}
           {!interactionLocked && (canCreateConcept || canCreateLink) && (
             <div className="map-editor-tools" aria-label="マップ操作">
               <span>追加</span>
@@ -3176,7 +3178,7 @@ function MapPageFrame({
   );
 }
 
-function ConceptCanvas({
+export function ConceptCanvas({
   mapId,
   mapType,
   concepts,

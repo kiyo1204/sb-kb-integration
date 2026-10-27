@@ -48,14 +48,15 @@ async function currentAssessment(client: PoolClient, stageId: string) {
 function validAnswers(value: unknown): value is AnswerInput[] {
   return Array.isArray(value) && value.length <= 1000 && value.every(item =>
     item && typeof item === "object" && typeof item.questionId === "string" && uuid.test(item.questionId) &&
-    typeof item.answer === "string" && item.answer.length <= 100000) &&
+    typeof item.answer === "string" && item.answer.trim().length > 0 && item.answer.length <= 100000) &&
     new Set(value.map(item => item.questionId)).size === value.length;
 }
 
-async function storeAnswers(client: PoolClient, sessionId: string, stageId: string, answers: AnswerInput[]) {
+async function storeAnswers(client: PoolClient, sessionId: string, stageId: string, answers: AnswerInput[], submit: boolean) {
   const questions = await client.query<{ id: string }>("SELECT id FROM assessment_questions WHERE session_id=$1::uuid", [sessionId]);
   const ids = new Set(questions.rows.map(q => q.id));
-  if (answers.length !== ids.size || answers.some(a => !ids.has(a.questionId))) return false;
+  if ((submit && answers.length !== ids.size) || answers.some(a => !ids.has(a.questionId))) return false;
+  if (!submit) await client.query("DELETE FROM assessment_answers WHERE session_id=$1::uuid AND stage_id=$2::uuid AND NOT (question_id=ANY($3::uuid[]))", [sessionId, stageId, answers.map(a => a.questionId)]);
   for (const answer of answers) {
     await client.query(`INSERT INTO assessment_answers(session_id,stage_id,question_id,answer)
       VALUES($1::uuid,$2::uuid,$3::uuid,$4) ON CONFLICT(stage_id,question_id)
@@ -131,12 +132,12 @@ export function registerAssessmentRoutes(app: Express, pool: Pool) {
   });
 
   for (const action of ["save", "submit"] as const) app.post(`/api/session-stages/:stageId/assessment/${action}`, async (req, res) => {
-    if (!uuid.test(req.params.stageId) || !validAnswers(req.body?.answers)) return error(res, 400, "invalid_answers", "回答の形式を確認してください。");
+    if (!uuid.test(req.params.stageId) || !validAnswers(req.body?.answers)) return error(res, 400, "invalid_answers", "空白のみの回答は保存・提出できません。回答を確認してください。");
     try {
       const result = await transaction(pool, async client => {
         const stage = await currentAssessment(client, req.params.stageId);
         if (!stage) return "not_current";
-        if (!await storeAnswers(client, stage.sessionId, stage.id, req.body.answers)) return "invalid_questions";
+        if (!await storeAnswers(client, stage.sessionId, stage.id, req.body.answers, action === "submit")) return "invalid_questions";
         if (action === "submit") {
           await client.query("UPDATE session_stages SET status='COMPLETED', completed_at=now() WHERE id=$1::uuid", [stage.id]);
           if (stage.stageType === "POST_ASSESSMENT") {
@@ -149,7 +150,7 @@ export function registerAssessmentRoutes(app: Express, pool: Pool) {
         return "ok";
       });
       if (result === "not_current") return error(res, 409, result, "現在の評価Stageではないか、提出済みです。");
-      if (result === "invalid_questions") return error(res, 400, result, "このSessionの問題セットと回答が一致しません。");
+      if (result === "invalid_questions") return error(res, 400, result, "問題と回答を確認してください。提出にはすべての設問への回答が必要です。");
       return res.json({ saved: true, submitted: action === "submit" });
     } catch (err) { console.error(err); return error(res, 500, "assessment_save_failed", "回答を保存できませんでした。"); }
   });
