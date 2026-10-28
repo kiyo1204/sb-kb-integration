@@ -50,7 +50,7 @@ async function ownerFor(pool: Pool, kind: string, id: string) {
 }
 
 // Map and entity URLs share the same policy, including direct API requests.
-async function learnerMayAccessMap(
+export async function learnerMayAccessMap(
   pool: Pool,
   kind: "maps" | "concepts" | "links",
   id: string,
