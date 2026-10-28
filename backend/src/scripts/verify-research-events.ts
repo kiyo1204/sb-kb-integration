@@ -66,6 +66,21 @@ try {
   assert.deepEqual(events[0]!.details, { durationMs: 100 });
   assert.equal(events[0]!.beforeQuality, "OBSERVED"); assert.equal(events[20]!.beforeQuality, "MISSING");
   assert.equal((await call(`/research/sessions/${session}/events?after=20`, researcher)).status, 200);
+  const migrationV2 = await import(pathToFileURL(resolve("migrations/1790900000000_allow_research_event_schema_v2.js")).href) as { up: (pgm: { sql: (sql: string) => void }) => void };
+  let sqlV2 = ""; migrationV2.up({ sql: value => { sqlV2 = value; } }); await scoped.query(sqlV2);
+  const emptyState = { snapshotVersion: 1, mapId: map, mapType: "PRIOR", basedOnMapId: null, kitDefinitionId: null, concepts: [], links: [] };
+  const state = { ...emptyState, concepts: [{ id: concept, mapId: map, label: "概念", positionX: 10, positionY: 20, mergedIntoConceptId: null, provenance: [] }] };
+  const v2 = { schemaVersion: 2, eventType: "ADD_CONCEPT", targetType: "CONCEPT", targetId: concept, mapId: map, outcome: "SUCCESS", clientTimeQuality: "MISSING", before: emptyState, after: state };
+  assert.equal((await call(`/sessions/${session}/events`, learner, { ...v2, after: { ...state, unknown: 1 } })).status, 400);
+  assert.equal((await call(`/sessions/${session}/events`, learner, { ...v2, after: { ...state, concepts: [{ ...state.concepts[0], label: "https://example.com" }] } })).status, 400);
+  assert.equal((await call(`/sessions/${session}/events`, learner, { ...v2, after: { ...state, concepts: [{ ...state.concepts[0], label: researcher }] } })).status, 400);
+  assert.equal((await call(`/sessions/${session}/events`, learner, v2)).status, 201);
+  const mixed = await call(`/research/sessions/${session}/events`, researcher);
+  const mixedEvents = mixed.body.events as Array<Record<string, unknown>>;
+  assert.equal(mixedEvents.length, 24); assert.equal(mixedEvents[0]!.schemaVersion, 1); assert.deepEqual(mixedEvents[0]!.before, { positionX: 1 });
+  assert.equal(mixedEvents[23]!.schemaVersion, 2); assert.deepEqual(mixedEvents[23]!.after, state);
+  await assert.rejects(scoped.query("UPDATE research_events SET schema_version=3 WHERE event_id=$1::uuid", [mixedEvents[23]!.eventId]));
+  await assert.rejects(scoped.query("UPDATE research_events SET before_state='{}'::jsonb WHERE event_id=$1::uuid", [mixedEvents[23]!.eventId]));
   console.log("Research event schema, access control, ordering and persistence: OK");
 } finally {
   if (server) await new Promise<void>((done, reject) => server!.close(error => error ? reject(error) : done()));

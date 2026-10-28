@@ -52,3 +52,16 @@ v1の入力や意味を破壊する変更は新しい schemaVersion とマイグ
 
 
 
+
+## マップ状態の追加契約 v2
+
+v1は変更しない。`schemaVersion: 2` はマップ操作に限る。`snapshotVersion: 1` の `MapHistorySnapshot` と同じ完全なマップ状態を `before` / `after` に保持し、複数の変更を同時に表現する。形式は `{snapshotVersion, mapId, mapType, basedOnMapId, kitDefinitionId, concepts, links}` のみ。mapTypeは PRIOR / KB / INTEGRATION。各 Concept は `{id, mapId, label, positionX, positionY, mergedIntoConceptId, provenance}`、各 Link は `{id, mapId, label, sourceConceptId, targetConceptId, provenance}`。Provenance は `{id, targetConceptId, sourceConceptId, relationType, createdAt}` または `{id, targetLinkId, sourceLinkId, relationType, createdAt}`。概念の relationType は CLONED_FROM / IMPORTED_FROM / MERGED_FROM、リンクは CLONED_FROM / IMPORTED_FROM / RECONSTRUCTED_FROM。Kit由来は kitDefinitionId と provenance の source ID で表す。source は別マップの場合があるため、スナップショット内の存在を要求しない。UUIDの構文は検証するが、source IDのDB上の実在・由来の正しさは検証しない。
+
+未知の項目は拒否する。IDはUUID、対象mapIdは外側のmapIdと一致、対象先は対応エンティティIDと一致する必要がある。概念の統合先とリンク両端は同じ状態内に存在する。重複した概念・リンク・同じ所有者のProvenance IDは拒否する。日時はタイムゾーン付きISO形式、座標は絶対値10000000以下の有限数、Concept最大1000件、Link最大2000件、各Provenance最大1000件。各ラベルは空白のみ不可、最大512 UTF-16コード単位、制御文字不可。HTTP登録はExpress既定のリクエストサイズ上限（100KB）も受ける。現行マップAPIはこの長さ・座標・件数上限を課していないため、既存データが上限外ならイベント記録を拒否する。Issue #4は操作成功とログ失敗を混同せず、上限超過を欠損として扱う必要がある。
+
+全v2イベントにはmapIdが必要。成功時には before と after 両方が必須で、mapType、basedOnMapId、kitDefinitionIdは両者で一致させる。ADD_CONCEPT / IMPORT_KIT_CONCEPT / MERGE_CONCEPT と ADD_LINK / IMPORT_KIT_LINK は対象IDがbeforeに存在せずafterに存在する。DELETE_CONCEPT / DELETE_LINK は逆。EDIT_CONCEPT / MOVE_CONCEPT / EDIT_LINK / RECONNECT_LINK は対象が両方に存在する。UNDO / REDO は両状態と relatedEventId を要する。MAP_SAVE / MAP_SUBMIT / MAP_AUTO_SUBMIT は両状態を持つ。失敗・拒否・取消・不明では状態省略を許すが、状態を渡す場合は同じ検証を行う。各イベントの適用・状態差分の意味検証はIssue #4で実装する。状態を全体として扱うため、概念削除に伴うリンク削除、統合での複数概念・リンク変更も表現できる。各品質欄の意味はv1と同じ。
+
+自由なJSON、ヘッダー、URL、エラー本文、認証情報の専用欄はない。ラベルには研究に必要な文字列のみを許し、URL、認証情報に関連する語、長いトークン状文字列を拒否する。現在の研究者コードと一致または包含する文字列、登録済み学習者コードに一致する文字列も登録時に拒否する。これは既知の漏えい形式を減らす対策であり、任意のテキスト中の未知のパスワード・個人情報を完全に識別できる保証ではない。研究実施前にはデータ収集と入力内容の運用・倫理審査が必要。拒否は無言の伏字化を行わず失敗とし、状態の再生可能性を誤認させない。上記の禁止条件に該当する正当なラベルも記録できない。
+
+HTTPで受けたイベントは認証されたクライアントによる申告であり、DBのマップ状態と一致する保証はない。読み出しは既存どおり研究者専用。Issue #4ではサーバーの編集トランザクションから実際の確定状態を記録し、同じマップの初期スナップショット・順序・対象イベントを検証してから再生する。マップ操作の収集・再生・旧ログの切替は本変更に含まない。v1行は再解釈せず、v1/v2をschemaVersionで区別して返す。v2を許可するマイグレーションは既存行を変更しない。
+

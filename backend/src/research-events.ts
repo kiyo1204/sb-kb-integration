@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import type { Pool, PoolClient } from "pg";
 import { learnerMayAccessMap, principalOf, tokenHash } from "./access-control.js";
+import { mapStateLabels, validateMapEventV2, type MapStateV2 } from "./research-event-map-v2.js";
 
 // Names are shared with the catalog; adding a payload requires a reviewed schema version.
 export const eventTargets = {
@@ -18,18 +19,20 @@ export type EventOutcome = "SUCCESS" | "FAILURE" | "REJECTED" | "CANCELLED" | "U
 export type EventActor = "LEARNER" | "RESEARCHER" | "SYSTEM";
 type TimeQuality = "OBSERVED" | "ESTIMATED" | "MISSING" | "NOT_APPLICABLE" | "UNKNOWN";
 type NumericState = { positionX?: number; positionY?: number };
-export type EventInput = { eventType: EventType; targetType: typeof eventTargets[EventType]; stageId?: string; mapId?: string; targetId?: string; relatedEventId?: string; outcome: EventOutcome; reasonCode?: string; clientTimestamp?: string; clientTimeQuality: TimeQuality; before?: NumericState; after?: NumericState; beforeQuality?: TimeQuality; afterQuality?: TimeQuality; details?: { durationMs?: number; positionSeconds?: number; fromSeconds?: number; toSeconds?: number } };
+type EventCommon = { eventType: EventType; targetType: typeof eventTargets[EventType]; stageId?: string; mapId?: string; targetId?: string; relatedEventId?: string; outcome: EventOutcome; reasonCode?: string; clientTimestamp?: string; clientTimeQuality: TimeQuality; beforeQuality?: TimeQuality; afterQuality?: TimeQuality; details?: { durationMs?: number; positionSeconds?: number; fromSeconds?: number; toSeconds?: number } };
+export type EventInput = EventCommon & ({ schemaVersion?: 1; before?: NumericState; after?: NumericState } | { schemaVersion: 2; before?: MapStateV2; after?: MapStateV2 });
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const reasons = ["NOT_APPLICABLE", "UNKNOWN", "VALIDATION", "PERMISSION", "DEADLINE", "CONFLICT", "NETWORK", "SERVER", "USER_CANCELLED", "OTHER"];
 const qualities = ["OBSERVED", "ESTIMATED", "MISSING", "NOT_APPLICABLE", "UNKNOWN"];
 const outcomes = ["SUCCESS", "FAILURE", "REJECTED", "CANCELLED", "UNKNOWN"];
 const keys = ["schemaVersion", "eventType", "targetType", "stageId", "mapId", "targetId", "relatedEventId", "outcome", "reasonCode", "clientTimestamp", "clientTimeQuality", "before", "after", "beforeQuality", "afterQuality", "details"];
+class InvalidEventError extends Error {}
 function object(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function numericState(value: unknown) {
   return object(value) && Object.keys(value).length > 0 && Object.entries(value).every(([key, item]) => ["positionX", "positionY"].includes(key) && typeof item === "number" && Number.isFinite(item));
 }
 export function validateEvent(value: unknown): value is EventInput {
-  if (!object(value) || Object.keys(value).some(key => !keys.includes(key)) || value.schemaVersion !== 1) return false;
+  if (!object(value) || Object.keys(value).some(key => !keys.includes(key)) || ![1, 2].includes(value.schemaVersion as number)) return false;
   if (typeof value.eventType !== "string" || !Object.hasOwn(eventTargets, value.eventType) || value.targetType !== eventTargets[value.eventType as EventType]) return false;
   if (typeof value.outcome !== "string" || !outcomes.includes(value.outcome) || typeof value.clientTimeQuality !== "string" || !qualities.includes(value.clientTimeQuality)) return false;
   if (value.reasonCode !== undefined && (typeof value.reasonCode !== "string" || !reasons.includes(value.reasonCode))) return false;
@@ -40,7 +43,9 @@ export function validateEvent(value: unknown): value is EventInput {
   if (value.clientTimeQuality === "OBSERVED" || value.clientTimeQuality === "ESTIMATED") {
     if (typeof value.clientTimestamp !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?(?:Z|[+-]\d\d:\d\d)$/.test(value.clientTimestamp) || !Number.isFinite(Date.parse(value.clientTimestamp))) return false;
   } else if (value.clientTimestamp !== undefined) return false;
-  if (value.before !== undefined && !numericState(value.before) || value.after !== undefined && !numericState(value.after)) return false;
+  if (value.schemaVersion === 1) {
+    if (value.before !== undefined && !numericState(value.before) || value.after !== undefined && !numericState(value.after)) return false;
+  } else if (!validateMapEventV2(value)) return false;
   for (const field of ["before", "after"] as const) {
     const quality = value[`${field}Quality`] ?? (value[field] === undefined ? "MISSING" : "OBSERVED");
     if (typeof quality !== "string" || !qualities.includes(quality) || (value[field] !== undefined) !== ["OBSERVED", "ESTIMATED"].includes(quality)) return false;
@@ -50,15 +55,23 @@ export function validateEvent(value: unknown): value is EventInput {
 }
 
 export async function insertResearchEvent(client: PoolClient, sessionId: string, actor: EventActor, event: EventInput) {
-  if (!uuid.test(sessionId) || !["LEARNER", "RESEARCHER", "SYSTEM"].includes(actor) || !validateEvent({ ...event, schemaVersion: 1 })) throw new Error("Invalid event");
+  if (!uuid.test(sessionId) || !["LEARNER", "RESEARCHER", "SYSTEM"].includes(actor) || !validateEvent({ ...event, schemaVersion: event.schemaVersion ?? 1 })) throw new InvalidEventError("Invalid event");
   const session = await client.query<{ participantCode: string; studyGroup: string | null }>(`SELECT participant_code AS "participantCode", study_group AS "studyGroup" FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6')`, [sessionId]);
   if (!session.rowCount) return null;
   const participantCode = session.rows[0]!.participantCode;
   if (participantCode === process.env.RESEARCHER_API_TOKEN || (await client.query("SELECT 1 FROM sessions WHERE learner_access_token_hash=$1 LIMIT 1", [tokenHash(participantCode)])).rowCount) return null;
+  if (event.schemaVersion === 2) {
+    const labels = [event.before, event.after].flatMap(state => state ? mapStateLabels(state) : []);
+    const researcherToken = process.env.RESEARCHER_API_TOKEN;
+    if (researcherToken && labels.some(text => text.includes(researcherToken))) throw new InvalidEventError("Invalid event");
+    const hashes = labels.flatMap(text => [text, ...text.split(/\s+/)]).map(tokenHash);
+    if (hashes.length && (await client.query("SELECT 1 FROM sessions WHERE learner_access_token_hash = ANY($1::text[]) LIMIT 1", [hashes])).rowCount) throw new InvalidEventError("Invalid event");
+  }
   let stageId = event.stageId ?? null;
   if (event.mapId) {
-    const map = await client.query<{ stageId: string }>(`SELECT st.id AS "stageId" FROM maps m JOIN session_stages st ON st.id=m.session_stage_id WHERE m.id=$1::uuid AND st.session_id=$2::uuid`, [event.mapId, sessionId]);
+    const map = await client.query<{ stageId: string; mapType: string }>(`SELECT st.id AS "stageId", m.type AS "mapType" FROM maps m JOIN session_stages st ON st.id=m.session_stage_id WHERE m.id=$1::uuid AND st.session_id=$2::uuid`, [event.mapId, sessionId]);
     if (!map.rowCount || (stageId && map.rows[0]!.stageId !== stageId)) return null;
+    if (event.schemaVersion === 2 && [event.before, event.after].some(state => state && state.mapType !== map.rows[0]!.mapType)) return null;
     stageId = map.rows[0]!.stageId;
   }
   const stage = stageId ? await client.query<{ stageType: string }>(`SELECT stage_type AS "stageType" FROM session_stages WHERE id=$1::uuid AND session_id=$2::uuid`, [stageId, sessionId]) : null;
@@ -67,8 +80,8 @@ export async function insertResearchEvent(client: PoolClient, sessionId: string,
   if (event.targetType === "SESSION" && event.targetId && event.targetId !== sessionId || event.targetType === "STAGE" && event.targetId && event.targetId !== stageId || event.targetType === "MAP" && event.targetId && event.targetId !== event.mapId) return null;
   const sequence = await client.query<{ sequence: string }>(`INSERT INTO research_event_counters(session_id,next_sequence) VALUES($1::uuid,2) ON CONFLICT(session_id) DO UPDATE SET next_sequence=research_event_counters.next_sequence+1 RETURNING next_sequence-1 AS sequence`, [sessionId]);
   const inserted = await client.query<{ eventId: string; sequenceNumber: string }>(`INSERT INTO research_events(event_id,schema_version,session_id,stage_id,map_id,participant_code,study_group,activity,actor_type,event_type,target_type,target_id,outcome,reason_code,sequence_number,client_timestamp,client_time_quality,related_event_id,before_state,after_state,before_quality,after_quality,details)
-    VALUES(gen_random_uuid(),1,$1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10::uuid,$11,$12,$13::bigint,$14::timestamptz,$15,$16::uuid,$17::jsonb,$18::jsonb,$19,$20,$21::jsonb) RETURNING event_id AS "eventId", sequence_number AS "sequenceNumber"`,
-    [sessionId, stageId, event.mapId ?? null, session.rows[0]!.participantCode, session.rows[0]!.studyGroup, stage?.rows[0]?.stageType ?? null, actor, event.eventType, event.targetType, event.targetId ?? (event.targetType === "SESSION" ? sessionId : event.targetType === "STAGE" ? stageId : event.targetType === "MAP" ? event.mapId : null), event.outcome, event.reasonCode ?? null, sequence.rows[0]!.sequence, event.clientTimestamp ?? null, event.clientTimeQuality, event.relatedEventId ?? null, event.before ? JSON.stringify(event.before) : null, event.after ? JSON.stringify(event.after) : null, event.beforeQuality ?? (event.before ? "OBSERVED" : "MISSING"), event.afterQuality ?? (event.after ? "OBSERVED" : "MISSING"), JSON.stringify(event.details ?? {})]);
+    VALUES(gen_random_uuid(),$22,$1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10::uuid,$11,$12,$13::bigint,$14::timestamptz,$15,$16::uuid,$17::jsonb,$18::jsonb,$19,$20,$21::jsonb) RETURNING event_id AS "eventId", sequence_number AS "sequenceNumber"`,
+    [sessionId, stageId, event.mapId ?? null, session.rows[0]!.participantCode, session.rows[0]!.studyGroup, stage?.rows[0]?.stageType ?? null, actor, event.eventType, event.targetType, event.targetId ?? (event.targetType === "SESSION" ? sessionId : event.targetType === "STAGE" ? stageId : event.targetType === "MAP" ? event.mapId : null), event.outcome, event.reasonCode ?? null, sequence.rows[0]!.sequence, event.clientTimestamp ?? null, event.clientTimeQuality, event.relatedEventId ?? null, event.before ? JSON.stringify(event.before) : null, event.after ? JSON.stringify(event.after) : null, event.beforeQuality ?? (event.before ? "OBSERVED" : "MISSING"), event.afterQuality ?? (event.after ? "OBSERVED" : "MISSING"), JSON.stringify(event.details ?? {}), event.schemaVersion ?? 1]);
   return inserted.rows[0]!;
 }
 export function registerResearchEventRoutes(app: Express, pool: Pool) {
@@ -90,7 +103,7 @@ export function registerResearchEventRoutes(app: Express, pool: Pool) {
       if (!result) { await client.query("ROLLBACK"); return res.status(404).json({ error: "not_found" }); }
       await client.query("COMMIT");
       return res.status(201).json({ ...result, logSaved: true });
-    } catch { await client.query("ROLLBACK"); return res.status(500).json({ error: "event_save_failed", logSaved: false }); }
+    } catch (error) { await client.query("ROLLBACK"); return error instanceof InvalidEventError ? res.status(400).json({ error: "invalid_event", logSaved: false }) : res.status(500).json({ error: "event_save_failed", logSaved: false }); }
     finally { client.release(); }
   });
   app.get("/api/research/sessions/:sessionId/events", async (req, res) => {
