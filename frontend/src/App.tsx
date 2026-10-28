@@ -11,6 +11,7 @@ import SessionFlowPage from "./SessionFlowPage";
 import Stage1NewSessionPage from "./Stage1NewSessionPage";
 import Stage1AnalysisPage from "./Stage1AnalysisPage";
 import Stage1GoalMapsPage from "./Stage1GoalMapsPage";
+import TutorialPage from "./TutorialPage";
 
 export default function App() {
   const [token, updateToken] = useState(getAccessToken());
@@ -98,6 +99,9 @@ export default function App() {
     }
   }
 
+  if (window.location.pathname === "/tutorial") {
+    return <TutorialPage returnHref={principal?.role === "learner" && principal.sessionId ? `/sessions/${principal.sessionId}` : "/"} />;
+  }
   if (!token) {
     return renderHomePage();
   }

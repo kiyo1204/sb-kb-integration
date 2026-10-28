@@ -67,6 +67,7 @@ export function ResearchAssessment({ sessionId }: { sessionId: string }) {
 export function LearnerAssessment({ stageId, onSubmitted }: { stageId: string; onSubmitted: () => Promise<void> }) {
   const [questions, setQuestions] = useState<LearnerQuestion[] | null>(null);
   const [message, setMessage] = useState("");
+  const [showMissing, setShowMissing] = useState(false);
   const [busy, setBusy] = useState(false);
   const latest = useRef<LearnerQuestion[]>([]);
   const queue = useRef<Promise<void>>(Promise.resolve());
@@ -75,8 +76,8 @@ export function LearnerAssessment({ stageId, onSubmitted }: { stageId: string; o
   const path = `/api/session-stages/${stageId}/assessment`;
   function payload(list: LearnerQuestion[]) { return list.map(q => ({ questionId: q.id, answer: q.answer })); }
   function persist(list: LearnerQuestion[]) {
-    const answers = payload(list);
-    const serialized = JSON.stringify(answers);
+    const answers = payload(list).filter(answer => answer.answer.trim());
+    const serialized = JSON.stringify(payload(list));
     queue.current = queue.current.catch(() => undefined).then(async () => {
       await json(`${path}/save`, "POST", { answers });
       if (localStorage.getItem(cacheKey) === serialized) localStorage.removeItem(cacheKey);
@@ -111,8 +112,15 @@ export function LearnerAssessment({ stageId, onSubmitted }: { stageId: string; o
   }
   async function submit() {
     const answers = payload(latest.current);
-    const empty = answers.filter(a => !a.answer.trim()).length;
-    if (!window.confirm(`未回答は${empty}問です。空欄のまま提出できます。提出しますか？`)) return;
+    const missing = latest.current.flatMap((q, index) => q.answer.trim() ? [] : [index + 1]);
+    if (missing.length) {
+      setShowMissing(true);
+      const first = latest.current.find(q => !q.answer.trim());
+      if (first) document.getElementById(`answer-${first.id}`)?.focus();
+      return;
+    }
+    setShowMissing(false);
+    if (!window.confirm("回答を提出しますか？")) return;
     setBusy(true); setMessage("");
     if (timer.current !== null) window.clearTimeout(timer.current);
     try { await queue.current; await json(`${path}/submit`, "POST", { answers }); try { localStorage.removeItem(cacheKey); } catch { /* The submission is already saved on the server. */ } await onSubmitted(); }
@@ -120,10 +128,11 @@ export function LearnerAssessment({ stageId, onSubmitted }: { stageId: string; o
     finally { setBusy(false); }
   }
   if (!questions) return <p role="status">{message || "評価を読み込んでいます…"}</p>;
-  return <div className="learner-assessment"><p>自由に記述してください。空欄のまま提出することもできます。</p>
-    {questions.map((q, index) => <div className="assessment-question" key={q.id}><label className="assessment-field" htmlFor={`answer-${q.id}`}>問題 {index + 1}：{q.prompt}</label><textarea id={`answer-${q.id}`} rows={4} value={q.answer} disabled={busy} onChange={e => change(q.id, e.target.value)} /></div>)}
+  return <div className="learner-assessment"><p>すべての問題に記述で回答し、提出してください。</p>
+    {questions.map((q, index) => <div className="assessment-question" key={q.id}><label className="assessment-field" htmlFor={`answer-${q.id}`}>問題 {index + 1}：{q.prompt}</label><textarea id={`answer-${q.id}`} rows={4} value={q.answer} disabled={busy} required aria-invalid={showMissing && !q.answer.trim() || undefined} onChange={e => change(q.id, e.target.value)} /></div>)}
     <div className="assessment-actions"><p>未回答: {questions.filter(q => !q.answer.trim()).length}問</p>
     <button className="session-primary-button" type="button" disabled={busy} onClick={() => void submit()}>回答を確認して提出</button></div>
+    {showMissing && questions.some(q => !q.answer.trim()) && <p className="assessment-status" role="alert">問題 {questions.flatMap((q, index) => q.answer.trim() ? [] : [index + 1]).join("、")} に回答してください。空白だけでは提出できません。</p>}
     {message && <p className="assessment-status" role="status">{message}</p>}
   </div>;
 }

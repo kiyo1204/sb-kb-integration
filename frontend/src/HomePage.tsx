@@ -128,6 +128,7 @@ export default function HomePage({
                     </p>
                   )}
                 </form>
+                <p><a className="home-secondary-link" href="/tutorial">操作の練習</a></p>
                 <p className="home-access-note">
                   研究者コードは学習者に共有しないでください。
                 </p>
@@ -159,6 +160,7 @@ export default function HomePage({
                     セッションを開く <span aria-hidden="true">→</span>
                   </a>
                 )}
+                <p><a className="home-secondary-link" href="/tutorial">操作の練習</a></p>
               </>
             ) : (
               <>

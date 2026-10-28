@@ -1260,6 +1260,21 @@ textarea:focus {
   font-variant-numeric: tabular-nums;
 }
 
+.tutorial-page {
+  max-width: 1500px;
+}
+
+.tutorial-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.tutorial-edit, .map-editor-operation-hint {
+  margin: 12px 0;
+}
+
 .session-study-maps > div,
 .assessment-actions {
   display: flex;

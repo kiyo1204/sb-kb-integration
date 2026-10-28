@@ -445,6 +445,7 @@ function SessionDashboard({
           <div className="session-current-panel">
             <h2>セッションを開始してください</h2>
             <p>開始後、最初の活動から順番に進みます。</p>
+            {isLearner && <p><a className="session-secondary-button" href="/tutorial">操作の練習</a></p>}
             <button className="session-primary-button" type="button" disabled={busy} onClick={() => void startSession()}>
               {busy ? "開始中…" : "セッションを開始"}
             </button>
@@ -455,6 +456,7 @@ function SessionDashboard({
           <div className="session-current-panel">
             <p className="session-current-label">現在の活動</p>
             <h2>{label(current)}</h2>
+            {isLearner && current.status === "PENDING" && <p>{current.stageType === "LESSON" ? "開始後に動画を視聴し、視聴したことを確認してください。" : current.stageType === "SELF_STUDY" ? "開始すると提出済みの2枚のマップを確認できます。" : current.stageType === "PRE_ASSESSMENT" || current.stageType === "POST_ASSESSMENT" ? "開始して、表示される問題に回答してください。" : "開始してマップを操作してください。"}</p>}
             {!isLearner && flow.nextStage && (
               <p className="session-next-label">
                 次の活動: {label(flow.nextStage)}
@@ -476,7 +478,7 @@ function SessionDashboard({
             {timed && current.status === "IN_PROGRESS" && <div className="session-timed-activity">
               <p className="session-timer">残り時間: {remaining === null ? "取得中" : `${Math.floor(remaining / 60)}分${remaining % 60}秒`}</p>
               {current.stageType === "SELF_STUDY" && flow.session.studyGroup === "CONTROL" && isLearner && remaining === 0 && <p role="status">時間が終了しました。</p>}
-              {current.stageType === "SELF_STUDY" && flow.session.studyGroup === "CONTROL" && (!isLearner || (remaining !== null && remaining > 0)) && <div className="session-study-maps"><p>提出済みのマップを読み取り専用で確認してください。</p>
+              {current.stageType === "SELF_STUDY" && flow.session.studyGroup === "CONTROL" && (!isLearner || (remaining !== null && remaining > 0)) && <div className="session-study-maps"><p>提出済みのマップを読み取り専用で確認してください。各マップは拡大・縮小やスクロールができます。</p>
                 {isLearner ? <>
                   {studyStatus === "loading" && <p role="status">2枚のマップを読み込んでいます…</p>}
                   {studyStatus === "error" && <div className="session-study-error" role="alert"><p>2枚のマップを表示できませんでした。接続を確認し、もう一度お試しください。解決しない場合は研究者に連絡してください。</p><button type="button" className="session-secondary-button" onClick={() => { setStudyStatus("loading"); setStudyRetry(value => value + 1); }}>再読み込み</button></div>}

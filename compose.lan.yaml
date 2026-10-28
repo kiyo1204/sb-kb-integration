@@ -1,0 +1,6 @@
+# LAN mode is enabled only when this file is explicitly supplied to Compose.
+services:
+  frontend:
+    ports: !override
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:5173"
+      - "${FRONTEND_BIND_ADDRESS:?Select a LAN IPv4 address}:${FRONTEND_PORT:-5173}:5173"
