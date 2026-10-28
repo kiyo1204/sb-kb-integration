@@ -14,7 +14,9 @@
     "format": "prettier --write src migrations package.json tsconfig.json eslint.config.js",
     "format:check": "prettier --check src migrations package.json tsconfig.json eslint.config.js",
     "test:stage1:integration": "tsx src/scripts/verify-stage1.ts",
-    "test:undo-redo:unit": "tsx src/scripts/verify-undo-redo.ts"
+    "test:undo-redo:unit": "tsx src/scripts/verify-undo-redo.ts",
+    "test:research-events": "tsx src/scripts/verify-research-events.ts",
+    "test:research-event-schema": "tsx src/scripts/verify-research-event-schema.ts"
   },
   "dependencies": {
     "express": "^5.1.0",

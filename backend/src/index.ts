@@ -16,6 +16,7 @@ import {
 import { buildSessionRawExport } from "./research-export.js";
 import { registerStage1AnalysisRoutes } from "./stage1-analysis.js";
 import { registerAssessmentRoutes } from "./assessments.js";
+import { registerResearchEventRoutes } from "./research-events.js";
 import { accessControl, createLearnerToken, principalOf, storeLearnerToken } from "./access-control.js";
 import { deriveUndoRedoAvailability, historySnapshotsEqual, historyStateDelta } from "./map-undo-redo.js";
 import type {
@@ -1615,6 +1616,7 @@ app.use("/api", (request, _response, next) => {
 app.get("/api/me", (_request, response) => response.json(principalOf(response)));
 registerStage1AnalysisRoutes(app, pool);
 registerAssessmentRoutes(app, pool);
+registerResearchEventRoutes(app, pool);
 
 app.get("/api/research/goal-maps", async (_request, response) => {
   if (principalOf(response).role !== "researcher") {

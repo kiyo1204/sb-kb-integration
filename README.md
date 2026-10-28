@@ -124,4 +124,6 @@ Remove-Item Env:\FRONTEND_BIND_ADDRESS
 
 ## 参考資料
 
+研究イベントの新基盤と旧ログの関係は[研究イベント仕様 v1](docs/research-events-v1.md)を参照してください。既存操作の新形式への収集や既存ログからの切替は、後続の作業です。
+
 Kit-Build手法の論文引用、既存実装の調査、ライセンスの扱いは[Kit-Buildの参考資料](docs/kit-build-interaction-references.md)を参照してください。
