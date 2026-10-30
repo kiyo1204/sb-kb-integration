@@ -1,3 +1,5 @@
+import {discardDeletedQueue} from "./observation-outbox";
+import { reliableFetch } from "./operation-client";
 const key = "stage1-access-token";
 
 export function uiText(value: string) {
@@ -15,7 +17,10 @@ export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const token = getAccessToken();
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(input, { ...init, headers });
+  return reliableFetch(input, { ...init, headers }).then(async response=>{
+    if(response.status===410){const body=await response.clone().json().catch(()=>null);if(body?.error==="research_data_deleted"&&typeof body.queueKey==="string")await discardDeletedQueue(body.queueKey,async(path,options)=>{const h=new Headers(options.headers);if(token)h.set("Authorization",`Bearer ${token}`);return fetch(path,{...options,headers:h});}).catch(()=>undefined);}
+    return response;
+  });
 }
 
 export async function downloadApiFile(path: string) {

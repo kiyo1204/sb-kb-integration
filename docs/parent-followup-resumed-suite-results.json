@@ -1,0 +1,17 @@
+[
+  {
+    "test": "test:server-audit",
+    "exitCode": 0,
+    "elapsedMs": 7568
+  },
+  {
+    "test": "test:audit-routing",
+    "exitCode": 0,
+    "elapsedMs": 1755
+  },
+  {
+    "test": "test:integrated-streams",
+    "exitCode": 1,
+    "elapsedMs": 2734
+  }
+]

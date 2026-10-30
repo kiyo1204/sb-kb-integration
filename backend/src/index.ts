@@ -1,4 +1,11 @@
-import express, { type Response } from "express";
+import { validateMapStateV5, validMapCoordinate } from "./research-event-map-v5.js";
+import {EventExportService} from "./event-export-service.js";
+import {registerDataManagement} from "./data-management.js";
+import {registerEventExportRoutes} from "./event-export-routes.js";
+import { registerDeliveryReports } from "./delivery-reports.js";
+import { operationCommitted,reliableOperation, registerOperationContext } from "./delivery-reliability.js";
+import { safeServerErrorCode } from "./safe-server-error.js";
+import express, { type Request, type Response } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool, type PoolClient } from "pg";
 import {
@@ -16,8 +23,9 @@ import {
 import { buildSessionRawExport } from "./research-export.js";
 import { registerStage1AnalysisRoutes } from "./stage1-analysis.js";
 import { registerAssessmentRoutes } from "./assessments.js";
-import { registerResearchEventRoutes } from "./research-events.js";
-import { accessControl, createLearnerToken, principalOf, storeLearnerToken } from "./access-control.js";
+import { eventTargets, insertResearchEventBestEffort, insertResearchEvent, InvalidEventError, registerResearchEventRoutes, type EventActor, type EventType } from "./research-events.js";
+import { accessControl, createLearnerToken, principalOf, storeLearnerToken, tokenHash } from "./access-control.js";
+import { validMapLabel } from "./research-event-map-v2.js";
 import { deriveUndoRedoAvailability, historySnapshotsEqual, historyStateDelta } from "./map-undo-redo.js";
 import type {
   ConceptProvenanceSnapshot,
@@ -26,6 +34,10 @@ import type {
   MapHistorySnapshot,
 } from "./map-history.js";
 import { replayMapAt } from "./map-history.js";
+import { replayMixedMapHistory, type MapHistoryEventV2 } from "./map-mixed-history.js";
+
+import { registerAudit, auditCurrent, auditCommitted, recordAudit } from "./server-audit.js";
+import { observeExpiredStages } from "./system-submission.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -34,7 +46,8 @@ if (!databaseUrl) {
 }
 
 const app = express();
-const deadlineContext = new AsyncLocalStorage<{ mapIds: Set<string>; stageIds: Set<string> }>();
+const deadlineContext = new AsyncLocalStorage<{ mapIds: Set<string>; stageIds: Set<string>; actor: EventActor }>();
+const transactionBefore = new WeakMap<PoolClient, Map<string, MapHistorySnapshot>>();
 const pool = new Pool({ connectionString: databaseUrl });
 const port = Number(process.env.PORT ?? 3000);
 const uuidPattern =
@@ -62,12 +75,12 @@ type SubmittedMapRow = {
   submittedAt: Date;
 };
 type MapSubmitOutcome =
-  | { kind: "submitted"; map: SubmittedMapRow }
+  | { kind: "submitted"; map: SubmittedMapRow; activityLogSaved: boolean | null }
   | { kind: "automatic_submission_required" }
   | { kind: "time_expired" }
   | { kind: "map_not_found" }
   | { kind: "map_type_not_supported"; mapType: MapType }
-  | { kind: "kit_build_not_matched"; feedback: KitBuildFeedbackWithSignature }
+  | { kind: "kit_build_not_matched"; feedback: KitBuildFeedbackWithSignature; logSaved: boolean | null }
   | { kind: "session_stage_not_found" }
   | {
       kind: "session_stage_type_mismatch";
@@ -188,6 +201,8 @@ class ConceptMergeConflictError extends Error {
   }
 }
 
+class HistoryTransitionError extends Error {}
+
 function ensureMapIsEditable(map: LockedMapState) {
   if (map.mapType === "PRIOR" && map.mapStatus === "SUBMITTED") {
     throw new SubmittedPriorMapError();
@@ -246,6 +261,8 @@ function ensureLinkLabelEditable(map: LockedMapState) {
 }
 
 function readOnlyMapResponse(response: Response, error: unknown) {
+  if (error instanceof HistoryTransitionError) return response.status(409).json({ error: "map_history_unavailable", message: error.message });
+  if (error instanceof InvalidEventError) return response.status(400).json({ error: "invalid_map_state", message: "マップの内容を確認してください。URLや認証情報を名前に含めることはできません。" });
   if (error instanceof SessionFlowGuardError) {
     return response.status(409).json({
       error: "session_stage_not_current",
@@ -417,6 +434,8 @@ type MapConceptRow = {
 };
 
 type MapLinkRow = {
+  labelPositionX?: number | null;
+  labelPositionY?: number | null;
   id: string;
   mapId: string;
   sourceConceptId: string;
@@ -533,10 +552,14 @@ type OperationType =
   | "EDIT_LINK"
   | "DELETE_LINK"
   | "RECONNECT_LINK"
+  | "MOVE_LINK"
   | "UNDO"
-  | "REDO";
+  | "REDO"
+  | "MAP_SUBMIT"
+  | "MAP_AUTO_SUBMIT"
+  | "MAP_KIT_ASSIGN";
 
-type OperationTargetType = "CONCEPT" | "LINK";
+type OperationTargetType = "CONCEPT" | "LINK" | "MAP";
 type OperationSnapshot = unknown;
 
 function validateClientTimestamp(value: unknown) {
@@ -567,8 +590,9 @@ async function withTransaction<T>(
 
   try {
     await client.query("BEGIN");
+    transactionBefore.set(client, new Map());
     transactionStarted = true;
-    const result = await operation(client);
+    const result = await reliableOperation(client, () => operation(client));
     const guarded = deadlineContext.getStore();
     if (guarded && (guarded.mapIds.size || guarded.stageIds.size)) {
       const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id
@@ -580,7 +604,9 @@ async function withTransaction<T>(
       if (expired.rowCount) throw new SessionFlowGuardError();
     }
     await client.query("COMMIT");
+    operationCommitted();
     transactionStarted = false;
+    auditCommitted();
     return result;
   } catch (error) {
     if (transactionStarted) {
@@ -588,6 +614,7 @@ async function withTransaction<T>(
     }
     throw error;
   } finally {
+    transactionBefore.delete(client);
     client.release();
   }
 }
@@ -597,6 +624,11 @@ async function refreshKitDefinitionFlag(
   map: LockedMapState,
 ): Promise<LockedMapState> {
   deadlineContext.getStore()?.mapIds.add(map.mapId);
+  const snapshots = transactionBefore.get(client);
+  if (snapshots && map.sessionStageId && map.mapType !== "GOAL" && !snapshots.has(map.mapId)) {
+    const snapshot = await readCurrentMapHistorySnapshot(client, map.mapId);
+    if (snapshot) snapshots.set(map.mapId, snapshot);
+  }
   const result = await client.query<{ hasKitDefinition: boolean }>(
     `
       SELECT EXISTS (
@@ -1056,7 +1088,7 @@ async function getLinkForUpdate(
         map_id AS "mapId",
         source_concept_id AS "sourceConceptId",
         target_concept_id AS "targetConceptId",
-        label,
+        label, label_position_x AS "labelPositionX",label_position_y AS "labelPositionY",
         updated_at AS "updatedAt"
       FROM links
       WHERE id = $1::uuid AND map_id = $2::uuid
@@ -1102,6 +1134,46 @@ async function appendMapOperationLog(
     idempotencyKey?: string | null;
   },
 ): Promise<{ id: string; sequenceNumber: string }> {
+  const before = transactionBefore.get(client)?.get(input.mapId);
+  const installed = (await client.query<{ name: string | null }>("SELECT to_regclass('map_history_boundaries')::text AS name")).rows[0]?.name;
+  if (await isStage1LearnerMap(client, input.mapId)) {
+    if (!installed) throw new HistoryTransitionError("操作履歴のDB変更が未適用です。研究者に連絡してください。");
+    if (!before) throw new HistoryTransitionError("変更前のマップ状態を取得できません。");
+    const after = await readCurrentMapHistorySnapshot(client, input.mapId);
+    if (!after) throw new HistoryTransitionError("マップ状態を取得できません。");
+    if (!validateMapStateV5(before, input.mapId) || !validateMapStateV5(after, input.mapId)) throw new HistoryTransitionError(`マップ ${input.mapId} の内容を確認してください。名前は512文字以内、概念は1000個以内、リンクは2000個以内、座標は絶対値10000000以内、状態は4000000バイト以内とし、URLや認証情報を含めないでください。`);
+    const initial = (await client.query<{ snapshot: MapHistorySnapshot }>("SELECT snapshot FROM map_initial_snapshots WHERE map_id=$1::uuid AND snapshot_version=1", [input.mapId])).rows[0]?.snapshot;
+    if (!initial) throw new HistoryTransitionError("初期スナップショットがないため履歴を記録できません。");
+    const old = await client.query<HistoryOperation>(`SELECT id,map_id AS "mapId",sequence_number AS "sequenceNumber",operation_type AS "operationType",target_type AS "targetType",target_id AS "targetId",before,after,related_operation_log_id AS "relatedOperationLogId" FROM map_operation_logs WHERE map_id=$1::uuid ORDER BY sequence_number`, [input.mapId]);
+    const boundary = (await client.query<{ legacyCount: string; legacyLastId: string | null; snapshot: MapHistorySnapshot }>(`SELECT legacy_count AS "legacyCount",legacy_last_id AS "legacyLastId",boundary_snapshot AS snapshot FROM map_history_boundaries WHERE map_id=$1::uuid`, [input.mapId])).rows[0];
+    const next = await client.query<MapHistoryEventV2>(`SELECT event_id AS "eventId",map_id AS "mapId",schema_version AS "schemaVersion",event_type AS "eventType",related_event_id AS "relatedEventId",related_legacy_operation_log_id AS "relatedLegacyOperationLogId",sequence_number AS "sequenceNumber",outcome,before_state AS before,after_state AS after FROM research_events WHERE map_id=$1::uuid AND schema_version IN (2,5) ORDER BY sequence_number`, [input.mapId]);
+    if (!boundary && next.rows.length) throw new HistoryTransitionError("新イベントの切替境界がありません。");
+    const definition = { legacyCount: boundary ? Number(boundary.legacyCount) : old.rows.length, legacyLastId: boundary ? boundary.legacyLastId : old.rows.at(-1)?.id ?? null };
+    const oldState = replayMixedMapHistory(initial, definition, old.rows, []);
+    if (oldState.status !== "REPLAYABLE" || boundary && !historySnapshotsEqual(oldState.state, boundary.snapshot)) throw new HistoryTransitionError("旧履歴と切替境界が一致しません。");
+    const current = replayMixedMapHistory(initial, definition, old.rows, next.rows);
+    if (current.status !== "REPLAYABLE" || !historySnapshotsEqual(current.state, before)) throw new HistoryTransitionError("履歴と変更前のマップが一致しません。");
+    if (!boundary) await client.query("INSERT INTO map_history_boundaries(map_id,legacy_count,legacy_last_id,boundary_snapshot) VALUES($1::uuid,$2,$3::uuid,$4::jsonb)", [input.mapId, old.rows.length, definition.legacyLastId, JSON.stringify(before)]);
+    const session = (await client.query<{ id: string }>("SELECT st.session_id AS id FROM maps m JOIN session_stages st ON st.id=m.session_stage_id WHERE m.id=$1::uuid", [input.mapId])).rows[0];
+    if (!session) throw new HistoryTransitionError("セッションを確認できません。");
+    const operation = input.operationType as EventType;
+    const undo = operation === "UNDO" || operation === "REDO";
+    const relatedLegacy = undo && old.rows.some(item => item.id === input.relatedOperationLogId);
+    let event: Awaited<ReturnType<typeof insertResearchEvent>>;
+    try { event = await insertResearchEvent(client, session.id, deadlineContext.getStore()?.actor ?? "SYSTEM", {
+      schemaVersion: 5, eventType: operation, targetType: eventTargets[operation], mapId: input.mapId,
+      targetId: undo ? input.mapId : input.targetId, outcome: "SUCCESS", clientTimeQuality: input.clientTimestamp ? "OBSERVED" : "MISSING",
+      ...(input.clientTimestamp ? { clientTimestamp: input.clientTimestamp } : {}),
+      ...(input.relatedOperationLogId ? relatedLegacy ? { relatedLegacyOperationLogId: input.relatedOperationLogId } : { relatedEventId: input.relatedOperationLogId } : {}),
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}), before, after,
+    }); } catch (error) {
+      if (error instanceof InvalidEventError) throw error;
+      throw new HistoryTransitionError("マップの操作履歴を保存できません。入力内容を保持してもう一度お試しください。");
+    }
+    if (!event) throw new HistoryTransitionError("マップの操作履歴を保存できません。");
+    transactionBefore.get(client)?.set(input.mapId, after);
+    return { id: event.eventId, sequenceNumber: String(old.rows.length + next.rows.filter(item => item.outcome === "SUCCESS").length + 1) };
+  }
   const sequenceResult = await client.query<{ sequenceNumber: string }>(
     `
       SELECT COALESCE(MAX(sequence_number), 0) + 1 AS "sequenceNumber"
@@ -1148,6 +1220,7 @@ async function appendMapOperationLog(
   );
   const row = inserted.rows[0];
   if (!row) throw new Error("Failed to insert MapOperationLog event");
+  if (input.operationType === "DELETE_CONCEPT" || input.operationType === "DELETE_LINK") await auditCurrent(client);
   return { id: row.id, sequenceNumber: String(row.sequenceNumber) };
 }
 
@@ -1330,12 +1403,12 @@ async function readCurrentMapHistorySnapshot(
   >(
     `SELECT id, map_id AS "mapId",
             source_concept_id AS "sourceConceptId",
-            target_concept_id AS "targetConceptId", label
+            target_concept_id AS "targetConceptId", label, label_position_x AS "labelPositionX", label_position_y AS "labelPositionY"
      FROM links WHERE map_id=$1::uuid ORDER BY id`,
     [mapId],
   );
   const concepts = await attachConceptProvenance(client, conceptResult.rows);
-  const links = await attachLinkProvenance(client, linkResult.rows);
+  const links = await attachLinkProvenance(client, linkResult.rows.map(({labelPositionX,labelPositionY,...link}) => labelPositionX == null || labelPositionY == null ? link : {...link,labelPositionX,labelPositionY}));
   return {
     snapshotVersion: 1,
     mapId: map.id,
@@ -1379,6 +1452,23 @@ async function readUndoRedoContext(
     [mapId],
   );
   const operations = operationResult.rows;
+  const hasBoundaryTable = (await client.query<{ name: string | null }>("SELECT to_regclass('map_history_boundaries')::text AS name")).rows[0]?.name;
+  const boundary = hasBoundaryTable ? (await client.query<{ legacyCount: string; legacyLastId: string | null; snapshot: MapHistorySnapshot }>(
+    `SELECT legacy_count AS "legacyCount", legacy_last_id AS "legacyLastId", boundary_snapshot AS snapshot FROM map_history_boundaries WHERE map_id=$1::uuid`, [mapId],
+  )).rows[0] : undefined;
+  if (boundary) {
+    const initial = initialResult.rows[0]?.snapshot ?? null;
+    const boundaryReplay = initial && replayMapAt(initial, operations, operations.length);
+    if (!initial || !Number.isSafeInteger(Number(boundary.legacyCount)) || Number(boundary.legacyCount) !== operations.length || (operations.at(-1)?.id ?? null) !== boundary.legacyLastId || !boundaryReplay || boundaryReplay.status !== "REPLAYABLE" || !historySnapshotsEqual(boundaryReplay.state, boundary.snapshot)) {
+      return { status: "PARTIAL", reason: "旧履歴と切替境界が一致しません。", initial, operations, current: null, undoOperation: null, redoOperation: null };
+    }
+    const newer = await client.query<{ schemaVersion:number; id: string; mapId: string; operationType: string; targetType: string; targetId: string; before: unknown; after: unknown; relatedOperationLogId: string | null }>(
+      `SELECT schema_version AS "schemaVersion", event_id AS id, map_id AS "mapId", event_type AS "operationType", target_type AS "targetType", target_id AS "targetId", before_state AS before, after_state AS after, coalesce(related_event_id,related_legacy_operation_log_id) AS "relatedOperationLogId"
+       FROM research_events WHERE map_id=$1::uuid AND schema_version IN (2,5) AND outcome='SUCCESS'
+         AND event_type IN ('ADD_CONCEPT','EDIT_CONCEPT','MOVE_CONCEPT','DELETE_CONCEPT','MERGE_CONCEPT','IMPORT_KIT_CONCEPT','ADD_LINK','EDIT_LINK','MOVE_LINK','DELETE_LINK','RECONNECT_LINK','IMPORT_KIT_LINK','UNDO','REDO','MAP_SAVE','MAP_KIT_ASSIGN','MAP_SUBMIT','MAP_AUTO_SUBMIT') ORDER BY sequence_number`, [mapId],
+    );
+    for (const event of newer.rows) operations.push({ ...event, sequenceNumber: String(operations.length + 1), historyFormat: event.schemaVersion === 5 ? "V5" : "V2" });
+  }
   const initial = initialResult.rows[0]?.snapshot ?? null;
   if (!initial) {
     return {
@@ -1555,11 +1645,11 @@ async function applyHistoryStateDelta(
 
   for (const item of desiredLinks) {
     await client.query(
-      `INSERT INTO links (id,map_id,source_concept_id,target_concept_id,label)
-       VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5)
+      `INSERT INTO links (id,map_id,source_concept_id,target_concept_id,label,label_position_x,label_position_y)
+       VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7)
        ON CONFLICT (id) DO UPDATE SET source_concept_id=EXCLUDED.source_concept_id,
-         target_concept_id=EXCLUDED.target_concept_id,label=EXCLUDED.label`,
-      [item.id, mapId, item.sourceConceptId, item.targetConceptId, item.label],
+         target_concept_id=EXCLUDED.target_concept_id,label=EXCLUDED.label,label_position_x=EXCLUDED.label_position_x,label_position_y=EXCLUDED.label_position_y`,
+      [item.id, mapId, item.sourceConceptId, item.targetConceptId, item.label,item.labelPositionX??null,item.labelPositionY??null],
     );
   }
 
@@ -1606,17 +1696,363 @@ async function applyHistoryStateDelta(
 }
 
 app.use(express.json());
+app.use("/api", (request, response, next) => {
+  const path = request.path;
+  const method = request.method.toUpperCase();
+  const match = (pattern: RegExp) => pattern.exec(path);
+  let eventType: EventType | null = null;
+  let targetType: "MAP" | "CONCEPT" | "LINK" = "MAP";
+  let mapId: string | null = null;
+  let targetId: string | null = null;
+  if (method === "POST" && (match(/^\/maps\/([^/]+)\/concepts$/))) { eventType="ADD_CONCEPT"; mapId=match(/^\/maps\/([^/]+)\/concepts$/)![1]!; targetType="CONCEPT"; }
+  else if (method === "POST" && match(/^\/maps\/([^/]+)\/concepts\/merge$/)) { eventType="MERGE_CONCEPT"; mapId=match(/^\/maps\/([^/]+)\/concepts\/merge$/)![1]!; targetType="CONCEPT"; }
+  else if (method === "POST" && match(/^\/maps\/([^/]+)\/links$/)) { eventType="ADD_LINK"; mapId=match(/^\/maps\/([^/]+)\/links$/)![1]!; targetType="LINK"; }
+  else if (method === "POST" && match(/^\/maps\/([^/]+)\/kit-concepts\/[^/]+\/import$/)) { eventType="IMPORT_KIT_CONCEPT"; mapId=match(/^\/maps\/([^/]+)\/kit-concepts\/[^/]+\/import$/)![1]!; targetType="CONCEPT"; }
+  else if (method === "POST" && match(/^\/maps\/([^/]+)\/kit-links\/[^/]+(?:\/import)?$/)) { eventType=path.endsWith("/import")?"IMPORT_KIT_LINK":"IMPORT_KIT_LINK"; mapId=match(/^\/maps\/([^/]+)\/kit-links\/[^/]+(?:\/import)?$/)![1]!; targetType="LINK"; }
+  else if (method === "PATCH" && match(/^\/maps\/([^/]+)\/kit-definition$/)) { eventType="MAP_KIT_ASSIGN"; mapId=match(/^\/maps\/([^/]+)\/kit-definition$/)![1]!; }
+  else if (method === "POST" && match(/^\/maps\/([^/]+)\/submit$/)) { eventType="MAP_SUBMIT"; mapId=match(/^\/maps\/([^/]+)\/submit$/)![1]!; }
+  else if (method === "POST" && match(/^\/maps\/([^/]+)\/undo-redo$/)) { mapId=match(/^\/maps\/([^/]+)\/undo-redo$/)![1]!; eventType=request.body?.action==="UNDO"?"UNDO":request.body?.action==="REDO"?"REDO":null; }
+  else if (method === "PATCH" && match(/^\/concepts\/([^/]+)\/(label|position)$/)) { const m=match(/^\/concepts\/([^/]+)\/(label|position)$/)!;targetId=m[1]!;targetType="CONCEPT";eventType=m[2]==="label"?"EDIT_CONCEPT":"MOVE_CONCEPT"; }
+  else if (method === "DELETE" && match(/^\/concepts\/([^/]+)$/)) {targetId=match(/^\/concepts\/([^/]+)$/)![1]!;targetType="CONCEPT";eventType="DELETE_CONCEPT";}
+  else if (method === "PATCH" && match(/^\/links\/([^/]+)\/(label|reconnect|position)$/)) {const m=match(/^\/links\/([^/]+)\/(label|reconnect|position)$/)!;targetId=m[1]!;targetType="LINK";eventType=m[2]==="label"?"EDIT_LINK":m[2]==="position"?"MOVE_LINK":"RECONNECT_LINK";}
+  else if (method === "DELETE" && match(/^\/links\/([^/]+)$/)) {targetId=match(/^\/links\/([^/]+)$/)![1]!;targetType="LINK";eventType="DELETE_LINK";}
+  if (!eventType) return next();
+  const originalJson = response.json.bind(response);
+  response.json = ((body: unknown) => {
+    const status = response.statusCode;
+    if (status < 400 || status === 401 || status === 403 ||
+        body && typeof body==="object" && "error" in body && ["operation_already_committed","idempotency_conflict","operation_result_expired"].includes(String(body.error))) return originalJson(body);
+    void (async () => {
+      let principal: ReturnType<typeof principalOf>;
+      try { principal=principalOf(response); } catch { return originalJson(body); }
+      const transactionFailure = body !== null && typeof body === "object" && "message" in body && typeof (body as {message?:unknown}).message === "string" && (body as {message:string}).message.includes("履歴を保存できません");
+      const outcome: "REJECTED" | "FAILURE" = status >= 500 || transactionFailure ? "FAILURE" : "REJECTED";
+      let reasonCode: "VALIDATION" | "CONFLICT" | "DEADLINE" | "SERVER" | "PERMISSION" = status >= 500 || transactionFailure ? "SERVER" : status === 400 ? "VALIDATION" : "CONFLICT";
+      if (status === 409 && body !== null && typeof body === "object" && "message" in body && typeof (body as {message?:unknown}).message === "string" && (body as {message:string}).message.includes("内容を確認してください")) reasonCode = "VALIDATION";
+      let resolvedMapId = mapId;
+      const resolvedTargetId = targetId;
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        if (targetId && targetType !== "MAP") {
+          const table = targetType === "CONCEPT" ? "concepts" : "links";
+          const owner = await client.query<{mapId:string;sessionId:string;protocolKey:string;stageType:string;studyGroup:string|null;expired:boolean}>(
+            `SELECT item.map_id AS "mapId",s.id AS "sessionId",s.protocol_key AS "protocolKey",st.stage_type AS "stageType",s.study_group AS "studyGroup",
+              (s.protocol_key='STAGE1_6' AND st.stage_type='INTEGRATION_MAP' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
+             FROM ${table} item JOIN maps m ON m.id=item.map_id JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id
+             WHERE item.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6')`,[targetId]);
+          if (!owner.rowCount) { await client.query("ROLLBACK"); return originalJson(body); }
+          resolvedMapId=owner.rows[0]!.mapId;
+          if (principal.role==="learner"&&principal.sessionId!==owner.rows[0]!.sessionId) {await client.query("ROLLBACK");return originalJson(body);}
+          if(owner.rows[0]!.expired){reasonCode="DEADLINE";}
+        }
+        if (!resolvedMapId) { await client.query("ROLLBACK"); return originalJson(body); }
+        const owner=await client.query<{sessionId:string;protocolKey:string;status:string;mapStatus:string;stageType:string;stageStatus:string;expired:boolean}>(
+          `SELECT s.id AS "sessionId",s.protocol_key AS "protocolKey",s.status,m.status AS "mapStatus",st.stage_type AS "stageType",st.status AS "stageStatus",
+            (s.protocol_key='STAGE1_6' AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
+           FROM maps m JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id
+           WHERE m.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6')`,[resolvedMapId]);
+        if (!owner.rowCount || principal.role==="learner"&&principal.sessionId!==owner.rows[0]!.sessionId) {await client.query("ROLLBACK");return originalJson(body);}
+        const sessionId=owner.rows[0]!.sessionId;
+        if(owner.rows[0]!.expired){reasonCode="DEADLINE";}
+        else if(owner.rows[0]!.mapStatus==="SUBMITTED") reasonCode="PERMISSION";
+        else if(owner.rows[0]!.status==="COMPLETED"||owner.rows[0]!.stageStatus==="COMPLETED") reasonCode="PERMISSION";
+        await client.query("SELECT id FROM maps WHERE id=$1::uuid FOR UPDATE",[resolvedMapId]);
+        const lockedOwner=await client.query<{status:string;mapStatus:string;stageStatus:string;expired:boolean}>(
+          `SELECT s.status,m.status AS "mapStatus",st.status AS "stageStatus",
+            (s.protocol_key='STAGE1_6' AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
+           FROM maps m JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id WHERE m.id=$1::uuid`,[resolvedMapId]);
+        if(lockedOwner.rows[0]?.expired) reasonCode="DEADLINE";
+        else if(lockedOwner.rows[0]?.mapStatus==="SUBMITTED"||lockedOwner.rows[0]?.status==="COMPLETED"||lockedOwner.rows[0]?.stageStatus==="COMPLETED") reasonCode="PERMISSION";
+        const initial=(await client.query<{snapshot:MapHistorySnapshot}>("SELECT snapshot FROM map_initial_snapshots WHERE map_id=$1::uuid AND snapshot_version=1",[resolvedMapId])).rows[0]?.snapshot;
+        if(!initial){await client.query("ROLLBACK");return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});}
+        const legacy=await client.query<HistoryOperation>(`SELECT id,map_id AS "mapId",sequence_number AS "sequenceNumber",operation_type AS "operationType",target_type AS "targetType",target_id AS "targetId",before,after,related_operation_log_id AS "relatedOperationLogId" FROM map_operation_logs WHERE map_id=$1::uuid ORDER BY sequence_number`,[resolvedMapId]);
+        const boundary=(await client.query<{legacyCount:string;legacyLastId:string|null;snapshot:MapHistorySnapshot}>(`SELECT legacy_count AS "legacyCount",legacy_last_id AS "legacyLastId",boundary_snapshot AS snapshot FROM map_history_boundaries WHERE map_id=$1::uuid`,[resolvedMapId])).rows[0];
+        const stream=await client.query<MapHistoryEventV2>(`SELECT event_id AS "eventId",map_id AS "mapId",schema_version AS "schemaVersion",event_type AS "eventType",related_event_id AS "relatedEventId",related_legacy_operation_log_id AS "relatedLegacyOperationLogId",sequence_number AS "sequenceNumber",outcome,before_state AS before,after_state AS after FROM research_events WHERE map_id=$1::uuid AND schema_version IN (2,5) ORDER BY sequence_number`,[resolvedMapId]);
+        if(!boundary&&stream.rowCount){await client.query("ROLLBACK");return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});}
+        const baseBoundary={legacyCount:boundary?Number(boundary.legacyCount):legacy.rows.length,legacyLastId:boundary?boundary.legacyLastId:legacy.rows.at(-1)?.id??null};
+        const oldReplay=replayMixedMapHistory(initial,baseBoundary,legacy.rows,[]);
+        const currentReplay=oldReplay.status==="REPLAYABLE"?replayMixedMapHistory(initial,baseBoundary,legacy.rows,stream.rows):null;
+        const currentSnapshot=await readCurrentMapHistorySnapshot(client,resolvedMapId);
+        if(oldReplay.status!=="REPLAYABLE"||boundary&&!historySnapshotsEqual(oldReplay.state,boundary.snapshot)||!currentReplay||currentReplay.status!=="REPLAYABLE"||!currentSnapshot||!validateMapStateV5(currentSnapshot,resolvedMapId)||!historySnapshotsEqual(currentReplay.state,currentSnapshot)){
+          await client.query("ROLLBACK");return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});
+        }
+        if(!boundary) await client.query("INSERT INTO map_history_boundaries(map_id,legacy_count,legacy_last_id,boundary_snapshot) VALUES($1::uuid,$2,$3::uuid,$4::jsonb)",[resolvedMapId,legacy.rows.length,baseBoundary.legacyLastId,JSON.stringify(currentSnapshot)]);
+        const idem=request.get("Idempotency-Key");
+        const validIdem=idem&&uuidPattern.test(idem)?idem:null;
+        if(validIdem) {
+          const prior=await client.query<{eventId:string;eventType:string;outcome:string}>(`SELECT event_id AS "eventId",event_type AS "eventType",outcome FROM research_events WHERE map_id=$1::uuid AND idempotency_key=$2::uuid`,[resolvedMapId,validIdem]);
+          if(prior.rowCount) {
+            if(prior.rows[0]!.eventType===eventType&&prior.rows[0]!.outcome===outcome) {
+              await client.query("COMMIT");
+              return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:true,eventId:prior.rows[0]!.eventId});
+            }
+            await client.query("ROLLBACK");
+            return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});
+          }
+        }
+        const event=await insertResearchEvent(client,sessionId,principal.role==="learner"?"LEARNER":"RESEARCHER",{
+          schemaVersion:5,eventType,targetType,mapId:resolvedMapId,targetId:targetType==="MAP"?resolvedMapId:resolvedTargetId??undefined,
+          outcome,reasonCode,clientTimeQuality:"NOT_APPLICABLE",beforeQuality:"MISSING",afterQuality:"MISSING",
+          ...(validIdem?{idempotencyKey:validIdem}:{}),
+        });
+        if(!event){await client.query("ROLLBACK");return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});}
+        await client.query("COMMIT");
+        return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:true,eventId:event.eventId});
+      } catch {
+        await client.query("ROLLBACK").catch(()=>undefined);
+        return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});
+      } finally {client.release();}
+    })();
+    return response;
+  }) as Response["json"];
+  next();
+});
 app.use("/api", accessControl(pool));
-app.use("/api", (request, _response, next) => {
+registerOperationContext(app);
+registerAudit(app, pool);
+app.use("/api", async (request, response, next) => {
+  if (!["POST", "PATCH"].includes(request.method) || !/^\/(maps|concepts|links)\//.test(request.path) || !request.body || typeof request.body.label !== "string") return next();
+  const label = request.body.label as string;
+  if (!validMapLabel(label) || (process.env.RESEARCHER_API_TOKEN && label.includes(process.env.RESEARCHER_API_TOKEN))) return response.status(400).json({ error: "invalid_map_label", message: "名前は512文字以内にし、URLや認証情報を含めないでください。" });
+  try {
+    const hashes = [label, ...label.split(/\s+/)].map(tokenHash);
+    if ((await pool.query("SELECT 1 FROM sessions WHERE learner_access_token_hash=ANY($1::text[]) LIMIT 1", [hashes])).rowCount) return response.status(400).json({ error: "invalid_map_label", message: "名前にアクセスコードを含めることはできません。" });
+    return next();
+  } catch (error) { return next(error); }
+});
+app.use("/api", (request, response, next) => {
   const guarded = request.method !== "GET" && request.method !== "HEAD" &&
     (/^\/(maps|concepts|links)\//.test(request.path) || /^\/session-stages\/[^/]+\/integration-map$/.test(request.path));
-  if (guarded) return deadlineContext.run({ mapIds: new Set(), stageIds: new Set() }, next);
+  if (guarded) return deadlineContext.run({ mapIds: new Set(), stageIds: new Set(), actor: principalOf(response).role === "learner" ? "LEARNER" : "RESEARCHER" }, next);
   return next();
 });
 app.get("/api/me", (_request, response) => response.json(principalOf(response)));
 registerStage1AnalysisRoutes(app, pool);
 registerAssessmentRoutes(app, pool);
 registerResearchEventRoutes(app, pool);
+registerDeliveryReports(app,pool);
+const eventExportPool=new Pool({connectionString:databaseUrl,max:2,connectionTimeoutMillis:5000});
+const eventExports=registerEventExportRoutes(app,pool,new EventExportService(eventExportPool, {root:process.env.STAGE1_EXPORT_CACHE_ROOT}));
+registerDataManagement(app,pool,eventExports);
+
+// These endpoints record only explicit pre-commit cancellations offered by
+// the learner Map UI. They do not accept event payloads or mutate the Map.
+type CancellableMapEventType =
+  | "ADD_CONCEPT"
+  | "EDIT_CONCEPT"
+  | "DELETE_CONCEPT"
+  | "MERGE_CONCEPT"
+  | "ADD_LINK"
+  | "EDIT_LINK"
+  | "DELETE_LINK"
+  | "RECONNECT_LINK"
+  | "IMPORT_KIT_LINK"
+  | "MAP_SUBMIT";
+const cancellableMapOperations: Record<CancellableMapEventType, {
+  targetType: "CONCEPT" | "LINK" | "MAP";
+  targetRequired: boolean;
+  mapTypes: MapType[];
+}> = {
+  ADD_CONCEPT: { targetType: "CONCEPT", targetRequired: false, mapTypes: ["PRIOR", "INTEGRATION"] },
+  EDIT_CONCEPT: { targetType: "CONCEPT", targetRequired: true, mapTypes: ["PRIOR", "INTEGRATION"] },
+  DELETE_CONCEPT: { targetType: "CONCEPT", targetRequired: true, mapTypes: ["PRIOR", "INTEGRATION"] },
+  MERGE_CONCEPT: { targetType: "CONCEPT", targetRequired: false, mapTypes: ["INTEGRATION"] },
+  ADD_LINK: { targetType: "LINK", targetRequired: false, mapTypes: ["PRIOR", "INTEGRATION"] },
+  EDIT_LINK: { targetType: "LINK", targetRequired: true, mapTypes: ["PRIOR", "INTEGRATION"] },
+  DELETE_LINK: { targetType: "LINK", targetRequired: true, mapTypes: ["PRIOR", "KB", "INTEGRATION"] },
+  RECONNECT_LINK: { targetType: "LINK", targetRequired: true, mapTypes: ["PRIOR", "KB", "INTEGRATION"] },
+  IMPORT_KIT_LINK: { targetType: "LINK", targetRequired: false, mapTypes: ["KB", "INTEGRATION"] },
+  MAP_SUBMIT: { targetType: "MAP", targetRequired: false, mapTypes: ["PRIOR", "KB", "INTEGRATION"] },
+};
+const recordMapOperationCancellation = async (
+  request: Request<{ mapId: string; eventType?: string; targetId?: string }>,
+  response: Response,
+  eventType: CancellableMapEventType,
+  targetId?: string,
+) => {
+  const { mapId } = request.params;
+  const rule = cancellableMapOperations[eventType];
+  const principal = principalOf(response);
+  if (principal.role !== "learner" || !uuidPattern.test(mapId)) {
+    return response.status(404).json({ error: "not_found" });
+  }
+  if (Boolean(targetId) !== rule.targetRequired || targetId && !uuidPattern.test(targetId)) {
+    return response.status(400).json({ error: "invalid_cancellation_request" });
+  }
+  if (request.body !== undefined && request.body !== null &&
+    (typeof request.body !== "object" || Array.isArray(request.body) || Object.keys(request.body).length > 0)) {
+    return response.status(400).json({ error: "invalid_cancellation_request" });
+  }
+
+  const rawKey = request.get("Idempotency-Key");
+  if (rawKey && !uuidPattern.test(rawKey)) return response.status(400).json({ error: "invalid_idempotency_key" });
+  const idempotencyKey = rawKey || undefined;
+  try {
+    const result = await withTransaction(async (client) => {
+      const map = await lockMapById(client, mapId);
+      if (!map || !map.sessionStageId || map.mapStatus !== "DRAFT" || !rule.mapTypes.includes(map.mapType)) return null;
+
+      const owner = await client.query<{
+        sessionId: string;
+        protocolKey: string;
+        studyGroup: string | null;
+        sessionStatus: string;
+        stageType: string;
+        stageStatus: string;
+        currentStageId: string | null;
+        expired: boolean;
+      }>(
+        `SELECT s.id AS "sessionId", s.protocol_key AS "protocolKey", s.study_group AS "studyGroup",
+          s.status AS "sessionStatus", st.stage_type AS "stageType", st.status AS "stageStatus",
+          current_stage.id AS "currentStageId",
+          (s.protocol_key='STAGE1_6' AND st.stage_type='INTEGRATION_MAP'
+            AND s.study_group='EXPERIMENTAL'
+            AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second') AS expired
+         FROM session_stages st JOIN sessions s ON s.id=st.session_id
+         LEFT JOIN LATERAL (
+           SELECT candidate.id FROM session_stages candidate
+           WHERE candidate.session_id=s.id AND candidate.status <> 'COMPLETED'
+           ORDER BY candidate.order_index LIMIT 1
+         ) current_stage ON true
+         WHERE st.id=$1::uuid`,
+        [map.sessionStageId],
+      );
+      const stage = owner.rows[0];
+      const expectedStageType = map.mapType === "PRIOR" ? "PRIOR_MAP" : map.mapType === "KB" ? "KB_MAP" : map.mapType === "INTEGRATION" ? "INTEGRATION_MAP" : null;
+      if (!stage || stage.sessionId !== principal.sessionId || !["STAGE1_4", "STAGE1_6"].includes(stage.protocolKey)
+        || !expectedStageType || stage.stageType !== expectedStageType || stage.sessionStatus !== "IN_PROGRESS"
+        || stage.stageStatus !== "IN_PROGRESS" || stage.currentStageId !== map.sessionStageId || stage.expired) return null;
+      if (targetId) {
+        const table = rule.targetType === "CONCEPT" ? "concepts" : "links";
+        if (!(await client.query(`SELECT 1 FROM ${table} WHERE id=$1::uuid AND map_id=$2::uuid`, [targetId, mapId])).rowCount) return null;
+      }
+
+      const initial = (await client.query<{ snapshot: MapHistorySnapshot }>(
+        "SELECT snapshot FROM map_initial_snapshots WHERE map_id=$1::uuid AND snapshot_version=1", [mapId],
+      )).rows[0]?.snapshot;
+      if (!initial) return { kind: "history_unavailable" as const };
+      const legacy = await client.query<HistoryOperation>(
+        `SELECT id,map_id AS "mapId",sequence_number AS "sequenceNumber",operation_type AS "operationType",
+          target_type AS "targetType",target_id AS "targetId",before,after,
+          related_operation_log_id AS "relatedOperationLogId"
+         FROM map_operation_logs WHERE map_id=$1::uuid ORDER BY sequence_number`, [mapId],
+      );
+      const boundary = (await client.query<{
+        legacyCount: string; legacyLastId: string | null; snapshot: MapHistorySnapshot;
+      }>(`SELECT legacy_count AS "legacyCount",legacy_last_id AS "legacyLastId",boundary_snapshot AS snapshot
+          FROM map_history_boundaries WHERE map_id=$1::uuid`, [mapId])).rows[0];
+      const events = await client.query<MapHistoryEventV2>(
+        `SELECT event_id AS "eventId",map_id AS "mapId",schema_version AS "schemaVersion",event_type AS "eventType",
+          related_event_id AS "relatedEventId",related_legacy_operation_log_id AS "relatedLegacyOperationLogId",
+          sequence_number AS "sequenceNumber",outcome,before_state AS before,after_state AS after
+         FROM research_events WHERE map_id=$1::uuid AND schema_version IN (2,5) ORDER BY sequence_number`, [mapId],
+      );
+      if (!boundary && events.rowCount) return { kind: "history_unavailable" as const };
+      const definition = {
+        legacyCount: boundary ? Number(boundary.legacyCount) : legacy.rows.length,
+        legacyLastId: boundary ? boundary.legacyLastId : legacy.rows.at(-1)?.id ?? null,
+      };
+      const oldReplay = replayMixedMapHistory(initial, definition, legacy.rows, []);
+      const replay = oldReplay.status === "REPLAYABLE"
+        ? replayMixedMapHistory(initial, definition, legacy.rows, events.rows)
+        : null;
+      const current = await readCurrentMapHistorySnapshot(client, mapId);
+      if (oldReplay.status !== "REPLAYABLE" || boundary && !historySnapshotsEqual(oldReplay.state, boundary.snapshot)
+        || !replay || replay.status !== "REPLAYABLE" || !current || !validateMapStateV5(current,mapId) || !historySnapshotsEqual(replay.state, current)) {
+        return { kind: "history_unavailable" as const };
+      }
+
+      const key = idempotencyKey;
+      if (key) {
+        const prior = await client.query<{ eventId: string; eventType: string; targetId: string | null }>(
+          `SELECT event_id AS "eventId",event_type AS "eventType",target_id AS "targetId"
+           FROM research_events WHERE map_id=$1::uuid AND idempotency_key=$2::uuid`,
+          [mapId, key],
+        );
+        if (prior.rowCount) {
+          const previous = prior.rows[0]!;
+          const expectedTargetId = targetId ?? (rule.targetType === "MAP" ? mapId : null);
+          if (previous.eventType !== eventType || previous.targetId !== expectedTargetId) return { kind: "idempotency_conflict" as const };
+          return { kind: "cancelled" as const, eventId: previous.eventId, duplicate: true };
+        }
+      }
+      if (!boundary) {
+        await client.query(
+          "INSERT INTO map_history_boundaries(map_id,legacy_count,legacy_last_id,boundary_snapshot) VALUES($1::uuid,$2,$3::uuid,$4::jsonb)",
+          [mapId, legacy.rows.length, definition.legacyLastId, JSON.stringify(current)],
+        );
+      }
+      const event = await insertResearchEvent(client, stage.sessionId, "LEARNER", {
+        schemaVersion: 2,
+        eventType,
+        targetType: rule.targetType,
+        mapId,
+        ...(targetId ? { targetId } : {}),
+        outcome: "CANCELLED",
+        reasonCode: "USER_CANCELLED",
+        clientTimeQuality: "NOT_APPLICABLE",
+        beforeQuality: "MISSING",
+        afterQuality: "MISSING",
+        ...(key ? { idempotencyKey: key } : {}),
+      });
+      if (!event) throw new Error("Cancellation event could not be saved");
+      return { kind: "cancelled" as const, eventId: event.eventId, duplicate: false };
+    });
+
+    if (!result) return response.status(404).json({ error: "not_found" });
+    if (result.kind === "history_unavailable") return response.status(409).json({ error: "map_history_unavailable", operationOutcome: "CANCELLED", logSaved: false });
+    if (result.kind === "idempotency_conflict") return response.status(409).json({ error: "idempotency_key_conflict", operationOutcome: "CANCELLED", logSaved: false });
+    return response.status(result.duplicate ? 200 : 201).json({ eventId: result.eventId, operationOutcome: "CANCELLED", logSaved: true });
+  } catch {
+    return response.status(500).json({ error: "cancellation_record_failed", operationOutcome: "CANCELLED", logSaved: false });
+  }
+};
+app.post("/api/maps/:mapId/operation-cancellations/:eventType", (request, response) => {
+  if (principalOf(response).role !== "learner" || !uuidPattern.test(request.params.mapId)) return response.status(404).json({ error: "not_found" });
+  const eventType = request.params.eventType as CancellableMapEventType;
+  if (!Object.hasOwn(cancellableMapOperations, eventType)) return response.status(400).json({ error: "invalid_cancellation_request" });
+  return recordMapOperationCancellation(request as Request<{ mapId: string; eventType?: string; targetId?: string }>, response, eventType);
+});
+app.post("/api/maps/:mapId/operation-cancellations/:eventType/:targetId", (request, response) => {
+  if (principalOf(response).role !== "learner" || !uuidPattern.test(request.params.mapId)) return response.status(404).json({ error: "not_found" });
+  const eventType = request.params.eventType as CancellableMapEventType;
+  if (!Object.hasOwn(cancellableMapOperations, eventType)) return response.status(400).json({ error: "invalid_cancellation_request" });
+  return recordMapOperationCancellation(request as Request<{ mapId: string; eventType?: string; targetId?: string }>, response, eventType, request.params.targetId);
+});
+// Read-only compatibility endpoint. It does not create a boundary or alter logs.
+app.get("/api/research/sessions/:sessionId/maps/:mapId/mixed-history", async (request, response) => {
+  const { sessionId, mapId } = request.params;
+  if (principalOf(response).role !== "researcher" || !uuidPattern.test(sessionId) || !uuidPattern.test(mapId)) return response.status(404).json({ error: "not_found" });
+  try {
+    const result = await withTransaction(async client => {
+      const map = await lockMapById(client, mapId);
+      if (!map || !(await isStage1LearnerMap(client, mapId))) return null;
+      const belongs = await client.query("SELECT 1 FROM maps m JOIN session_stages st ON st.id=m.session_stage_id WHERE m.id=$1::uuid AND st.session_id=$2::uuid", [mapId, sessionId]);
+      if (!belongs.rowCount) return null;
+      const initial = await client.query<{ snapshot: MapHistorySnapshot }>("SELECT snapshot FROM map_initial_snapshots WHERE map_id=$1::uuid AND snapshot_version=1", [mapId]);
+      const old = await client.query<HistoryOperation>(`SELECT id,map_id AS "mapId",sequence_number AS "sequenceNumber",operation_type AS "operationType",target_type AS "targetType",target_id AS "targetId",before,after,related_operation_log_id AS "relatedOperationLogId" FROM map_operation_logs WHERE map_id=$1::uuid ORDER BY sequence_number`, [mapId]);
+      const boundary = await client.query<{ legacyCount: string; legacyLastId: string | null; snapshot: MapHistorySnapshot }>(`SELECT legacy_count AS "legacyCount",legacy_last_id AS "legacyLastId",boundary_snapshot AS snapshot FROM map_history_boundaries WHERE map_id=$1::uuid`, [mapId]);
+      const newer = await client.query<MapHistoryEventV2>(`SELECT event_id AS "eventId",map_id AS "mapId",schema_version AS "schemaVersion",event_type AS "eventType",related_event_id AS "relatedEventId",related_legacy_operation_log_id AS "relatedLegacyOperationLogId",sequence_number AS "sequenceNumber",outcome,before_state AS before,after_state AS after FROM research_events WHERE session_id=$1::uuid AND map_id=$2::uuid AND schema_version IN (2,5) ORDER BY sequence_number`, [sessionId, mapId]);
+      if (!initial.rows[0]) return { status: "UNAVAILABLE", reason: "初期スナップショットがありません。", state: null };
+      if (!boundary.rows[0] && newer.rows.length) return { status: "PARTIAL", reason: "新イベントの切替境界がありません。", state: null };
+      const legacyBoundary = boundary.rows[0] ?? { legacyCount: String(old.rows.length), legacyLastId: old.rows.at(-1)?.id ?? null };
+      const count = Number(legacyBoundary.legacyCount);
+      const definition = { legacyCount: count, legacyLastId: legacyBoundary.legacyLastId };
+      const legacyReplay = replayMixedMapHistory(initial.rows[0].snapshot, definition, old.rows, []);
+      if (legacyReplay.status !== "REPLAYABLE") return legacyReplay;
+      if (boundary.rows[0] && !historySnapshotsEqual(legacyReplay.state, boundary.rows[0].snapshot)) return { status: "PARTIAL", reason: "切替時点の状態が旧履歴と一致しません。", state: null };
+      const replay = replayMixedMapHistory(initial.rows[0].snapshot, definition, old.rows, newer.rows);
+      if (replay.status !== "REPLAYABLE") return replay;
+      const current = await readCurrentMapHistorySnapshot(client, mapId);
+      if (!current || !historySnapshotsEqual(replay.state, current)) return { status: "PARTIAL", reason: "履歴の最終状態が保存済みマップと一致しません。", state: null };
+      return replay;
+    });
+    return result ? response.json(result) : response.status(404).json({ error: "not_found" });
+  } catch {
+    return response.status(500).json({ error: "map_history_fetch_failed" });
+  }
+});
 
 app.get("/api/research/goal-maps", async (_request, response) => {
   if (principalOf(response).role !== "researcher") {
@@ -1650,7 +2086,7 @@ app.get("/api/research/goal-maps", async (_request, response) => {
     );
     return response.json({ goalMaps: result.rows });
   } catch (error) {
-    console.error("Failed to list Goal Maps", error);
+    console.error("Failed to list Goal Maps", safeServerErrorCode(error));
     return response.status(500).json({ error: "goal_map_list_failed" });
   }
 });
@@ -1683,7 +2119,7 @@ app.post("/api/research/goal-maps", async (request, response) => {
     if (!map) throw new Error("Goal Map insert returned no row");
     return response.status(201).json(map);
   } catch (error) {
-    console.error("Failed to create Goal Map", error);
+    console.error("Failed to create Goal Map", safeServerErrorCode(error));
     return response.status(500).json({ error: "goal_map_create_failed" });
   }
 });
@@ -1713,7 +2149,7 @@ app.get("/api/maps/:mapId/undo-redo", async (request, response) => {
     }
     return response.json(outcome.state);
   } catch (error) {
-    console.error("Failed to read Undo/Redo state", error);
+    console.error("Failed to read Undo/Redo state", safeServerErrorCode(error));
     return response.status(500).json({ error: "undo_redo_state_failed" });
   }
 });
@@ -1773,7 +2209,12 @@ app.post("/api/maps/:mapId/undo-redo", async (request, response) => {
          WHERE map_id=$1::uuid AND idempotency_key=$2::uuid`,
         [mapId, idempotencyKey],
       );
-      const priorRequest = duplicate.rows[0];
+      let priorRequest = duplicate.rows[0];
+      const boundaryTable = (await client.query<{ name: string | null }>("SELECT to_regclass('map_history_boundaries')::text AS name")).rows[0]?.name;
+      if (!priorRequest && boundaryTable) {
+        const previous = await client.query<{ id: string; operationType: string; relatedOperationLogId: string | null; sequenceNumber: string }>(`SELECT event_id AS id,event_type AS "operationType",coalesce(related_event_id,related_legacy_operation_log_id) AS "relatedOperationLogId",sequence_number AS "sequenceNumber" FROM research_events WHERE map_id=$1::uuid AND idempotency_key=$2::uuid`, [mapId,idempotencyKey]);
+        priorRequest = previous.rows[0];
+      }
       if (priorRequest) {
         if (priorRequest.operationType !== action) {
           return { kind: "idempotency_conflict" as const };
@@ -1783,7 +2224,7 @@ app.post("/api/maps/:mapId/undo-redo", async (request, response) => {
           kind: "applied" as const,
           operationId: priorRequest.id,
           relatedOperationLogId: priorRequest.relatedOperationLogId,
-          sequenceNumber: priorRequest.sequenceNumber,
+          sequenceNumber: String(context.operations.findIndex(item => item.id === priorRequest.id) + 1),
           duplicate: true,
           state: undoRedoPayload(map, context, map.mapStatus === "DRAFT"),
         };
@@ -1870,7 +2311,7 @@ app.post("/api/maps/:mapId/undo-redo", async (request, response) => {
     if (isPostgresErrorCode(error, "23503") || isPostgresErrorCode(error, "23505")) {
       return response.status(409).json({ error: "undo_redo_conflict" });
     }
-    console.error("Failed to apply Undo/Redo", error);
+    console.error("Failed to apply Undo/Redo", safeServerErrorCode(error));
     return response.status(500).json({ error: "undo_redo_failed" });
   }
 });
@@ -1886,7 +2327,7 @@ function hasUnexpectedEmptyBody(body: unknown): boolean {
 }
 
 pool.on("error", (error) => {
-  console.error("Unexpected PostgreSQL pool error", error);
+  console.error("Unexpected PostgreSQL pool error", safeServerErrorCode(error));
 });
 
 app.get("/api/research/stage1/settings", async (_request, response) => {
@@ -1896,7 +2337,7 @@ app.get("/api/research/stage1/settings", async (_request, response) => {
 app.put("/api/research/stage1/settings", async (request, response) => {
   const minutes = request.body?.minutes;
   if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 35791394) return response.status(400).json({ error: "invalid_duration", message: "正の整数の分数を指定してください。" });
-  try { await pool.query("INSERT INTO research_settings (id, group_activity_seconds) VALUES (1,$1) ON CONFLICT (id) DO UPDATE SET group_activity_seconds=EXCLUDED.group_activity_seconds", [minutes * 60]); return response.json({ minutes }); }
+  try { await withTransaction(async client => { await client.query("INSERT INTO research_settings (id, group_activity_seconds) VALUES (1,$1) ON CONFLICT (id) DO UPDATE SET group_activity_seconds=EXCLUDED.group_activity_seconds", [minutes * 60]); await auditCurrent(client); }); return response.json({ minutes }); }
   catch { return response.status(500).json({ error: "settings_save_failed" }); }
 });
 
@@ -2006,6 +2447,7 @@ app.post("/api/research/stage1/sessions", async (request, response) => {
       });
       const credential = createLearnerToken();
       await storeLearnerToken(client, session.id, credential.hash);
+      await auditCurrent(client, { sessionId: session.id });
       return { kind: "created" as const, session, learnerAccessToken: credential.token };
     });
     if (result.kind === "settings_missing") return response.status(409).json({ error: "settings_missing", message: "群別活動の共通時間を設定してください。" });
@@ -2020,8 +2462,8 @@ app.post("/api/research/stage1/sessions", async (request, response) => {
       });
     }
     return response.status(201).json({ ...result.session, learnerAccessToken: result.learnerAccessToken });
-  } catch (error) {
-    console.error("Stage1 Session creation failed", error);
+  } catch {
+    console.error("stage1_session_create_failed");
     return response.status(500).json({ error: "stage1_session_create_failed" });
   }
 });
@@ -2038,12 +2480,13 @@ app.post("/api/research/stage1/sessions/:sessionId/learner-token", async (reques
       if (!session.rowCount) return null;
       const credential = createLearnerToken();
       await storeLearnerToken(client, sessionId, credential.hash);
+      await auditCurrent(client);
       return credential.token;
     });
     if (!result) return response.status(404).json({ error: "not_found" });
     return response.json({ learnerAccessToken: result });
-  } catch (error) {
-    console.error("Learner token rotation failed", error);
+  } catch {
+    console.error("learner_token_rotation_failed");
     return response.status(500).json({ error: "learner_token_rotation_failed" });
   }
 });
@@ -2104,7 +2547,7 @@ app.get("/api/sessions/:sessionId", async (request, response) => {
     }
     return response.json(session);
   } catch (error) {
-    console.error("Failed to fetch Session", error);
+    console.error("Failed to fetch Session", safeServerErrorCode(error));
     return response.status(500).json({
       error: "session_fetch_failed",
       message: "Sessionを取得できませんでした。",
@@ -2165,7 +2608,7 @@ app.get(
         .json(result.value);
     } catch (error) {
       if (client) await client.query("ROLLBACK").catch(() => undefined);
-      console.error("Failed to export Session research data", error);
+      console.error("Failed to export Session research data", safeServerErrorCode(error));
       return response.status(500).json({
         error: "session_export_failed",
         message: "Sessionの研究データをExportできませんでした。",
@@ -2205,7 +2648,7 @@ app.get("/api/sessions/:sessionId/flow", async (request, response) => {
       : flow;
     return response.json({ ...visibleFlow, currentMapSubmitted: mapState.integrationSubmitted, currentIntegrationMapExists: mapState.integrationExists, currentMapAutoSubmittedAt: mapState.integrationAutoSubmittedAt, serverNow: clock.rows[0]!.now });
   } catch (error) {
-    console.error("Failed to fetch Session flow", error);
+    console.error("Failed to fetch Session flow", safeServerErrorCode(error));
     return response.status(500).json({
       error: "session_flow_fetch_failed",
       message: "Sessionの進行状況を取得できませんでした。",
@@ -2280,10 +2723,13 @@ app.post("/api/sessions/:sessionId/start", async (request, response) => {
       );
       const result = updated.rows[0];
       if (!result) throw new Error("Session start returned no row");
-      return { kind: "started" as const, session: result };
+      const log = await insertResearchEventBestEffort(client, sessionId, principalOf(response).role === "learner" ? "LEARNER" : "RESEARCHER", {
+        eventType: "SESSION_START", targetType: "SESSION", outcome: "SUCCESS", clientTimeQuality: "NOT_APPLICABLE",
+      });
+      return { kind: "started" as const, session: result, logSaved: log.logSaved };
     });
 
-    if (outcome.kind === "started") return response.json(outcome.session);
+    if (outcome.kind === "started") return response.json({ ...outcome.session, logSaved: outcome.logSaved });
     if (outcome.kind === "not_found") {
       return response.status(404).json({
         error: "session_not_found",
@@ -2297,7 +2743,7 @@ app.post("/api/sessions/:sessionId/start", async (request, response) => {
       status: outcome.status,
     });
   } catch (error) {
-    console.error("Failed to start Session", error);
+    console.error("Failed to start Session", safeServerErrorCode(error));
     return response.status(500).json({
       error: "session_start_failed",
       message: "Sessionを開始できませんでした。",
@@ -2342,7 +2788,10 @@ app.post("/api/session-stages/:stageId/start", async (request, response) => {
               AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`, [stageId]);
           if (expired.rowCount) return { kind: "time_expired" as const };
         }
-        return { kind: "resumed" as const, stage };
+        const log = await insertResearchEventBestEffort(client, stage.sessionId, principalOf(response).role === "learner" ? "LEARNER" : "RESEARCHER", {
+          eventType: "STAGE_RESUME", targetType: "STAGE", stageId, outcome: "SUCCESS", clientTimeQuality: "NOT_APPLICABLE",
+        });
+        return { kind: "resumed" as const, stage, logSaved: log.logSaved };
       }
       if (stage.status !== "PENDING") {
         return { kind: "conflict" as const, stageStatus: stage.status };
@@ -2367,11 +2816,14 @@ app.post("/api/session-stages/:stageId/start", async (request, response) => {
       );
       const result = updated.rows[0];
       if (!result) throw new Error("SessionStage start returned no row");
-      return { kind: "started" as const, stage: result };
+      const log = await insertResearchEventBestEffort(client, result.sessionId, principalOf(response).role === "learner" ? "LEARNER" : "RESEARCHER", {
+        eventType: "STAGE_START", targetType: "STAGE", stageId, outcome: "SUCCESS", clientTimeQuality: "NOT_APPLICABLE",
+      });
+      return { kind: "started" as const, stage: result, logSaved: log.logSaved };
     });
 
     if (outcome.kind === "started" || outcome.kind === "resumed") {
-      return response.json(outcome.stage);
+      return response.json({ ...outcome.stage, logSaved: outcome.logSaved });
     }
     if (outcome.kind === "time_expired") return response.status(409).json({ error: "time_expired", message: "活動時間が終了しました。Session画面から次の操作を行ってください。" });
     if (outcome.kind === "not_found") {
@@ -2396,7 +2848,7 @@ app.post("/api/session-stages/:stageId/start", async (request, response) => {
       status: outcome.stageStatus,
     });
   } catch (error) {
-    console.error("Failed to start SessionStage", error);
+    console.error("Failed to start SessionStage", safeServerErrorCode(error));
     return response.status(500).json({
       error: "session_stage_start_failed",
       message: "SessionStageを開始できませんでした。",
@@ -2472,10 +2924,13 @@ app.post("/api/session-stages/:stageId/complete", async (request, response) => {
       );
       const result = updated.rows[0];
       if (!result) throw new Error("SessionStage complete returned no row");
-      return { kind: "completed" as const, stage: result };
+      const log = await insertResearchEventBestEffort(client, result.sessionId, principalOf(response).role === "learner" ? "LEARNER" : "RESEARCHER", {
+        eventType: "STAGE_COMPLETE", targetType: "STAGE", stageId, outcome: "SUCCESS", clientTimeQuality: "NOT_APPLICABLE",
+      });
+      return { kind: "completed" as const, stage: result, logSaved: log.logSaved };
     });
 
-    if (outcome.kind === "completed") return response.json(outcome.stage);
+    if (outcome.kind === "completed") return response.json({ ...outcome.stage, logSaved: outcome.logSaved });
     if (outcome.kind === "not_found") {
       return response.status(404).json({
         error: "session_stage_not_found",
@@ -2500,7 +2955,7 @@ app.post("/api/session-stages/:stageId/complete", async (request, response) => {
       status: outcome.stageStatus,
     });
   } catch (error) {
-    console.error("Failed to complete SessionStage", error);
+    console.error("Failed to complete SessionStage", safeServerErrorCode(error));
     return response.status(500).json({
       error: "session_stage_complete_failed",
       message: "SessionStageを完了できませんでした。",
@@ -2566,7 +3021,7 @@ app.post(
           kind: "session_stage_already_assigned",
         });
       }
-      console.error("Failed to create Prior Map for SessionStage", error);
+      console.error("Failed to create Prior Map for SessionStage", safeServerErrorCode(error));
       return response.status(500).json({
         error: "prior_map_create_failed",
         message: "Prior Mapを作成できませんでした。",
@@ -2590,7 +3045,7 @@ app.get("/api/maps/:mapId/kit-graph-signature", async (request, response) => {
       ? response.status(404).json({ error: "map_not_found" })
       : response.json({ mapSignature: signature });
   } catch (error) {
-    console.error("Failed to read Kit-Build graph signature", error);
+    console.error("Failed to read Kit-Build graph signature", safeServerErrorCode(error));
     return response.status(500).json({ error: "kit_graph_signature_failed" });
   }
 });
@@ -2601,31 +3056,99 @@ app.get("/api/maps/:mapId/kit-feedback", async (request, response) => {
     return response.status(400).json({ error: "invalid_map_id" });
   }
 
+  let safeContext: {sessionId:string;stageId:string}|null=null;
   try {
+    const principal = principalOf(response);
     const feedback = await withTransaction(async (client) => {
-      const map = await client.query<{ id: string; kitDefinitionId: string | null }>(
-        `SELECT id, kit_definition_id AS "kitDefinitionId"
-         FROM maps WHERE id = $1::uuid AND type = 'KB' FOR SHARE`,
+      const map = await client.query<{ id: string; kitDefinitionId: string | null; stageId: string | null; sessionId: string | null; stageType: string | null; stageStatus: string | null; sessionStatus: string | null; protocolKey: string | null; currentStageId: string | null }>(
+        `SELECT m.id, m.kit_definition_id AS "kitDefinitionId", st.id AS "stageId", st.session_id AS "sessionId",
+           st.stage_type AS "stageType", st.status AS "stageStatus", s.status AS "sessionStatus",
+           s.protocol_key AS "protocolKey", current_stage.id AS "currentStageId"
+         FROM maps m LEFT JOIN session_stages st ON st.id=m.session_stage_id
+         LEFT JOIN sessions s ON s.id=st.session_id
+         LEFT JOIN LATERAL (
+           SELECT id FROM session_stages WHERE session_id=st.session_id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1
+         ) current_stage ON true
+         WHERE m.id = $1::uuid AND m.type = 'KB' FOR SHARE OF m`,
         [mapId],
       );
-      if (!map.rows[0]) return { kind: "not_found" as const };
-      if (!map.rows[0].kitDefinitionId) return { kind: "kit_required" as const };
+      const owner = map.rows[0];
+      if (!owner) return { kind: "not_found" as const };
+      if (principal.role === "learner" &&
+          (owner.sessionId !== principal.sessionId || owner.protocolKey === null || owner.stageType !== "KB_MAP" ||
+           owner.sessionStatus !== "IN_PROGRESS" || owner.stageStatus !== "IN_PROGRESS" || owner.currentStageId !== owner.stageId)) {
+        return { kind: "not_found" as const };
+      }
+      if(principal.role === "learner" && owner.sessionId && owner.stageId) safeContext={sessionId:owner.sessionId,stageId:owner.stageId};
+      if (!owner.kitDefinitionId) {
+        const log=safeContext?await insertResearchEventBestEffort(client,safeContext.sessionId,"LEARNER",{schemaVersion:6,eventType:"FEEDBACK_CHECK",targetType:"FEEDBACK",targetId:mapId,mapId,stageId:safeContext.stageId,outcome:"REJECTED",reasonCode:"VALIDATION",clientTimeQuality:"NOT_APPLICABLE",beforeQuality:"NOT_APPLICABLE",afterQuality:"NOT_APPLICABLE"}):{logSaved:false};
+        return {kind:"kit_required" as const,logSaved:log.logSaved};
+      }
       const result = await readKitBuildFeedbackWithSignature(client, mapId);
-      return result
-        ? { kind: "feedback" as const, feedback: result }
-        : { kind: "not_found" as const };
+      if (!result) return { kind: "not_found" as const };
+      let activityLogSaved: boolean | null = null;
+      if (principal.role === "learner" && owner.sessionId && owner.stageId && owner.protocolKey &&
+          ["STAGE1_4", "STAGE1_6"].includes(owner.protocolKey)) {
+        const log = await insertResearchEventBestEffort(client, owner.sessionId, "LEARNER", {
+          schemaVersion:6,eventType: "FEEDBACK_CHECK", targetType: "FEEDBACK", targetId:mapId,stageId: owner.stageId, mapId,
+          outcome: "SUCCESS", details:{matched:result.matched},clientTimeQuality: "NOT_APPLICABLE",beforeQuality:"NOT_APPLICABLE",afterQuality:"NOT_APPLICABLE",
+        });
+        activityLogSaved = log.logSaved;
+      }
+      return { kind: "feedback" as const, feedback: result, activityLogSaved };
     });
 
     if (feedback.kind === "not_found") {
       return response.status(404).json({ error: "map_not_found" });
     }
     if (feedback.kind === "kit_required") {
-      return response.status(409).json({ error: "kit_definition_required" });
+      return response.status(409).json({ error: "kit_definition_required",logSaved:feedback.logSaved,operationOutcome:"REJECTED" });
     }
-    return response.json(feedback.feedback);
+    return response.json({ ...feedback.feedback, logSaved: feedback.activityLogSaved });
   } catch (error) {
-    console.error("Failed to check Kit-Build feedback", error);
-    return response.status(500).json({ error: "kit_feedback_failed" });
+    let logSaved=false;
+    const context=safeContext as {sessionId:string;stageId:string}|null;
+    if(context)try{const result=await withTransaction(client=>insertResearchEventBestEffort(client,context.sessionId,"LEARNER",{schemaVersion:6,eventType:"FEEDBACK_CHECK",targetType:"FEEDBACK",targetId:mapId,mapId,stageId:context.stageId,outcome:"FAILURE",reasonCode:"SERVER",clientTimeQuality:"NOT_APPLICABLE",beforeQuality:"NOT_APPLICABLE",afterQuality:"NOT_APPLICABLE"}));logSaved=result.logSaved;}catch{/* State is unchanged; recording failure is separate. */}
+    console.error("Failed to check Kit-Build feedback", safeServerErrorCode(error));
+    return response.status(500).json({ error: "kit_feedback_failed",operationOutcome:"FAILURE",logSaved });
+  }
+});
+
+app.post("/api/maps/:mapId/kit-feedback/display", async (request, response) => {
+  const { mapId } = request.params;
+  const principal = principalOf(response);
+  if (!uuidPattern.test(mapId) || principal.role !== "learner") return response.status(404).json({ error: "not_found" });
+  if (hasUnexpectedEmptyBody(request.body)) return response.status(400).json({ error: "invalid_feedback_display_request" });
+  try {
+    const outcome = await withTransaction(async (client) => {
+      const owner = await client.query<{ sessionId: string; stageId: string; stageType: string; stageStatus: string; sessionStatus: string; protocolKey: string; currentStageId: string | null; mapStatus: string }>(
+        `SELECT st.session_id AS "sessionId", st.id AS "stageId", st.stage_type AS "stageType",
+           st.status AS "stageStatus", s.status AS "sessionStatus", s.protocol_key AS "protocolKey",
+           current_stage.id AS "currentStageId", m.status AS "mapStatus"
+         FROM maps m JOIN session_stages st ON st.id=m.session_stage_id
+         JOIN sessions s ON s.id=st.session_id
+         LEFT JOIN LATERAL (
+           SELECT id FROM session_stages WHERE session_id=s.id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1
+         ) current_stage ON true
+         WHERE m.id=$1::uuid AND m.type='KB' AND s.id=$2::uuid FOR SHARE OF m`,
+        [mapId, principal.sessionId],
+      );
+      const item = owner.rows[0];
+      if (!item || !["STAGE1_4", "STAGE1_6"].includes(item.protocolKey) || item.stageType !== "KB_MAP" ||
+          item.mapStatus !== "DRAFT" || item.sessionStatus !== "IN_PROGRESS" || item.stageStatus !== "IN_PROGRESS" || item.currentStageId !== item.stageId) {
+        return { allowed: false as const };
+      }
+      const log = await insertResearchEventBestEffort(client, item.sessionId, "LEARNER", {
+        eventType: "FEEDBACK_DISPLAY", targetType: "FEEDBACK", stageId: item.stageId, mapId,
+        outcome: "SUCCESS", clientTimeQuality: "MISSING",
+      });
+      return { allowed: true as const, logSaved: log.logSaved };
+    });
+    return outcome.allowed
+      ? response.json({ displayed: true, logSaved: outcome.logSaved })
+      : response.status(404).json({ error: "not_found" });
+  } catch {
+    return response.status(500).json({ error: "feedback_display_record_failed", logSaved: false });
   }
 });
 
@@ -2663,7 +3186,7 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
       if (map.mapType === "KB") {
         const feedback = await readKitBuildFeedbackWithSignature(client, mapId);
         if (!feedback) throw new Error("Kit-Build feedback returned no Map");
-        if (!feedback.matched) return { kind: "kit_build_not_matched", feedback };
+        if (!feedback.matched) return {kind:"kit_build_not_matched",feedback,logSaved:null};
       }
 
       if (map.sessionStageId !== null) {
@@ -2728,9 +3251,20 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
       );
       const submittedMap = result.rows[0];
       if (!submittedMap) throw new Error("Map submission returned no row");
+      const hasEvents = (await client.query<{ name: string | null }>("SELECT to_regclass('map_history_boundaries')::text AS name")).rows[0]?.name;
+      if (await isStage1LearnerMap(client, mapId)) {
+        if (!hasEvents) throw new HistoryTransitionError("操作履歴のDB変更が未適用です。研究者に連絡してください。");
+        await appendMapOperationLog(client, { mapId, operationType: "MAP_SUBMIT", targetType: "MAP", targetId: mapId, before: null, after: null, clientTimestamp: null });
+      }
 
-      const sixIntegration = map.mapType === "INTEGRATION" && map.sessionStageId !== null &&
-        (await client.query("SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid AND s.protocol_key='STAGE1_6'", [map.sessionStageId])).rowCount === 1;
+      let activityLogSaved: boolean | null = null;
+      const transitionContext = map.sessionStageId === null ? null : await client.query<{ sessionId: string; stageType: string; protocolKey: string }>(
+        `SELECT st.session_id AS "sessionId", st.stage_type AS "stageType", s.protocol_key AS "protocolKey"
+         FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid`,
+        [map.sessionStageId],
+      );
+      const transitionOwner = transitionContext?.rows[0] ?? null;
+      const sixIntegration = map.mapType === "INTEGRATION" && transitionOwner?.protocolKey === "STAGE1_6";
       if (map.sessionStageId !== null && !sixIntegration) {
         const completedStage = await client.query(
           `
@@ -2741,9 +3275,13 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
           `,
           [map.sessionStageId],
         );
-        if (completedStage.rowCount !== 1) {
+        if (completedStage.rowCount !== 1 || !transitionOwner) {
           throw new Error("SessionStage completion returned no row");
         }
+        const stageLog = await insertResearchEventBestEffort(client, transitionOwner.sessionId, principalOf(response).role === "learner" ? "LEARNER" : "RESEARCHER", {
+          eventType: "STAGE_COMPLETE", targetType: "STAGE", stageId: map.sessionStageId, outcome: "SUCCESS", clientTimeQuality: "NOT_APPLICABLE",
+        });
+        activityLogSaved = stageLog.logSaved;
         // Integration submit is the last learner activity in Stage 1.
         // Complete Session in the very same transaction as Map/Stage submit.
         if (map.mapType === "INTEGRATION") {
@@ -2772,17 +3310,21 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
             if (completed.rowCount !== 1) {
               throw new Error("Stage1 Session completion returned no row");
             }
+            const sessionLog = await insertResearchEventBestEffort(client, owner.sessionId, principalOf(response).role === "learner" ? "LEARNER" : "RESEARCHER", {
+              eventType: "SESSION_COMPLETE", targetType: "SESSION", outcome: "SUCCESS", clientTimeQuality: "NOT_APPLICABLE",
+            });
+            activityLogSaved = activityLogSaved && sessionLog.logSaved;
           }
         }
       }
 
-      return { kind: "submitted", map: submittedMap };
+      return { kind: "submitted", map: submittedMap, activityLogSaved };
     });
 
     if (outcome.kind === "automatic_submission_required") return response.status(409).json({ error: "automatic_submission_required", message: "統合マップは活動時間の終了時に自動で提出されます。" });
     if (outcome.kind === "time_expired") return response.status(409).json({ error: "time_expired", message: "活動時間が終了しました。セッション画面に戻ってください。" });
     if (outcome.kind === "submitted") {
-      return response.json(outcome.map);
+      return response.json({ ...outcome.map, activityLogSaved: outcome.activityLogSaved });
     }
 
     if (outcome.kind === "map_not_found") {
@@ -2806,6 +3348,7 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
         message:
           "Kit-Buildがゴールマップと一致するまで提出できません。一致状況を確認し、概念の配置と関係の接続を見直してください。",
         feedback: outcome.feedback,
+        logSaved: outcome.logSaved,
       });
     }
 
@@ -2864,7 +3407,9 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
     });
   } catch (error) {
     if (error instanceof SessionFlowGuardError) return response.status(409).json({ error: "time_expired", message: "活動時間が終了しました。Session画面から提出してください。" });
-    console.error("Failed to submit Map", error);
+    const policyResponse = readOnlyMapResponse(response, error);
+    if (policyResponse) return policyResponse;
+    console.error("Failed to submit Map", safeServerErrorCode(error));
     return response.status(500).json({
       error: "map_submit_failed",
       message: "Mapを提出できませんでした。",
@@ -2903,7 +3448,7 @@ app.post(["/api/maps/:priorMapId/integration", "/api/session-stages/:stageId/int
       sourceKitId = source.kitId;
       sessionStageId = stageId;
     } catch (error) {
-      console.error("Failed to resolve Integration sources", error);
+      console.error("Failed to resolve Integration sources", safeServerErrorCode(error));
       return response.status(500).json({ error: "integration_initialization_failed" });
     }
   }
@@ -3350,7 +3895,7 @@ app.post(["/api/maps/:priorMapId/integration", "/api/session-stages/:stageId/int
       });
     }
     if (error instanceof SessionFlowGuardError) return response.status(409).json({ error: "time_expired", message: "活動時間が終了しました。Session画面に戻ってください。" });
-    console.error("Failed to initialize Integration Map", error);
+    console.error("Failed to initialize Integration Map", safeServerErrorCode(error));
     return response.status(500).json({
       error: "integration_initialization_failed",
       message: "Integration Mapを初期化できませんでした。",
@@ -3564,7 +4109,7 @@ app.post("/api/maps/:goalMapId/kits", async (request, response) => {
       message: "Kitに含めるLinkのsource / target Conceptも指定してください。",
     });
   } catch (error) {
-    console.error("Failed to create KitDefinition", error);
+    console.error("Failed to create KitDefinition", safeServerErrorCode(error));
     return response.status(500).json({
       error: "kit_create_failed",
       message: "KitDefinitionを保存できませんでした。",
@@ -3678,6 +4223,12 @@ app.patch("/api/maps/:mapId/kit-definition", async (request, response) => {
         `UPDATE maps SET kit_definition_id = $2::uuid WHERE id = $1::uuid`,
         [mapId, kitDefinitionId],
       );
+      const hasEvents = (await client.query<{ name: string | null }>("SELECT to_regclass('map_history_boundaries')::text AS name")).rows[0]?.name;
+      if (await isStage1LearnerMap(client, mapId)) {
+        if (!hasEvents) throw new HistoryTransitionError("操作履歴のDB変更が未適用です。研究者に連絡してください。");
+        await appendMapOperationLog(client, { mapId, operationType: "MAP_KIT_ASSIGN", targetType: "MAP", targetId: mapId, before: null, after: null, clientTimestamp: null });
+        return { kind: "assigned", kitDefinition: kit };
+      }
       await client.query(
         `UPDATE map_initial_snapshots AS snapshot
          SET snapshot = jsonb_set(snapshot.snapshot, '{kitDefinitionId}', to_jsonb($2::uuid), true)
@@ -3737,7 +4288,7 @@ app.patch("/api/maps/:mapId/kit-definition", async (request, response) => {
   } catch (error) {
     const policyResponse = readOnlyMapResponse(response, error);
     if (policyResponse) return policyResponse;
-    console.error("Failed to assign KitDefinition to Integration Map", error);
+    console.error("Failed to assign KitDefinition to Integration Map", safeServerErrorCode(error));
     return response.status(500).json({
       error: "integration_kit_assignment_failed",
       message: "Integration MapへKitDefinitionを設定できませんでした。",
@@ -4018,7 +4569,7 @@ app.post(
       const readOnlyResponse = readOnlyMapResponse(response, error);
       if (readOnlyResponse) return readOnlyResponse;
 
-      console.error("Failed to import Kit Concept", error);
+      console.error("Failed to import Kit Concept", safeServerErrorCode(error));
       return response.status(500).json({
         error: "kit_concept_import_failed",
         message: "Kit ConceptをImportできませんでした。",
@@ -4133,7 +4684,7 @@ app.post("/api/maps/:mapId/concepts", async (request, response) => {
       });
     }
 
-    console.error("Failed to create Concept", error);
+    console.error("Failed to create Concept", safeServerErrorCode(error));
     return response.status(500).json({
       error: "concept_create_failed",
       message: "Conceptを保存できませんでした。",
@@ -4280,7 +4831,7 @@ app.post("/api/maps/:mapId/concepts/merge", async (request, response) => {
             map_id AS "mapId",
             source_concept_id AS "sourceConceptId",
             target_concept_id AS "targetConceptId",
-            label
+            label, label_position_x AS "labelPositionX", label_position_y AS "labelPositionY"
           FROM links
           WHERE map_id = $1::uuid
             AND (
@@ -4477,7 +5028,7 @@ app.post("/api/maps/:mapId/concepts/merge", async (request, response) => {
     const readOnlyResponse = readOnlyMapResponse(response, error);
     if (readOnlyResponse) return readOnlyResponse;
 
-    console.error("Failed to merge Concepts", error);
+    console.error("Failed to merge Concepts", safeServerErrorCode(error));
     return response.status(500).json({
       error: "concept_merge_failed",
       message: "ConceptをMergeできませんでした。",
@@ -4654,7 +5205,7 @@ app.post("/api/maps/:mapId/links", async (request, response) => {
       });
     }
 
-    console.error("Failed to create Link", error);
+    console.error("Failed to create Link", safeServerErrorCode(error));
     return response.status(500).json({
       error: "link_create_failed",
       message: "Linkを保存できませんでした。",
@@ -4938,7 +5489,7 @@ app.post(
         });
       }
 
-      console.error("Failed to reconstruct KB Link", error);
+      console.error("Failed to reconstruct KB Link", safeServerErrorCode(error));
       return response.status(500).json({
         error: "kb_link_create_failed",
         message: "KB Linkを保存できませんでした。",
@@ -5237,7 +5788,7 @@ app.post(
       const readOnlyResponse = readOnlyMapResponse(response, error);
       if (readOnlyResponse) return readOnlyResponse;
 
-      console.error("Failed to import Integration Link from Kit", error);
+      console.error("Failed to import Integration Link from Kit", safeServerErrorCode(error));
       return response.status(500).json({
         error: "kit_link_import_failed",
         message: "Kit LinkをImportできませんでした。",
@@ -5335,7 +5886,7 @@ app.patch("/api/links/:linkId/label", async (request, response) => {
     const readOnlyResponse = readOnlyMapResponse(response, error);
     if (readOnlyResponse) return readOnlyResponse;
 
-    console.error("Failed to update Link label", error);
+    console.error("Failed to update Link label", safeServerErrorCode(error));
     return response.status(500).json({
       error: "link_label_update_failed",
       message: "Link labelを保存できませんでした。",
@@ -5513,7 +6064,7 @@ app.patch("/api/links/:linkId/reconnect", async (request, response) => {
       });
     }
 
-    console.error("Failed to reconnect Link", error);
+    console.error("Failed to reconnect Link", safeServerErrorCode(error));
     return response.status(500).json({
       error: "link_reconnect_failed",
       message: "Linkを再接続できませんでした。",
@@ -5598,7 +6149,7 @@ app.delete("/api/links/:linkId", async (request, response) => {
     const readOnlyResponse = readOnlyMapResponse(response, error);
     if (readOnlyResponse) return readOnlyResponse;
 
-    console.error("Failed to delete Link", error);
+    console.error("Failed to delete Link", safeServerErrorCode(error));
     return response.status(500).json({
       error: "link_delete_failed",
       message: "Linkを削除できませんでした。",
@@ -5706,12 +6257,33 @@ app.patch("/api/concepts/:conceptId/position", async (request, response) => {
     const readOnlyResponse = readOnlyMapResponse(response, error);
     if (readOnlyResponse) return readOnlyResponse;
 
-    console.error("Failed to update Concept position", error);
+    console.error("Failed to update Concept position", safeServerErrorCode(error));
     return response.status(500).json({
       error: "concept_position_update_failed",
       message: "Conceptの位置を保存できませんでした。",
     });
   }
+});
+
+app.patch("/api/links/:linkId/position", async (request, response) => {
+ const {linkId}=request.params, body=request.body as Record<string,unknown>|undefined;
+ if(!uuidPattern.test(linkId))return response.status(404).json({error:"not_found"});
+ if(!body||typeof body!=="object"||Array.isArray(body)||Object.keys(body).some(k=>!["labelPositionX","labelPositionY","clientTimestamp"].includes(k))||!validMapCoordinate(body.labelPositionX)||!validMapCoordinate(body.labelPositionY))return response.status(400).json({error:"invalid_link_position",message:"リンクの座標は絶対値10000000以内の数値で指定してください。"});
+ const {labelPositionX,labelPositionY}=body; const timestamp=validateClientTimestamp(body.clientTimestamp);
+ if(!timestamp.valid)return response.status(400).json({error:"invalid_client_timestamp"});
+ try {
+  const saved=await withTransaction(async client=>{
+   const map=await lockMapForLink(client,linkId);if(!map)return null;ensureMapIsEditable(map);
+   if(!await isStage1LearnerMap(client,map.mapId))return null;
+   const row=(await client.query("SELECT label_position_x, label_position_y FROM links WHERE id=$1 AND map_id=$2 FOR UPDATE",[linkId,map.mapId])).rows[0];
+   if(!row)return null;
+   if(row.label_position_x!==labelPositionX||row.label_position_y!==labelPositionY){
+    await client.query("UPDATE links SET label_position_x=$2,label_position_y=$3 WHERE id=$1",[linkId,labelPositionX,labelPositionY]);
+    await appendMapOperationLog(client,{mapId:map.mapId,operationType:"MOVE_LINK",targetType:"LINK",targetId:linkId,before:null,after:null,clientTimestamp:timestamp.value,idempotencyKey:request.get("Idempotency-Key")??null});
+   }
+   return{id:linkId,mapId:map.mapId,labelPositionX,labelPositionY};
+  });return saved?response.json(saved):response.status(404).json({error:"not_found"});
+ }catch(error){const policy=readOnlyMapResponse(response,error);if(policy)return policy;return response.status(500).json({error:"link_position_save_failed",message:"リンクの位置を保存できませんでした。"});}
 });
 
 app.patch("/api/concepts/:conceptId/label", async (request, response) => {
@@ -5807,7 +6379,7 @@ app.patch("/api/concepts/:conceptId/label", async (request, response) => {
     const readOnlyResponse = readOnlyMapResponse(response, error);
     if (readOnlyResponse) return readOnlyResponse;
 
-    console.error("Failed to update Concept label", error);
+    console.error("Failed to update Concept label", safeServerErrorCode(error));
     return response.status(500).json({
       error: "concept_label_update_failed",
       message: "Concept名を保存できませんでした。",
@@ -5951,7 +6523,7 @@ app.delete("/api/concepts/:conceptId", async (request, response) => {
       });
     }
 
-    console.error("Failed to delete Concept", error);
+    console.error("Failed to delete Concept", safeServerErrorCode(error));
     return response.status(500).json({
       error: "concept_delete_failed",
       message: "Conceptを削除できませんでした。",
@@ -6131,7 +6703,7 @@ app.post("/api/kits/:kitId/kb-map", async (request, response) => {
         kind: "session_stage_already_assigned",
       });
     }
-    console.error("Failed to initialize KB Map", error);
+    console.error("Failed to initialize KB Map", safeServerErrorCode(error));
     return response.status(500).json({
       error: "kb_initialization_failed",
       message: "KB Mapを初期化できませんでした。",
@@ -6154,7 +6726,7 @@ app.get("/api/kits", async (_request, response) => {
     return response.json({ kits: principal.role === "researcher"
       ? result.rows : result.rows.filter((kit) => kit.id === principal.kitId) });
   } catch (error) {
-    console.error("Failed to list KitDefinitions", error);
+    console.error("Failed to list KitDefinitions", safeServerErrorCode(error));
     return response.status(500).json({
       error: "kit_list_failed",
       message: "KitDefinitionを取得できませんでした。",
@@ -6245,7 +6817,7 @@ app.get("/api/kits/:kitId", async (request, response) => {
       links: linksResult.rows,
     });
   } catch (error) {
-    console.error("Failed to fetch KitDefinition", error);
+    console.error("Failed to fetch KitDefinition", safeServerErrorCode(error));
     return response.status(500).json({
       error: "kit_fetch_failed",
       message: "KitDefinitionの取得に失敗しました。",
@@ -6345,7 +6917,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
           link.map_id AS "mapId",
           link.source_concept_id AS "sourceConceptId",
           link.target_concept_id AS "targetConceptId",
-          link.label,
+          link.label, link.label_position_x AS "labelPositionX",link.label_position_y AS "labelPositionY",
           (
             SELECT item.id
             FROM link_provenance AS provenance
@@ -6509,7 +7081,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
       availableKitDefinitions,
     });
   } catch (error) {
-    console.error("Failed to fetch Map", error);
+    console.error("Failed to fetch Map", safeServerErrorCode(error));
     return response.status(500).json({
       error: "map_fetch_failed",
       message: "Mapの取得に失敗しました。",
@@ -6545,17 +7117,39 @@ async function submitExpiredIntegrationMaps() {
   if (autoSubmissionRunning) return;
   autoSubmissionRunning = true;
   try {
-    await pool.query(`WITH submission_clock AS (SELECT clock_timestamp() AS submitted_at)
-      UPDATE maps m SET status='SUBMITTED', submitted_at=clock.submitted_at, auto_submitted_at=clock.submitted_at
-      FROM session_stages st JOIN sessions s ON s.id=st.session_id CROSS JOIN submission_clock clock
-      WHERE m.session_stage_id=st.id AND m.type='INTEGRATION' AND m.status='DRAFT'
+    await observeExpiredStages(pool);
+    const candidates = await pool.query<{ id: string }>(`SELECT m.id FROM maps m JOIN session_stages st ON m.session_stage_id=st.id JOIN sessions s ON s.id=st.session_id
+      WHERE m.type='INTEGRATION' AND m.status='DRAFT'
         AND s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL' AND s.status='IN_PROGRESS'
         AND st.stage_type='INTEGRATION_MAP' AND st.status='IN_PROGRESS' AND st.started_at IS NOT NULL
         AND st.id=(SELECT current_stage.id FROM session_stages current_stage
           WHERE current_stage.session_id=s.id AND current_stage.status <> 'COMPLETED' ORDER BY current_stage.order_index LIMIT 1)
-        AND clock.submitted_at >= st.started_at + s.group_activity_seconds * interval '1 second'`);
-  } catch (error) {
-    console.error("Automatic Integration Map submission failed; will retry", error);
+        AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`);
+    for (const candidate of candidates.rows) {
+      try {
+        await withTransaction(async client => {
+          const map = await lockMapById(client, candidate.id);
+          if (!map || map.mapStatus !== "DRAFT") return;
+          const hasEvents = (await client.query<{ name: string | null }>("SELECT to_regclass('map_history_boundaries')::text AS name")).rows[0]?.name;
+          if (!hasEvents) throw new HistoryTransitionError("操作履歴のDB変更が未適用です。");
+          const updated = await client.query(`WITH submission_clock AS (SELECT clock_timestamp() AS submitted_at)
+            UPDATE maps m SET status='SUBMITTED', submitted_at=clock.submitted_at, auto_submitted_at=clock.submitted_at
+            FROM session_stages st JOIN sessions s ON s.id=st.session_id CROSS JOIN submission_clock clock
+            WHERE m.id=$1::uuid AND m.session_stage_id=st.id AND m.type='INTEGRATION' AND m.status='DRAFT'
+              AND s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL' AND s.status='IN_PROGRESS'
+              AND st.stage_type='INTEGRATION_MAP' AND st.status='IN_PROGRESS' AND st.started_at IS NOT NULL
+              AND st.id=(SELECT current_stage.id FROM session_stages current_stage WHERE current_stage.session_id=s.id AND current_stage.status <> 'COMPLETED' ORDER BY current_stage.order_index LIMIT 1)
+              AND clock.submitted_at >= st.started_at + s.group_activity_seconds * interval '1 second' RETURNING m.id`, [candidate.id]);
+          if (!updated.rowCount) return;
+          await appendMapOperationLog(client, { mapId: candidate.id, operationType: "MAP_AUTO_SUBMIT", targetType: "MAP", targetId: candidate.id, before: null, after: null, clientTimestamp: null });
+        });
+      } catch {
+        const saved=await recordAudit(pool,{eventType:"MAP_AUTO_SUBMIT",mapId:candidate.id},"SYSTEM","FAILURE","SERVER","auto-failure:"+candidate.id).catch(()=>false);
+        console.error(saved?"automatic_submission_failed_event_saved":"automatic_submission_failed_event_missing");
+      }
+    }
+  } catch {
+    console.error("automatic_submission_scan_failed");
   } finally {
     autoSubmissionRunning = false;
   }
@@ -6563,7 +7157,7 @@ async function submitExpiredIntegrationMaps() {
 
 const autoSubmissionTimer = setInterval(() => void submitExpiredIntegrationMaps(), 1000);
 autoSubmissionTimer.unref();
-const server = app.listen(port, "0.0.0.0", () => {
+const server = app.listen(port, process.env.API_BIND_ADDRESS ?? "0.0.0.0", () => {
   void submitExpiredIntegrationMaps();
   console.log(`API listening on port ${port}`);
 });
@@ -6571,7 +7165,7 @@ const server = app.listen(port, "0.0.0.0", () => {
 const shutdown = () => {
   clearInterval(autoSubmissionTimer);
   server.close(() => {
-    void pool.end().then(() => process.exit(0));
+    void Promise.all([pool.end(),eventExports.dispose(),eventExportPool.end()]).then(() => process.exit(0));
   });
 };
 

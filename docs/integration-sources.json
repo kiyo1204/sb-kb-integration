@@ -1,0 +1,170 @@
+{
+  "base": "7ae20d03b8a97dbd212e3fcc70ca6516889e089f",
+  "archive": "C:\\Users\\kyoum\\AppData\\Local\\Temp\\research-stream-integration-011bfme3",
+  "sources": [
+    {
+      "issue": 4,
+      "root": "C:\\sb-kb-integration",
+      "branch": "codex/issue-4-map-operation-events",
+      "head": "7ae20d03b8a97dbd212e3fcc70ca6516889e089f",
+      "status": " M backend/package.json\n M backend/src/index.ts\n M backend/src/map-history.ts\n M backend/src/map-undo-redo.ts\n M backend/src/research-event-map-v2.ts\n M backend/src/research-events.ts\n M backend/src/research-export.ts\n M backend/src/scripts/verify-research-event-schema.ts\n M backend/src/scripts/verify-research-events.ts\n M backend/src/scripts/verify-stage1.ts\n M backend/src/stage1-analysis.ts\n M backend/src/stage1-features.ts\n M docs/research-events-v1.md\n M frontend/src/MapPage.tsx\n M frontend/src/Stage1AnalysisPage.tsx\n?? backend/migrations/1790910000000_create_map_history_boundaries.js\n?? backend/migrations/1790920000000_add_event_legacy_reference.js\n?? backend/migrations/1790930000000_add_research_annotation_event_refs.js\n?? backend/src/map-mixed-history.ts\n?? backend/src/scripts/verify-map-api-v2.ts\n?? backend/src/scripts/verify-map-auto-submit-v2.ts\n?? backend/src/scripts/verify-map-mixed-history.ts\n",
+      "tracked": [
+        "backend/package.json",
+        "backend/src/index.ts",
+        "backend/src/map-history.ts",
+        "backend/src/map-undo-redo.ts",
+        "backend/src/research-event-map-v2.ts",
+        "backend/src/research-events.ts",
+        "backend/src/research-export.ts",
+        "backend/src/scripts/verify-research-event-schema.ts",
+        "backend/src/scripts/verify-research-events.ts",
+        "backend/src/scripts/verify-stage1.ts",
+        "backend/src/stage1-analysis.ts",
+        "backend/src/stage1-features.ts",
+        "docs/research-events-v1.md",
+        "frontend/src/MapPage.tsx",
+        "frontend/src/Stage1AnalysisPage.tsx"
+      ],
+      "untracked": [
+        "backend/migrations/1790910000000_create_map_history_boundaries.js",
+        "backend/migrations/1790920000000_add_event_legacy_reference.js",
+        "backend/migrations/1790930000000_add_research_annotation_event_refs.js",
+        "backend/src/map-mixed-history.ts",
+        "backend/src/scripts/verify-map-api-v2.ts",
+        "backend/src/scripts/verify-map-auto-submit-v2.ts",
+        "backend/src/scripts/verify-map-mixed-history.ts"
+      ],
+      "hashes": {
+        "backend/package.json": "3e4f3b9b95c75b05f84d57b93f43546e6c24496b985debc917d829a037f82e98",
+        "backend/src/index.ts": "39fddb3cc706e62a95dd1c58b1ec6208069c614f94dec1960dc605375a8a8cdd",
+        "backend/src/map-history.ts": "50b82540bf138855e150d38145f75498182fcce99a8e3aa09c8e3f66de5c073b",
+        "backend/src/map-undo-redo.ts": "56a7ce6520317b6c968e0b39ac52f977d1dd8aeec3c67bf607df97e5cdcd7103",
+        "backend/src/research-event-map-v2.ts": "2e4f1a15dd91217246a1ff955ddb10951ce0abaf706a56fba5620c31777914b9",
+        "backend/src/research-events.ts": "68778b4f8fed9f6551f352c76143535754650282dba8738f63652528c24a07e9",
+        "backend/src/research-export.ts": "4c5f93cf89d8ed3b104fcd83a4e8b613803c84042f340d02eeca905144d1886c",
+        "backend/src/scripts/verify-research-event-schema.ts": "db119a483b7522da3c573a7290f4f0654e259c7b15f9a0144b7916ea0deb2a52",
+        "backend/src/scripts/verify-research-events.ts": "3c1dc821e361975cd483d2153d5da824544ca34c2c4842865ce12f145fec2c67",
+        "backend/src/scripts/verify-stage1.ts": "91e71b4078ce9d386e74e5a58c53807cbf147b6c7e3b1bebd981c7dee6954823",
+        "backend/src/stage1-analysis.ts": "128346a6355e3c01d88f4541733080acac2187ad774768660aac17440e8fe8c4",
+        "backend/src/stage1-features.ts": "754f1d45327faccdcc7c5fd376bb21516e7f4190099c6699d312989154c6225a",
+        "docs/research-events-v1.md": "2a721ffbf36a548cd3a7555490daf44c924b8013370ace6e097d91b21bbcb68a",
+        "frontend/src/MapPage.tsx": "e6e47e845c837a405dcc7b07872a33ed961fce9fd12a621c2f9f9d35d711928c",
+        "frontend/src/Stage1AnalysisPage.tsx": "9e5074b8ec07c1cec727f98188e2db0ce7701190b152d5a27cf0568edb856a5a",
+        "backend/migrations/1790910000000_create_map_history_boundaries.js": "7ddd069f08cd16cb631d0a997b1878b2ed26d198d9fcf21f41c27b62bc27fe35",
+        "backend/migrations/1790920000000_add_event_legacy_reference.js": "19d1606d51a4eb1974b7fd2f471ec2fc53a278dfa4e6770210bdfe583b37c2ac",
+        "backend/migrations/1790930000000_add_research_annotation_event_refs.js": "ec15ec5418fedc7d5495def3e7b23a2cd71e90b3e1ae292545a11ff0eca3f041",
+        "backend/src/map-mixed-history.ts": "64a558f6e8cd22f8be8d37c5ccd88797c2b7ea413df56633702dd5ef163dd1b8",
+        "backend/src/scripts/verify-map-api-v2.ts": "b8a2e47d71f86a7f00f479e982299880904cae22fe9f8ffe0922785c7f3bdf5d",
+        "backend/src/scripts/verify-map-auto-submit-v2.ts": "f58e368712ff86373429e47f83fe56b69d2909ac1de83e4c2a4f32eaa2451f33",
+        "backend/src/scripts/verify-map-mixed-history.ts": "2518dc1b10c6327af49641af51f36c2222e567d02c5e8359fc60e1e3973e726c"
+      }
+    },
+    {
+      "issue": 5,
+      "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-5-learning-activity-events\\sb-kb-integration",
+      "branch": "codex/issue-5-learning-activity-events",
+      "head": "7ae20d03b8a97dbd212e3fcc70ca6516889e089f",
+      "status": " M backend/package.json\n M backend/src/assessments.ts\n M backend/src/index.ts\n M backend/src/research-events.ts\n M backend/src/scripts/verify-research-events.ts\n M docs/research-events-v1.md\n M frontend/src/Assessment.tsx\n M frontend/src/MapPage.tsx\n M frontend/src/SessionFlowPage.tsx\n?? backend/src/scripts/verify-learning-activity-events.ts\n?? frontend/src/learning-events.ts\n",
+      "tracked": [
+        "backend/package.json",
+        "backend/src/assessments.ts",
+        "backend/src/index.ts",
+        "backend/src/research-events.ts",
+        "backend/src/scripts/verify-research-events.ts",
+        "docs/research-events-v1.md",
+        "frontend/src/Assessment.tsx",
+        "frontend/src/MapPage.tsx",
+        "frontend/src/SessionFlowPage.tsx"
+      ],
+      "untracked": [
+        "backend/src/scripts/verify-learning-activity-events.ts",
+        "frontend/src/learning-events.ts"
+      ],
+      "hashes": {
+        "backend/package.json": "014a3bd79ebbfe026978c4e4d1e82a3adcd76ad70caf9e9e386c477cadabf41e",
+        "backend/src/assessments.ts": "7737847b8b37d4e1c941d3ecd911a8efa30a486171049ab3ef68a65962bcca8b",
+        "backend/src/index.ts": "b6e4aefe85aa984d26ee7672a1de8b6b9db4341aa66091896031061c6d1abdd3",
+        "backend/src/research-events.ts": "00325e8f2a72e3d40444839d1f2dae32d27f46775117359492e82ede7ebbcdcf",
+        "backend/src/scripts/verify-research-events.ts": "593cb6479fd549f4055678e6369fa4750fd271e37052c45fa3b17b4f7cda0111",
+        "docs/research-events-v1.md": "b484c09041599877528512f87b3362a7eb5d2cde06d62389564004bfb88a1c6e",
+        "frontend/src/Assessment.tsx": "698e21f1e37a87e39a64bc5b31ea09743a00ec4130af80c32f81b28ca3278471",
+        "frontend/src/MapPage.tsx": "75874ec73ac4a5285f1b0148df4e5bd04da07021f13da963e8e5a698a3bf50e9",
+        "frontend/src/SessionFlowPage.tsx": "137628756e238c1abd925d499d4bf9811192a328080dacbe29cd5a0f4b2e78d3",
+        "backend/src/scripts/verify-learning-activity-events.ts": "07b7a2f2a4f6c82cc057b83eb3fd91cd98703543fe5c140f1880fe81c9cc861d",
+        "frontend/src/learning-events.ts": "2d872be886d9cbacd20b4f976d5428397d435b5897a040444405b8437a9b35a9"
+      }
+    },
+    {
+      "issue": 6,
+      "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-6-assessment-event-logging\\sb-kb-integration",
+      "branch": "codex/issue-6-assessment-event-logging",
+      "head": "7ae20d03b8a97dbd212e3fcc70ca6516889e089f",
+      "status": " M README.md\n M backend/package.json\n M backend/src/assessments.ts\n M backend/src/research-events.ts\n M backend/src/scripts/verify-research-events.ts\n M docs/research-events-v1.md\n M frontend/src/Assessment.tsx\n?? backend/migrations/1790950000000_add_assessment_events_v3.js\n?? backend/src/research-event-assessment-v3.ts\n?? backend/src/scripts/verify-assessment-events.ts\n",
+      "tracked": [
+        "README.md",
+        "backend/package.json",
+        "backend/src/assessments.ts",
+        "backend/src/research-events.ts",
+        "backend/src/scripts/verify-research-events.ts",
+        "docs/research-events-v1.md",
+        "frontend/src/Assessment.tsx"
+      ],
+      "untracked": [
+        "backend/migrations/1790950000000_add_assessment_events_v3.js",
+        "backend/src/research-event-assessment-v3.ts",
+        "backend/src/scripts/verify-assessment-events.ts"
+      ],
+      "hashes": {
+        "README.md": "4356faf191c5aa28d4043e9aa9c576fdd2506615af46793da66ddcbea24246ba",
+        "backend/package.json": "c8b80489c68cf5afc98f19277355cc1df5cdfa23775a4c6c8d0ab29f49bf110f",
+        "backend/src/assessments.ts": "01808512021cd4f8418e5be6c2564b3521e8253964a2b7c77e63c8fe170cd770",
+        "backend/src/research-events.ts": "813ea671f5b22fd130b84e3f259f0e11b046a280a27668150c5cfb3a793d7f94",
+        "backend/src/scripts/verify-research-events.ts": "ff82a27d8c0a82e6cdeb3bd9a159bf65eb95fa5fc393c2dfbffe09cfc7dc598d",
+        "docs/research-events-v1.md": "6d4bb872d29b5e0001e79084e265ad6504b5a722dc6ecce27f0d8af1f0e9b5cb",
+        "frontend/src/Assessment.tsx": "12eb19b76008360ef016c203f82e00a84964d00f2bb94c64a828867387a970c1",
+        "backend/migrations/1790950000000_add_assessment_events_v3.js": "e709c1b7389c195744f046f1fdd6ec7f705ce31134450d45a147bb2775d1b224",
+        "backend/src/research-event-assessment-v3.ts": "16966a44b495be5fca4dc11bd2e726100a3c21d1e1b9a81fe33f140ccc61a237",
+        "backend/src/scripts/verify-assessment-events.ts": "bcecfac70132ebb298938082661499b45e10eb45515498dd4b391c4ba745592d"
+      }
+    },
+    {
+      "issue": 7,
+      "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-7-researcher-system-events\\sb-kb-integration",
+      "branch": "codex/issue-7-researcher-system-events",
+      "head": "7ae20d03b8a97dbd212e3fcc70ca6516889e089f",
+      "status": " M backend/package.json\n M backend/src/assessments.ts\n M backend/src/index.ts\n M backend/src/research-events.ts\n M backend/src/scripts/verify-research-events.ts\n M backend/src/stage1-analysis.ts\n M docs/research-events-v1.md\n?? backend/migrations/1790960000000_add_server_audit_events.js\n?? backend/src/scripts/verify-audit-routing.ts\n?? backend/src/scripts/verify-server-audit.ts\n?? backend/src/scripts/verify-server-recovery.ts\n?? backend/src/server-audit.ts\n?? backend/src/system-submission.ts\n",
+      "tracked": [
+        "backend/package.json",
+        "backend/src/assessments.ts",
+        "backend/src/index.ts",
+        "backend/src/research-events.ts",
+        "backend/src/scripts/verify-research-events.ts",
+        "backend/src/stage1-analysis.ts",
+        "docs/research-events-v1.md"
+      ],
+      "untracked": [
+        "backend/migrations/1790960000000_add_server_audit_events.js",
+        "backend/src/scripts/verify-audit-routing.ts",
+        "backend/src/scripts/verify-server-audit.ts",
+        "backend/src/scripts/verify-server-recovery.ts",
+        "backend/src/server-audit.ts",
+        "backend/src/system-submission.ts"
+      ],
+      "hashes": {
+        "backend/package.json": "1b6ab03b593981cc652292f7a46a77bf72435e6f84d2b4383c6c95043b27e5ad",
+        "backend/src/assessments.ts": "ce2d70085b901523d1e2011f2a6af050fe2ce0449b8b7196bf0391a039504f16",
+        "backend/src/index.ts": "bf65ca7ccb3163dfc94f7fefe2a6921905f394848570de9df431b475bdf797e8",
+        "backend/src/research-events.ts": "944366a0b9a6efef4f870752e70f0247de041be580b897728ee14791ab5e0aa5",
+        "backend/src/scripts/verify-research-events.ts": "65f2fd316558f2d612acb203dd95a6cda65a67604d3cff96c25cc227fe197efb",
+        "backend/src/stage1-analysis.ts": "7d5648b5f01a318a9787be8e1be788ccee3597af24165a86c8fbe260a21e1bfb",
+        "docs/research-events-v1.md": "1abff4085dbe2c3a3d38213d03a09955663fff3b7aa013eb4ebf5dea9214915e",
+        "backend/migrations/1790960000000_add_server_audit_events.js": "ad2a938d474487bc726755b63ce4e13c2742e8eaf7bc35d1330cc23351708fc4",
+        "backend/src/scripts/verify-audit-routing.ts": "7c510a6fdb9f986086b1db6b1e33b83854f4e36bc614d826ca6fbe40e0f8891b",
+        "backend/src/scripts/verify-server-audit.ts": "c70beb1d18fe75ce82a5c059fc43c47f6b1beee8c10166cea70e13109d7582bb",
+        "backend/src/scripts/verify-server-recovery.ts": "186a944a693eb2858af6494ff6aa5898d048debf849c349888ddae905715c627",
+        "backend/src/server-audit.ts": "d9bc2bbc2e15b69c82813b59cf585737d39bd712e7e4f75423229fc71d9f1f21",
+        "backend/src/system-submission.ts": "58938d2a677f51f5b39192856d142d97f5188a988d74c94998a4d6d8861fbff1"
+      }
+    }
+  ]
+}

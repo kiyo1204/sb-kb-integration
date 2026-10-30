@@ -1,0 +1,262 @@
+[
+  {
+    "issue": 4,
+    "root": "C:\\sb-kb-integration",
+    "branch": "codex/issue-4-map-operation-events",
+    "branchUnchanged": true,
+    "files": [
+      {
+        "path": "backend/package.json",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/index.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/map-history.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/map-undo-redo.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/research-event-map-v2.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/research-events.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/research-export.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-research-event-schema.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-research-events.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-stage1.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/stage1-analysis.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/stage1-features.ts",
+        "unchanged": true
+      },
+      {
+        "path": "docs/research-events-v1.md",
+        "unchanged": true
+      },
+      {
+        "path": "frontend/src/MapPage.tsx",
+        "unchanged": true
+      },
+      {
+        "path": "frontend/src/Stage1AnalysisPage.tsx",
+        "unchanged": true
+      },
+      {
+        "path": "backend/migrations/1790910000000_create_map_history_boundaries.js",
+        "unchanged": true
+      },
+      {
+        "path": "backend/migrations/1790920000000_add_event_legacy_reference.js",
+        "unchanged": true
+      },
+      {
+        "path": "backend/migrations/1790930000000_add_research_annotation_event_refs.js",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/map-mixed-history.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-map-api-v2.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-map-auto-submit-v2.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-map-mixed-history.ts",
+        "unchanged": true
+      }
+    ],
+    "sourceUnchanged": true
+  },
+  {
+    "issue": 5,
+    "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-5-learning-activity-events\\sb-kb-integration",
+    "branch": "codex/issue-5-learning-activity-events",
+    "branchUnchanged": true,
+    "files": [
+      {
+        "path": "backend/package.json",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/assessments.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/index.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/research-events.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-research-events.ts",
+        "unchanged": true
+      },
+      {
+        "path": "docs/research-events-v1.md",
+        "unchanged": true
+      },
+      {
+        "path": "frontend/src/Assessment.tsx",
+        "unchanged": true
+      },
+      {
+        "path": "frontend/src/MapPage.tsx",
+        "unchanged": true
+      },
+      {
+        "path": "frontend/src/SessionFlowPage.tsx",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-learning-activity-events.ts",
+        "unchanged": true
+      },
+      {
+        "path": "frontend/src/learning-events.ts",
+        "unchanged": true
+      }
+    ],
+    "sourceUnchanged": true
+  },
+  {
+    "issue": 6,
+    "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-6-assessment-event-logging\\sb-kb-integration",
+    "branch": "codex/issue-6-assessment-event-logging",
+    "branchUnchanged": true,
+    "files": [
+      {
+        "path": "README.md",
+        "unchanged": true
+      },
+      {
+        "path": "backend/package.json",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/assessments.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/research-events.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-research-events.ts",
+        "unchanged": true
+      },
+      {
+        "path": "docs/research-events-v1.md",
+        "unchanged": true
+      },
+      {
+        "path": "frontend/src/Assessment.tsx",
+        "unchanged": true
+      },
+      {
+        "path": "backend/migrations/1790950000000_add_assessment_events_v3.js",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/research-event-assessment-v3.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-assessment-events.ts",
+        "unchanged": true
+      }
+    ],
+    "sourceUnchanged": true
+  },
+  {
+    "issue": 7,
+    "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-7-researcher-system-events\\sb-kb-integration",
+    "branch": "codex/issue-7-researcher-system-events",
+    "branchUnchanged": true,
+    "files": [
+      {
+        "path": "backend/package.json",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/assessments.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/index.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/research-events.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-research-events.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/stage1-analysis.ts",
+        "unchanged": true
+      },
+      {
+        "path": "docs/research-events-v1.md",
+        "unchanged": true
+      },
+      {
+        "path": "backend/migrations/1790960000000_add_server_audit_events.js",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-audit-routing.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-server-audit.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/scripts/verify-server-recovery.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/server-audit.ts",
+        "unchanged": true
+      },
+      {
+        "path": "backend/src/system-submission.ts",
+        "unchanged": true
+      }
+    ],
+    "sourceUnchanged": true
+  }
+]

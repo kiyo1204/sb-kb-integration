@@ -1,0 +1,32 @@
+[
+  {
+    "test": "test:integrated-streams",
+    "exitCode": 0,
+    "elapsedMs": 4717
+  },
+  {
+    "test": "test:integration-invariants",
+    "exitCode": 0,
+    "elapsedMs": 1617
+  },
+  {
+    "test": "test:safe-server-error",
+    "exitCode": 0,
+    "elapsedMs": 1122
+  },
+  {
+    "test": "test:server-recovery",
+    "exitCode": 0,
+    "elapsedMs": 5597
+  },
+  {
+    "test": "test:delivery-reliability",
+    "exitCode": 0,
+    "elapsedMs": 7622
+  },
+  {
+    "test": "test:event-scale",
+    "exitCode": 3221226505,
+    "elapsedMs": 2324
+  }
+]

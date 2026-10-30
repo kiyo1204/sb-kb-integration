@@ -16,22 +16,51 @@
     "test:stage1:integration": "tsx src/scripts/verify-stage1.ts",
     "test:undo-redo:unit": "tsx src/scripts/verify-undo-redo.ts",
     "test:research-events": "tsx src/scripts/verify-research-events.ts",
-    "test:research-event-schema": "tsx src/scripts/verify-research-event-schema.ts"
+    "test:research-event-schema": "tsx src/scripts/verify-research-event-schema.ts",
+    "test:map-mixed-history": "tsx src/scripts/verify-map-mixed-history.ts",
+    "test:map-api-v2": "tsx src/scripts/verify-map-api-v2.ts",
+    "test:map-auto-submit-v2": "tsx src/scripts/verify-map-auto-submit-v2.ts",
+    "test:learning-activity-events": "tsx src/scripts/verify-learning-activity-events.ts",
+    "test:assessment-events": "tsx src/scripts/verify-assessment-events.ts",
+    "test:server-audit": "tsx src/scripts/verify-server-audit.ts",
+    "test:server-recovery": "tsx src/scripts/verify-server-recovery.ts",
+    "test:audit-routing": "tsx src/scripts/verify-audit-routing.ts",
+    "test:integrated-streams": "tsx src/scripts/verify-integrated-streams.ts",
+    "test:integration-invariants": "tsx src/scripts/verify-integration-invariants.ts",
+    "test:safe-server-error": "tsx src/scripts/verify-safe-server-error.ts",
+    "test:delivery-reliability": "tsx src/scripts/verify-delivery-reliability.ts",
+    "test:event-export": "tsx src/scripts/verify-event-export.ts",
+    "samples:event-export": "tsx src/scripts/generate-event-export-samples.ts",
+    "test:event-export-samples": "tsx src/scripts/verify-event-export-samples.ts",
+    "test:data-management": "tsx src/scripts/verify-data-management.ts",
+    "db:mock": "tsx src/scripts/mock-db.ts",
+    "test:mock-reset-new-stream": "tsx src/scripts/verify-mock-reset-new-stream.ts",
+    "test:mock-reset-safety": "tsx src/scripts/verify-mock-reset-safety.ts",
+    "test:event-catalog": "tsx src/scripts/verify-event-catalog.ts",
+    "test:research-event-suite": "tsx src/scripts/run-research-event-suite.ts",
+    "test:event-scale": "tsx src/scripts/verify-event-scale.ts",
+    "test:test-target-guards": "tsx src/scripts/verify-test-target-guards.ts",
+    "test:parent-followup": "tsx src/scripts/verify-parent-followup.ts"
   },
   "dependencies": {
     "express": "^5.1.0",
     "node-pg-migrate": "^8.0.3",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "yazl": "^3.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/express": "^5.0.3",
     "@types/node": "^22.18.0",
     "@types/pg": "^8.15.5",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
+    "csv-parse": "^7.0.3",
     "eslint": "^10.11.0",
     "prettier": "^3.6.2",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
-    "typescript-eslint": "^8.42.0"
+    "typescript-eslint": "^8.42.0",
+    "yauzl": "^3.4.0"
   }
 }

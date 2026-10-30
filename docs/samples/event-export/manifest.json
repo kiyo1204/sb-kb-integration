@@ -1,0 +1,61 @@
+{
+  "exportId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "exportSchemaVersion": 2,
+  "snapshotAt": "2026-01-01T00:01:00.000Z",
+  "expiresAt": "2026-01-01T00:16:00.000Z",
+  "eventCount": 17,
+  "filters": {
+    "sessionIds": [],
+    "learnerIds": [],
+    "groups": [],
+    "activities": [],
+    "eventTypes": [],
+    "from": null,
+    "to": null
+  },
+  "files": [
+    {
+      "name": "events.json",
+      "rows": 17,
+      "bytes": 28803
+    },
+    {
+      "name": "events.csv",
+      "rows": 17,
+      "bytes": 7835
+    },
+    {
+      "name": "map_operations.csv",
+      "rows": 7,
+      "bytes": 7306
+    },
+    {
+      "name": "activity_times.csv",
+      "rows": 6,
+      "bytes": 3601
+    },
+    {
+      "name": "assessment_events.csv",
+      "rows": 2,
+      "bytes": 1610
+    },
+    {
+      "name": "system_events.csv",
+      "rows": 1,
+      "bytes": 893
+    },
+    {
+      "name": "researcher_events.csv",
+      "rows": 2,
+      "bytes": 1105
+    },
+    {
+      "name": "data-dictionary.md",
+      "rows": null,
+      "bytes": 9887
+    }
+  ],
+  "payloadWarnings": 0,
+  "boundaryWarnings": 0,
+  "auditSaved": null
+}

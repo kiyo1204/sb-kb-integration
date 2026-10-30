@@ -1,0 +1,798 @@
+{
+  "auditedAt": "2026-10-29T05:15:22.322061+00:00",
+  "workspace": "C:\\Users\\kyoum\\.codex\\worktrees\\integrate-research-event-streams\\sb-kb-integration",
+  "branch": "codex/integrate-research-event-streams",
+  "head": "7ae20d03b8a97dbd212e3fcc70ca6516889e089f",
+  "githubReadOnly": true,
+  "issueSnapshot": "parent-audit-issue-criteria.json",
+  "parentCounts": {
+    "確認済み": 9,
+    "一部確認": 7,
+    "未確認": 0
+  },
+  "criteria": [
+    {
+      "issue": 2,
+      "item": 1,
+      "criterion": "記録対象のイベント一覧と共通スキーマが定義されている",
+      "status": "確認済み",
+      "files": "research-event-catalog.ts / research-events.ts / research-event-map-v2.ts / research-event-assessment-v3.ts / server-audit.ts",
+      "tests": "test:event-catalog（39種・354契約ケース）, test:research-event-schema, test:research-events",
+      "note": "現カタログとv1〜v4の型・DB・登録/研究者取得契約を照合。Link位置の収集不足は項目2で扱う。"
+    },
+    {
+      "issue": 2,
+      "item": 2,
+      "criterion": "意味のある操作が正確な対象・結果・時刻で保存される",
+      "status": "一部確認",
+      "files": "index.ts / map-history.ts / index.ts / learning-events.ts / server-audit.ts / MapPage.tsx",
+      "tests": "test:map-api-v2, test:learning-activity-events, test:assessment-events, test:server-audit",
+      "note": "保存を伴う確定操作・対象・サーバー時刻は一致。Link文字ドラッグは表示用ローカル位置だけで記録なし。MAP_SAVEは予約語で独立した保存操作は現行UI/APIにない。"
+    },
+    {
+      "issue": 2,
+      "item": 3,
+      "criterion": "成功・失敗・拒否・取消が区別されている",
+      "status": "一部確認",
+      "files": "map-history.ts / index.ts / research-events.ts / EventTimeline.tsx / research-data-dictionary.md",
+      "tests": "test:map-api-v2, test:assessment-events, test:server-audit, test:research-log-ui",
+      "note": "四分類と観測可能なADD_LINK取消を確認。ただしFEEDBACK_CHECKのREJECTEDは従来のKit不一致で、確認処理そのものの拒否ではない。表示を明確化し、保存仕様の再定義は保留。"
+    },
+    {
+      "issue": 2,
+      "item": 4,
+      "criterion": "変更前後の状態とテキスト編集履歴が記録される",
+      "status": "一部確認",
+      "files": "research-event-map-v2.ts / research-event-assessment-v3.ts / MapPage.tsx",
+      "tests": "test:map-api-v2, test:assessment-events, test:map-mixed-history",
+      "note": "Concept/Link本文・接続・統合・Provenance、確定回答の前後は一致。表示だけのLink位置はv2状態に含まれず再現できない。"
+    },
+    {
+      "issue": 2,
+      "item": 5,
+      "criterion": "学習者・研究者・システムの操作を区別できる",
+      "status": "確認済み",
+      "files": "access-control.ts / research-events.ts / server-audit.ts",
+      "tests": "test:research-events, test:server-audit, test:integration-invariants",
+      "note": "actorをサーバーで確定。共有研究者コードでは個人の研究者を識別しない。"
+    },
+    {
+      "issue": 2,
+      "item": 6,
+      "criterion": "活動時間や中断時間を分析できる",
+      "status": "一部確認",
+      "files": "learning-events.ts / index.ts / frontend/src/learning-events.ts / event-export-contract.ts",
+      "tests": "test:learning-activity-events, test:delivery-reliability",
+      "note": "活動開始/完了の確定時刻と観測した中断/復帰は利用可能。未観測の終了や無操作・注意は不明で、正確な実作業/中断時間の完全再計算はできない。"
+    },
+    {
+      "issue": 2,
+      "item": 7,
+      "criterion": "通信エラー後の再送で欠損・重複を防止できる",
+      "status": "一部確認",
+      "files": "observation-outbox.ts / operation-client.ts / delivery-reliability.ts / research-event-delivery.md",
+      "tests": "test:delivery-browser, test:delivery-reliability, test:server-recovery",
+      "note": "固定キー・順次再送・ACK喪失・再起動・容量/期限/破損を検証。キュー喪失、報告前終了、キーなし再試行の完全復旧/重複防止は保証しない。"
+    },
+    {
+      "issue": 2,
+      "item": 8,
+      "criterion": "JSONと用途別CSVを出力でき、共通IDで対応づけられる",
+      "status": "確認済み",
+      "files": "event-export-service.ts / event-export-routes.ts / event-export-contract.ts / research-export.ts / samples/event-export",
+      "tests": "test:event-export, test:event-export-samples, test:event-export-browser",
+      "note": "同一抽出集合のJSON/共通CSV/用途別CSVをID・件数・順序・日時・outcomeで照合。サンプル12イベントも一致。"
+    },
+    {
+      "issue": 2,
+      "item": 9,
+      "criterion": "指定した条件で出力範囲を絞り込める",
+      "status": "確認済み",
+      "files": "event-export-query.ts / EventExportPage.tsx",
+      "tests": "test:event-export, test:event-export-browser",
+      "note": "Session/仮名ID/群/活動/操作/結果/[from,to)、条件内OR・条件間AND、空結果、JST→UTCを確認。"
+    },
+    {
+      "issue": 2,
+      "item": 10,
+      "criterion": "研究者向け閲覧・検索画面が利用できる",
+      "status": "確認済み",
+      "files": "EventExportPage.tsx / EventTimeline.tsx / DeliveryStatus.tsx",
+      "tests": "test:event-export, test:research-log-ui, test:event-export-browser",
+      "note": "固定スナップショットID+offsetの25件ページ、詳細・本文品質・申告/保存記録の区別。3000件全ページで重複欠落なし。"
+    },
+    {
+      "issue": 2,
+      "item": 11,
+      "criterion": "新ログ形式でマップの履歴再生が正常に動作する",
+      "status": "確認済み",
+      "files": "map-mixed-history.ts / map-history.ts / index.ts / map-undo-redo.ts",
+      "tests": "test:map-mixed-history, test:map-api-v2, test:undo-redo:unit, test:stage1:integration",
+      "note": "旧→境界→新のDB状態再生、旧/新両方へのUndo/Redo、Provenance、境界不整合・欠測・保存失敗を確認。Linkの未保存表示位置までの再現は項目4の未完了。"
+    },
+    {
+      "issue": 2,
+      "item": 12,
+      "criterion": "仮名IDとアクセス制御が適切に機能する",
+      "status": "確認済み",
+      "files": "data-management.ts / access-control.ts / migrations/179100*",
+      "tests": "test:data-management, test:research-events, test:event-export, test:data-management-browser",
+      "note": "P-ID投影・対応表非公開・再発行/明示関連付け・学習者API拒否。資源UUIDは既存契約維持。暗号化や個人研究者認証の本番評価は未確認。"
+    },
+    {
+      "issue": 2,
+      "item": 13,
+      "criterion": "保存期限の管理と安全な手動削除ができる",
+      "status": "一部確認",
+      "files": "data-management.ts / DataManagementPage.tsx / assessment-drafts.ts / observation-outbox.ts",
+      "tests": "test:data-management, test:data-management-browser, test:delivery-browser, test:research-log-ui",
+      "note": "期限表示/確認削除/DB rollback/失効再送拒否/未接続確認待ちは確認。新下書きの消去漏れを修正。所属不明の旧下書き・未接続端末の即時消去・平文下書き保護方針は残る。"
+    },
+    {
+      "issue": 2,
+      "item": 14,
+      "criterion": "開発用データのリセット手順が整備されている",
+      "status": "確認済み",
+      "files": "scripts/mock-db.ts / docs/development-event-stream-reset.md / README.md",
+      "tests": "db:mock safety, db:mock check, test:test-target-guards",
+      "note": "新規Docker模擬DBのみ。既定dry-run、環境/manifest/nonce/DB marker/system identifier/対象確認/計画指紋を多重照合。通常起動や学習者APIにリセットなし。"
+    },
+    {
+      "issue": 2,
+      "item": 15,
+      "criterion": "全イベントの保存・出力に対する自動テストが整備されている",
+      "status": "一部確認",
+      "files": "event-test-matrix.ts / scripts/verify-event-catalog.ts / .github/workflows/stage1-prototype.yml",
+      "tests": "26検証すべて成功。39種・354契約ケース、旧17語彙、実API・ブラウザー結合検証",
+      "note": "新種別の対応表漏れと辞書ずれを検出。契約fixtureの保存/出力合格は、予約語や未観測分岐の実収集を証明しない。Link文字移動のnative経路は未実装。GitHub/Linux CIの実走行は未実施。"
+    },
+    {
+      "issue": 2,
+      "item": 16,
+      "criterion": "操作ログの仕様、出力構造、分析上の注意点が文書化されている",
+      "status": "確認済み",
+      "files": "research-events-v1.md / research-data-dictionary.md / samples/event-export/data-dictionary.md / research-event-test-matrix.md",
+      "tests": "test:event-catalog, test:event-export-samples, 本監査のコード照合",
+      "note": "バージョン/順序/結合/日時/空値/観測限界/秘密検出限界を照合し、今回の不一致と未解決事項を追記。"
+    },
+    {
+      "issue": 3,
+      "item": 1,
+      "criterion": "イベント定義表に対象・発火タイミング・必須項目・outcomeの扱いが明記されている",
+      "status": "確認済み",
+      "evidence": "research-events-v1.md; research-event-test-matrix.md; test:event-catalog",
+      "note": "イベント定義・時点・必須項目・結果を39語彙の対応表で照合。"
+    },
+    {
+      "issue": 3,
+      "item": 2,
+      "criterion": "共通DB/型/APIに対するスキーマ検証と基本保存・取得テストがある",
+      "status": "確認済み",
+      "evidence": "research-events.ts; migrations/179089〜179101; test:research-events; test:research-event-schema",
+      "note": "v1〜v4と旧互換、未知/秘密フィールド拒否・保存取得を新規DBで確認。"
+    },
+    {
+      "issue": 3,
+      "item": 3,
+      "criterion": "同一マップ内の操作順序と異なる主体のイベントが識別できる",
+      "status": "確認済み",
+      "evidence": "research-events.ts; map-mixed-history.ts; test:map-api-v2; test:research-events",
+      "note": "Session内連番・Map境界・actorを照合し、競合時一意性を検証。"
+    },
+    {
+      "issue": 3,
+      "item": 4,
+      "criterion": "旧ログに依存する箇所と移行/リセット要否が明示されている",
+      "status": "確認済み",
+      "evidence": "research-events-v1.md; development-event-stream-reset.md; test:mock-reset-new-stream",
+      "note": "旧ログ依存と混在読取/新規書込・開発リセットを区別。"
+    },
+    {
+      "issue": 4,
+      "item": 1,
+      "criterion": "3種類のマップでイベント一覧に対応する操作が収集される",
+      "status": "一部確認",
+      "evidence": "map-history.ts / index.ts; MapPage.tsx; test:map-api-v2",
+      "note": "3種類の保存APIからv2を記録するが、Link文字の表示位置移動はDB/カタログ外。MAP_SAVEは予約語。"
+    },
+    {
+      "issue": 4,
+      "item": 2,
+      "criterion": "操作の成功・失敗・拒否・取消と変更前後が整合する",
+      "status": "確認済み",
+      "evidence": "map-history.ts / index.ts; test:map-api-v2; test:integration-invariants",
+      "note": "成功・拒否・rollback後の失敗・限定取消で状態不変/更新と安全理由を確認。"
+    },
+    {
+      "issue": 4,
+      "item": 3,
+      "criterion": "Undo/Redoを含むリプレイ最終状態が保存されたマップの状態と一致する",
+      "status": "確認済み",
+      "evidence": "map-mixed-history.ts; map-undo-redo.ts; test:map-api-v2; test:map-mixed-history",
+      "note": "境界前旧操作・新操作へのUndo/RedoとDB最終内容一致を確認。未保存表示位置は対象外。"
+    },
+    {
+      "issue": 4,
+      "item": 4,
+      "criterion": "再現不能な履歴は原因/欠損状態を明示できる",
+      "status": "確認済み",
+      "evidence": "map-mixed-history.ts; test:map-mixed-history; test:research-log-ui",
+      "note": "欠測/境界不一致は正常再生とせず理由を返し実画面で表示。"
+    },
+    {
+      "issue": 4,
+      "item": 5,
+      "criterion": "試行回数やドラッグ中イベント数ではなく「確定した操作単位」で保存する",
+      "status": "確認済み",
+      "evidence": "MapPage.tsx; test:map-api-v2; test:stage1:integration",
+      "note": "確定API単位。Conceptドラッグ確定/ラベル確定のみ記録、キーストロークなし。"
+    },
+    {
+      "issue": 5,
+      "item": 1,
+      "criterion": "各活動について開始/終了・遷移の時刻が記録される",
+      "status": "確認済み",
+      "evidence": "index.ts / frontend/src/learning-events.ts; test:learning-activity-events; test:server-recovery",
+      "note": "両群活動開始/完了とSession遷移をサーバー確定、期限は別イベント。"
+    },
+    {
+      "issue": 5,
+      "item": 2,
+      "criterion": "中断・復帰とブラウザー終了などで不確実な状態を区別できる",
+      "status": "確認済み",
+      "evidence": "learning-events.ts; research-event-delivery.md; test:learning-activity-events",
+      "note": "ブラウザー申告とDB状態を区別、未観測の終了を生成しない。"
+    },
+    {
+      "issue": 5,
+      "item": 3,
+      "criterion": "学習者の活動時間をログから再計算できる",
+      "status": "一部確認",
+      "evidence": "event-export-contract.ts; research-data-dictionary.md; test:learning-activity-events",
+      "note": "観測区間・server elapsedは再計算可能。未観測終了を含む実作業/中断時間の正確な総量は不明。"
+    },
+    {
+      "issue": 5,
+      "item": 4,
+      "criterion": "Kitの判定結果のログ収集が正解内容の不適切な開示を起こさない",
+      "status": "確認済み",
+      "evidence": "index.ts; index.ts / frontend/src/learning-events.ts; test:learning-activity-events",
+      "note": "本人/current Stageだけ、Goal/正解本文はイベントに含めない。Kit不一致のREJECTED意味を明記。"
+    },
+    {
+      "issue": 6,
+      "item": 1,
+      "criterion": "確定した回答変更のbefore/afterと関連設問を追跡できる",
+      "status": "確認済み",
+      "evidence": "assessments.ts; research-event-assessment-v3.ts; test:assessment-events",
+      "note": "確定回答の前後と対象設問をDB内容/Exportで照合。"
+    },
+    {
+      "issue": 6,
+      "item": 2,
+      "criterion": "事前/事後評価を混同せず、同一参加者内で関連づけられる",
+      "status": "確認済み",
+      "evidence": "assessments.ts; research-export.ts; test:assessment-events; test:data-management",
+      "note": "評価時点はDB/研究者出力で維持、P-ID投影で関連付け。"
+    },
+    {
+      "issue": 6,
+      "item": 3,
+      "criterion": "保存/提出成功と失敗が区別される",
+      "status": "確認済み",
+      "evidence": "assessments.ts; test:assessment-events; test:delivery-reliability",
+      "note": "保存・Stage提出・イベント原子性と失敗/拒否、安全理由を確認。"
+    },
+    {
+      "issue": 6,
+      "item": 4,
+      "criterion": "キー入力単位での過剰記録を行わない",
+      "status": "確認済み",
+      "evidence": "Assessment.tsx; test:assessment-events",
+      "note": "onBlur/提出で確定し同値では編集イベントなし。localStorageは最新値の下書き。"
+    },
+    {
+      "issue": 7,
+      "item": 1,
+      "criterion": "研究者・システムイベントが学習者イベントと同じスキーマで検索できる",
+      "status": "確認済み",
+      "evidence": "server-audit.ts; event-export-service.ts / event-export-routes.ts; test:server-audit; test:event-export",
+      "note": "研究者/システム主体をサーバー確定し共通抽出/閲覧で検索。"
+    },
+    {
+      "issue": 7,
+      "item": 2,
+      "criterion": "提出拒否、保存エラー、自動提出が理由・主体を区別して残る",
+      "status": "確認済み",
+      "evidence": "server-audit.ts; map-history.ts / index.ts; test:map-auto-submit-v2; test:server-recovery; test:integration-invariants",
+      "note": "通常・自動提出と拒否/保存失敗、期限回復を区別し重複なし。"
+    },
+    {
+      "issue": 7,
+      "item": 3,
+      "criterion": "失敗イベントの記録が認証情報等を漏洩させない",
+      "status": "確認済み",
+      "evidence": "server-audit.ts; safe-server-error.ts; test:server-audit; test:safe-server-error",
+      "note": "既知機密・本文・例外は安全コードへ。未知秘密の完全検出は保証外。"
+    },
+    {
+      "issue": 7,
+      "item": 4,
+      "criterion": "重複するフロント/サーバーイベントは関連IDで整理できる",
+      "status": "確認済み",
+      "evidence": "delivery-reliability.ts; test:audit-routing; test:integrated-streams",
+      "note": "関連ID/receipt/重複キーとMap監査のroutingを検証。"
+    },
+    {
+      "issue": 8,
+      "item": 1,
+      "criterion": "オフライン・タイムアウト・サーバー再起動時の再送が検証される",
+      "status": "確認済み",
+      "evidence": "observation-outbox.ts; test:delivery-browser; test:delivery-reliability; test:server-recovery",
+      "note": "実ブラウザー再起動・切断・ACK喪失と実API再起動を検証。"
+    },
+    {
+      "issue": 8,
+      "item": 2,
+      "criterion": "再送しても同一event_idのログが重複しない",
+      "status": "確認済み",
+      "evidence": "delivery-reliability.ts; test:delivery-reliability",
+      "note": "固定キーの同時再送は同じID/sequence。キーなし同一性の推定はしない。"
+    },
+    {
+      "issue": 8,
+      "item": 3,
+      "criterion": "操作順序・送信状態・欠損疑いを確認できる",
+      "status": "確認済み",
+      "evidence": "DeliveryStatus.tsx; test:delivery-browser; test:research-log-ui",
+      "note": "client順序とserver順序、報告/保存を別表示。未報告は欠損有無不明。"
+    },
+    {
+      "issue": 8,
+      "item": 4,
+      "criterion": "未送信キューにアクセスコード/トークンを保存しない",
+      "status": "確認済み",
+      "evidence": "observation-outbox.ts; research-event-delivery.md; test:delivery-browser",
+      "note": "観測キューは固定v1数値payloadのみ、認証/回答/v2-v4を保存しない。別の評価下書き保護は未解決。"
+    },
+    {
+      "issue": 9,
+      "item": 1,
+      "criterion": "JSONとCSVがイベントID・件数・時刻・outcomeで一致する",
+      "status": "確認済み",
+      "evidence": "event-export-service.ts / event-export-routes.ts; test:event-export; test:event-export-samples",
+      "note": "新旧/v1-v4の同一集合・共通ID/件数/時刻/結果/順序を照合。"
+    },
+    {
+      "issue": 9,
+      "item": 2,
+      "criterion": "詳細CSVの行から共通CSVのイベントへ参照できる",
+      "status": "確認済み",
+      "evidence": "event-export-contract.ts; test:event-export; test:event-export-samples",
+      "note": "用途別各行のevent_idが共通CSVに存在することを照合。"
+    },
+    {
+      "issue": 9,
+      "item": 3,
+      "criterion": "絞り込み後にも識別子の整合性が保たれる",
+      "status": "確認済み",
+      "evidence": "event-export-query.ts; test:event-export; test:event-export-browser",
+      "note": "全条件・AND/OR・空・UTC境界と仮名ID投影を確認。"
+    },
+    {
+      "issue": 9,
+      "item": 4,
+      "criterion": "認証情報を出力せず、研究者のみがExportできる",
+      "status": "確認済み",
+      "evidence": "access-control.ts; event-export-service.ts / event-export-routes.ts; test:event-export; test:data-management",
+      "note": "学習者403/未認証401、既知秘密拒否/除外、CSV式防護。未知秘密完全検出は対象外。"
+    },
+    {
+      "issue": 9,
+      "item": 5,
+      "criterion": "サンプルファイルとデータ辞書がある",
+      "status": "確認済み",
+      "evidence": "samples/event-export; test:event-export-samples",
+      "note": "12模擬イベント・9ファイル、生成物の完全一致とv4本文なし契約を再検証。"
+    },
+    {
+      "issue": 10,
+      "item": 1,
+      "criterion": "絞り込み条件がイベント検索/Exportと整合する",
+      "status": "確認済み",
+      "evidence": "EventExportPage.tsx; event-export-query.ts; test:event-export-browser",
+      "note": "検索と出力は同じfilter/固定snapshotを共有。"
+    },
+    {
+      "issue": 10,
+      "item": 2,
+      "criterion": "変更前後/拒否理由/関連イベントが追跡できる",
+      "status": "確認済み",
+      "evidence": "EventTimeline.tsx; test:event-export; test:research-log-ui",
+      "note": "before/after・拒否理由・旧/新関連先・時刻/品質を詳細で確認。"
+    },
+    {
+      "issue": 10,
+      "item": 3,
+      "criterion": "数の多いイベントでも閲覧できる",
+      "status": "確認済み",
+      "evidence": "test:event-export; test:event-scale; parent-audit-scale-results.json",
+      "note": "3000件全ページと4000件代表測定、同時追加でも固定ページ。20台同時ではない。"
+    },
+    {
+      "issue": 10,
+      "item": 4,
+      "criterion": "学習者権限によるアクセスがAPI/画面で拒否される",
+      "status": "確認済み",
+      "evidence": "access-control.ts; App.tsx; test:event-export; test:event-export-browser",
+      "note": "研究者API/ルートの未認証・学習者拒否を確認。"
+    },
+    {
+      "issue": 11,
+      "item": 1,
+      "criterion": "仮名IDがSession内の学習データを結び付けられる",
+      "status": "確認済み",
+      "evidence": "data-management.ts; test:data-management",
+      "note": "P-ID投影、明示的なSession間紐づけ・再発行でもFK不変。"
+    },
+    {
+      "issue": 11,
+      "item": 2,
+      "criterion": "秘密情報が保存・JSON/CSVに混入しない",
+      "status": "一部確認",
+      "evidence": "data-management.ts; assessment-drafts.ts; test:data-management; test:delivery-browser",
+      "note": "サーバー/出力/新下書きの既知秘密を防護。未知秘密、所属不明の旧平文キャッシュの扱いは完全保証不可。"
+    },
+    {
+      "issue": 11,
+      "item": 3,
+      "criterion": "研究者以外がログを取得/削除できない",
+      "status": "確認済み",
+      "evidence": "access-control.ts; data-management.ts; test:data-management; test:research-events",
+      "note": "研究者専用ログ/管理API、対応表非公開、他者アクセス拒否。"
+    },
+    {
+      "issue": 11,
+      "item": 4,
+      "criterion": "保存期限の可視化と、確認を伴う明示削除ができる",
+      "status": "確認済み",
+      "evidence": "DataManagementPage.tsx; test:data-management; test:data-management-browser",
+      "note": "期限未設定/近い/超過の表示、DELETE確認、変更検出による拒否。自動削除なし。"
+    },
+    {
+      "issue": 11,
+      "item": 5,
+      "criterion": "削除に関連するデータの整合性と権限がテストされる",
+      "status": "一部確認",
+      "evidence": "test:data-management; test:delivery-browser; test:research-log-ui; research-data-management.md",
+      "note": "DB関連削除・rollback/再送拒否/新下書き消去を検証。未接続端末・未知旧キー・バックアップ等は完全消去未確認。"
+    },
+    {
+      "issue": 12,
+      "item": 1,
+      "criterion": "旧ログ移行なしで開発用環境を新形式へ初期化できる",
+      "status": "確認済み",
+      "evidence": "scripts/mock-db.ts; db:mock migrate/seed/check",
+      "note": "新規模擬DBを空の旧ストリームで初期化。変換/移行なし。"
+    },
+    {
+      "issue": 12,
+      "item": 2,
+      "criterion": "意図しないデータ削除が起こらない防護と明示手順がある",
+      "status": "確認済み",
+      "evidence": "test:mock-reset-safety; test:test-target-guards",
+      "note": "dry-run・環境・ラベル/nonce・DB marker・system identifier・計画/対象/backup確認を実検証。"
+    },
+    {
+      "issue": 12,
+      "item": 3,
+      "criterion": "新形式に切り替えた環境で主要機能が起動する",
+      "status": "確認済み",
+      "evidence": "test:mock-reset-new-stream; db:mock check",
+      "note": "新規6活動から編集/Undo/Redo/提出/分析/JSON/CSVを通し実行。"
+    },
+    {
+      "issue": 12,
+      "item": 4,
+      "criterion": "README・切替手順にデータ消去の影響が明記されている",
+      "status": "確認済み",
+      "evidence": "README.md; development-event-stream-reset.md; scripts/mock-db.ts",
+      "note": "対象テーブル・バックアップ・復元不能・再起動手順を実装と照合。"
+    },
+    {
+      "issue": 13,
+      "item": 1,
+      "criterion": "カタログ上の各イベントに対応するテストがある",
+      "status": "一部確認",
+      "evidence": "event-test-matrix.ts; test:event-catalog; test:map-api-v2",
+      "note": "39種/354fixtureと旧17語彙対応、追加漏れ/辞書ずれ検出は通過。全native操作の網羅証明ではなく、Link位置/予約語は未収集。"
+    },
+    {
+      "issue": 13,
+      "item": 2,
+      "criterion": "主要な復旧・履歴再生・出力・権限テストがCIで動く",
+      "status": "一部確認",
+      "evidence": "stage1-prototype.yml; parent-audit-suite-results.json",
+      "note": "CIは専用DB/Node22/Linux/Chromiumの構成済み。同等26検証はWindowsで成功、GitHub/Linux実走行は未実施。"
+    },
+    {
+      "issue": 13,
+      "item": 3,
+      "criterion": "研究用JSON/CSVのサンプルとデータ辞書がある",
+      "status": "確認済み",
+      "evidence": "research-data-dictionary.md; samples/event-export; test:event-export-samples",
+      "note": "JSON/共通/用途別CSVと辞書の一致を確認、v4サンプル明示検証を追加。"
+    },
+    {
+      "issue": 13,
+      "item": 4,
+      "criterion": "既知の観測限界と取得できない情報が文書化されている",
+      "status": "確認済み",
+      "evidence": "research-data-dictionary.md; research-event-delivery.md; research-data-management.md",
+      "note": "ブラウザー終了・未観測末尾/注意・平文ドラフト・Link位置・完全秘密検出不可を明記。"
+    }
+  ],
+  "commands": [
+    {
+      "command": "npm run db:mock --prefix backend -- create --name stage1_mock_parent_audit --mock-data-only",
+      "exitCode": 0,
+      "result": "今回新規に専用Dockerコンテナを作成。既存DATABASE_URL未使用。"
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- migrate --name stage1_mock_parent_audit",
+      "exitCode": 0,
+      "result": "全マイグレーションを順に適用。179089以降の現存12本はinvariants.jsonに列挙。"
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- safety --name stage1_mock_parent_audit",
+      "exitCode": 0,
+      "result": "拒否条件/既定dry-run/実resetをこの新規模擬DBだけで確認。"
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- seed --name stage1_mock_parent_audit",
+      "exitCode": 0,
+      "result": "模擬seed。"
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- check --name stage1_mock_parent_audit",
+      "exitCode": 0,
+      "result": "空の旧ログで新形式6活動/編集/Undo/Redo/分析/出力まで確認。"
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- suite --name stage1_mock_parent_audit",
+      "exitCode": 0,
+      "result": "RESEARCH_BROWSER_CHECKS=1、RESEARCH_CHECK_REPORT_PREFIX=parent-audit。26検証すべて成功。"
+    },
+    {
+      "command": "npm run typecheck --prefix backend",
+      "exitCode": 0,
+      "result": "最終修正後。"
+    },
+    {
+      "command": "npm run lint --prefix backend",
+      "exitCode": 0,
+      "result": "最終修正後。"
+    },
+    {
+      "command": "npm run build --prefix backend",
+      "exitCode": 0,
+      "result": "型検査を含む。"
+    },
+    {
+      "command": "npm run typecheck --prefix frontend",
+      "exitCode": 0,
+      "result": "frontend buildでも再確認。"
+    },
+    {
+      "command": "npm run lint --prefix frontend",
+      "exitCode": 0,
+      "result": "最終修正後。"
+    },
+    {
+      "command": "npm run build --prefix frontend",
+      "exitCode": 0,
+      "result": "Vite production build成功、52モジュール。"
+    },
+    {
+      "command": "npm run test:research-log-ui --prefix frontend",
+      "exitCode": 0,
+      "result": "最終追加fixture: 実評価コンポーネントの下書き/機密キャッシュ拒否/削除時クリア、Kit不一致表示も成功。"
+    },
+    {
+      "command": "npm run test:delivery-browser --prefix frontend",
+      "exitCode": 0,
+      "result": "HTTP LANでsubtleなし、対象ドラフト/キュー消去・別Session保持・旧キー移行・削除後再キャッシュ拒否を追加し再検証。"
+    },
+    {
+      "command": "npm run test:event-export-samples --prefix backend",
+      "exitCode": 0,
+      "result": "模擬RESEARCHER_API_TOKENのみで実行、DB接続なし。v1-v3 + server-only v4、全CSV/JSONの一致。"
+    }
+  ],
+  "suite": [
+    {
+      "test": "test:test-target-guards",
+      "exitCode": 0,
+      "elapsedMs": 1490
+    },
+    {
+      "test": "test:event-catalog",
+      "exitCode": 0,
+      "elapsedMs": 3091
+    },
+    {
+      "test": "test:research-event-schema",
+      "exitCode": 0,
+      "elapsedMs": 1324
+    },
+    {
+      "test": "test:undo-redo:unit",
+      "exitCode": 0,
+      "elapsedMs": 1377
+    },
+    {
+      "test": "test:map-mixed-history",
+      "exitCode": 0,
+      "elapsedMs": 1308
+    },
+    {
+      "test": "test:research-events",
+      "exitCode": 0,
+      "elapsedMs": 3715
+    },
+    {
+      "test": "test:event-export-samples",
+      "exitCode": 0,
+      "elapsedMs": 1384
+    },
+    {
+      "test": "test:event-export",
+      "exitCode": 0,
+      "elapsedMs": 26047
+    },
+    {
+      "test": "test:data-management",
+      "exitCode": 0,
+      "elapsedMs": 4049
+    },
+    {
+      "test": "test:stage1:integration",
+      "exitCode": 0,
+      "elapsedMs": 26271
+    },
+    {
+      "test": "test:map-api-v2",
+      "exitCode": 0,
+      "elapsedMs": 7866
+    },
+    {
+      "test": "test:map-auto-submit-v2",
+      "exitCode": 0,
+      "elapsedMs": 3666
+    },
+    {
+      "test": "test:learning-activity-events",
+      "exitCode": 0,
+      "elapsedMs": 5547
+    },
+    {
+      "test": "test:assessment-events",
+      "exitCode": 0,
+      "elapsedMs": 7495
+    },
+    {
+      "test": "test:server-audit",
+      "exitCode": 0,
+      "elapsedMs": 8050
+    },
+    {
+      "test": "test:audit-routing",
+      "exitCode": 0,
+      "elapsedMs": 2288
+    },
+    {
+      "test": "test:integrated-streams",
+      "exitCode": 0,
+      "elapsedMs": 5869
+    },
+    {
+      "test": "test:integration-invariants",
+      "exitCode": 0,
+      "elapsedMs": 1977
+    },
+    {
+      "test": "test:safe-server-error",
+      "exitCode": 0,
+      "elapsedMs": 1304
+    },
+    {
+      "test": "test:server-recovery",
+      "exitCode": 0,
+      "elapsedMs": 5566
+    },
+    {
+      "test": "test:delivery-reliability",
+      "exitCode": 0,
+      "elapsedMs": 10370
+    },
+    {
+      "test": "test:event-scale",
+      "exitCode": 0,
+      "elapsedMs": 14185
+    },
+    {
+      "test": "test:research-log-ui",
+      "exitCode": 0,
+      "elapsedMs": 11382
+    },
+    {
+      "test": "test:delivery-browser",
+      "exitCode": 0,
+      "elapsedMs": 19422
+    },
+    {
+      "test": "test:event-export-browser",
+      "exitCode": 0,
+      "elapsedMs": 32337
+    },
+    {
+      "test": "test:data-management-browser",
+      "exitCode": 0,
+      "elapsedMs": 10940
+    }
+  ],
+  "initialCorrectedFailures": [
+    "新effectの宣言順によるfrontend lintを修正し最終lint成功。",
+    "追加ブラウザーfixture初回2回: CJS default importおよびtsxの__name注入によりfixture失敗。fixtureを修正して実画面検証成功。",
+    "単独サンプル検証1回は模擬RESEARCHER_API_TOKEN未設定で起動前拒否。模擬値だけ設定して再検証成功。既存DBには接続していない。"
+  ],
+  "baselineFilesMissing": [],
+  "changedExistingFiles": [
+    "backend/src/event-export-dictionary.ts",
+    "backend/src/event-test-matrix.ts",
+    "backend/src/scripts/mock-db.ts",
+    "backend/src/scripts/run-research-event-suite.ts",
+    "backend/src/scripts/verify-event-export-samples.ts",
+    "backend/src/scripts/verify-event-scale.ts",
+    "frontend/tsconfig.tsbuildinfo",
+    "frontend/scripts/verify-delivery-browser.ts",
+    "frontend/scripts/verify-research-log-ui.ts",
+    "frontend/src/Assessment.tsx",
+    "frontend/src/DataManagementPage.tsx",
+    "frontend/src/EventExportPage.tsx",
+    "frontend/src/EventTimeline.tsx",
+    "frontend/src/observation-outbox.ts",
+    "frontend/src/SessionFlowPage.tsx",
+    "docs/research-data-dictionary.md",
+    "docs/research-data-management.md",
+    "docs/research-event-delivery.md",
+    "docs/research-event-test-matrix.md",
+    "docs/research-event-viewer.md",
+    "docs/samples/event-export/data-dictionary.md",
+    "docs/samples/event-export/manifest.json"
+  ],
+  "priorIssue13ReportsPreserved": true,
+  "migrationsChanged": false,
+  "existingDatabaseAccessed": false,
+  "disposableDatabase": "stage1_mock_parent_audit",
+  "disposableCleanup": "removed_only_new_audit_container_after_id_purpose_nonce_verification",
+  "limits": [
+    "Linkラベル位置移動は画面内だけ。DB/v2/イベント語彙/Undo/Redoに追加するか未決定。研究上の収集・保存仕様を勝手に拡張していない。",
+    "FEEDBACK_CHECKのREJECTEDは従来Kit不一致。確認処理の成否と結果を別項目へ分離するスキーマ判断は未実施。保存済み行を再解釈しない。",
+    "所属不明の旧Stage単位localStorage下書きの自動消去、平文下書きの保存期限・暗号化・実データ用保護は未解決。新下書きの対象消去と画面クリアは修正済み。",
+    "未観測の終了/無操作/注意・ブラウザー領域喪失・未接続端末/別タブ/別origin・ACK喪失・キーなし再試行は完全復元や完全消去を保証しない。",
+    "MAP_SAVEは予約語。全outcomeの契約fixtureは全UI操作/例外分岐の実収集を証明しない。",
+    "GitHub/Linux Node22 Chromium CIの実走行、20台同時ブラウザー、OS/ブラウザー横断、複数APIプロセス、実DB/研究データ、本番セキュリティ/暗号化/倫理・バックアップ物理消去は未確認。"
+  ],
+  "addedAuditFiles": [
+    "docs/parent-audit-baseline.json",
+    "docs/parent-audit-invariants.json",
+    "docs/parent-audit-issue-criteria.json",
+    "docs/parent-audit-migrations.log",
+    "docs/parent-audit-results.json",
+    "docs/parent-audit-scale-results.json",
+    "docs/parent-audit-suite-results.json",
+    "docs/parent-issue-2-audit.md",
+    "frontend/src/assessment-drafts.ts"
+  ]
+}

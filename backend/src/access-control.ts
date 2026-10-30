@@ -1,3 +1,4 @@
+import { operationGate, committedReceipt } from "./delivery-reliability.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import type { Pool, PoolClient } from "pg";
@@ -51,7 +52,7 @@ async function ownerFor(pool: Pool, kind: string, id: string) {
 
 // Map and entity URLs share the same policy, including direct API requests.
 export async function learnerMayAccessMap(
-  pool: Pool,
+  pool: Pool | PoolClient,
   kind: "maps" | "concepts" | "links",
   id: string,
   sessionId: string,
@@ -115,12 +116,29 @@ export function accessControl(pool: Pool) {
           [hash],
         );
         const session = result.rows[0];
-        if (!session) return response.status(401).json({ error: "authentication_required" });
+        if (!session) {
+          const deleted = await pool.query("SELECT queue_key FROM research_identity.revocations WHERE token_hash=$1",[hash]);
+          if (deleted.rowCount) {
+            if (request.path === "/deletion-ack" && request.method === "POST" && typeof request.body?.clientId === "string" && uuid.test(request.body.clientId) && Object.keys(request.body).length===1) {
+              await pool.query("UPDATE research_identity.device_deletions SET acknowledged=true WHERE token_hash=$1 AND client_hash=$2",[hash,tokenHash(request.body.clientId)]);
+              return response.json({acknowledged:true});
+            }
+            return response.status(410).json({error:"research_data_deleted",discardObservationQueue:true,queueKey:deleted.rows[0].queue_key});
+          }
+          return response.status(401).json({ error: "authentication_required" });
+        }
         principal = { role: "learner", sessionId: session.id, kitId: session.kitId };
       } catch (error) { return next(error); }
     }
     response.locals.principal = principal;
-    if (principal.role === "researcher") return next();
+    const scope=principal.role==="learner"?"LEARNER:"+principal.sessionId:"RESEARCHER";
+    const permit=async(replayAllowed?: (client:PoolClient)=>Promise<boolean>)=>{if(await operationGate(pool,request,response,scope))return;if(response.locals.reliableOperation)response.locals.reliableOperation.replayAllowed=replayAllowed;return next();};
+    const stageMapReplay=(stageId:string)=>async(client:PoolClient)=>{
+      if(principal.role!=="learner")return true;
+      const map=(await client.query("SELECT id FROM maps WHERE session_stage_id=$1 LIMIT 1",[stageId])).rows[0];
+      return !!map&&learnerMayAccessMap(client,"maps",map.id,principal.sessionId,"POST");
+    };
+    if (principal.role === "researcher") return permit();
 
     const parts = request.path.split("/").filter(Boolean);
     const kind = parts[0];
@@ -134,21 +152,23 @@ export function accessControl(pool: Pool) {
         if (typeof stageId !== "string") return response.status(404).json({ error: "not_found" });
         try {
           const owner = await ownerFor(pool, "session-stages", stageId);
-          if (owner?.id === principal.sessionId) return next();
+          if (owner?.id === principal.sessionId) return permit(stageMapReplay(stageId));
         } catch (error) { return next(error); }
       }
       return response.status(404).json({ error: "not_found" });
     }
     if ((kind === "maps" || kind === "concepts" || kind === "links") && id) {
       try {
-        if (await learnerMayAccessMap(pool, kind, id, principal.sessionId, request.method)) return next();
+        if (await learnerMayAccessMap(pool, kind, id, principal.sessionId, request.method)) return permit(client=>learnerMayAccessMap(client,kind,id,principal.sessionId,request.method));
       } catch (error) { return next(error); }
+      if(await operationGate(pool,request,response,scope,true))return;
+      if(response.locals.operationKnown)return committedReceipt(response);
       return response.status(404).json({ error: "not_found" });
     }
     if (["sessions", "session-stages"].includes(kind) && id) {
       try {
         const owner = await ownerFor(pool, kind, id);
-        if (owner?.id === principal.sessionId && ["STAGE1_4", "STAGE1_6"].includes(owner.protocolKey)) return next();
+        if (owner?.id === principal.sessionId && ["STAGE1_4", "STAGE1_6"].includes(owner.protocolKey)) return permit(kind==="session-stages"&&["prior-map","integration-map"].includes(parts[2])?stageMapReplay(id):undefined);
       } catch (error) { return next(error); }
       return response.status(404).json({ error: "not_found" });
     }

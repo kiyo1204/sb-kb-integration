@@ -1,3 +1,7 @@
+import { validateMapStateV5 } from "./research-event-map-v5.js";
+import { historySnapshotsEqual } from "./map-undo-redo.js";
+import { validateMapStateV2 } from "./research-event-map-v2.js";
+
 export type ConceptProvenanceSnapshot = {
   id: string;
   targetConceptId: string;
@@ -25,6 +29,8 @@ export type HistoryConcept = {
 };
 
 export type HistoryLink = {
+  labelPositionX?: number;
+  labelPositionY?: number;
   id: string;
   mapId: string;
   sourceConceptId: string;
@@ -53,6 +59,8 @@ export type HistoryOperation = {
   before: unknown;
   after: unknown;
   relatedOperationLogId?: string | null;
+  historyFormat?: "V2" | "V5";
+  outcome?: string;
 };
 
 export type ReplayResult =
@@ -242,6 +250,28 @@ function applyOperation(
 ): void {
   if (operation.mapId !== state.mapId)
     throw new Error("Operation belongs to another Map.");
+  if (operation.historyFormat === "V2" || operation.historyFormat === "V5") {
+    const validateMapState = operation.historyFormat === "V5" ? validateMapStateV5 : validateMapStateV2;
+    if (operation.outcome !== undefined && operation.outcome !== "SUCCESS") {
+      if (!["FAILURE", "REJECTED", "CANCELLED", "UNKNOWN"].includes(operation.outcome)) {
+        throw new Error("Version 2 operation outcome is invalid.");
+      }
+      if (operation.before == null && operation.after == null) return;
+      if (
+        !validateMapState(operation.before, state.mapId) ||
+        !validateMapState(operation.after, state.mapId) ||
+        !historySnapshotsEqual(state, operation.before) ||
+        !historySnapshotsEqual(state, operation.after)
+      ) {
+        throw new Error("Unsuccessful Version 2 operation changes the replayed Map state.");
+      }
+      return;
+    }
+    if (!validateMapState(operation.before, state.mapId) || !validateMapState(operation.after, state.mapId)) throw new Error("Version 2 Map snapshots are invalid or missing.");
+    if (!historySnapshotsEqual(state, operation.before)) throw new Error("Version 2 before-state does not match the previous Map state.");
+    Object.assign(state, structuredClone(operation.after));
+    return;
+  }
   const before = record(operation.before);
   const after = record(operation.after);
   switch (operation.operationType) {

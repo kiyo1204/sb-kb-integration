@@ -1,3 +1,5 @@
+import {LearnerDeliveryStatus} from "./DeliveryStatus";
+import {newClientId} from "./client-identity";
 import {
   useCallback,
   useEffect,
@@ -11,6 +13,7 @@ import {
   type CSSProperties,
 } from "react";
 import { apiFetch, uiText } from "./auth-client";
+import { sendObservedLearningEvent,useObservedLearningScreen } from "./learning-events";
 
 type Concept = {
   id: string;
@@ -29,6 +32,8 @@ type MergeConceptResponse = {
 };
 
 type MapLink = {
+  labelPositionX?: number | null;
+  labelPositionY?: number | null;
   id: string;
   mapId: string;
   sourceConceptId: string;
@@ -36,6 +41,18 @@ type MapLink = {
   label: string;
   kitLinkItemId?: string | null;
 };
+
+type CancellableMapEventType =
+  | "ADD_CONCEPT"
+  | "EDIT_CONCEPT"
+  | "DELETE_CONCEPT"
+  | "MERGE_CONCEPT"
+  | "ADD_LINK"
+  | "EDIT_LINK"
+  | "DELETE_LINK"
+  | "RECONNECT_LINK"
+  | "IMPORT_KIT_LINK"
+  | "MAP_SUBMIT";
 
 type KitLinkItem = {
   kitLinkItemId: string;
@@ -69,7 +86,7 @@ const KIT_PALETTE_MIME = "application/x-kbcm-kit-part";
 
 function createTemporaryId() {
   return (
-    globalThis.crypto?.randomUUID?.() ??
+    newClientId() ??
     `${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
 }
@@ -305,6 +322,8 @@ export type HistoricalMapSnapshot = {
     mergedIntoConceptId: string | null;
   }>;
   links: Array<{
+    labelPositionX?:number;
+    labelPositionY?:number;
     id: string;
     mapId: string;
     sourceConceptId: string;
@@ -412,6 +431,18 @@ export default function MapPage({
   learnerSessionId?: string;
 }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [activityLogWarning, setActivityLogWarning] = useState(false);
+  const noteActivityLogFailure = useCallback(() => setActivityLogWarning(true), []);
+  const observationStageId = state.status === "success" ? state.map.sessionStageId : null;
+  const observationMapId = state.status === "success" ? state.map.id : null;
+  const observationMapType = state.status === "success" ? state.map.type : null;
+  useObservedLearningScreen(
+    learnerSessionId ?? "",
+    observationStageId,
+    observationMapId,
+    isLearner && !!learnerSessionId && state.status === "success",
+    noteActivityLogFailure,
+  );
   const [integrationDeadline, setIntegrationDeadline] = useState<number | null>(null);
   const [kitBuildFeedback, setKitBuildFeedback] =
     useState<KitBuildFeedbackState | null>(null);
@@ -453,6 +484,32 @@ export default function MapPage({
           ? "unknown"
           : "current";
 
+  async function recordMapOperationCancellation(
+    targetMapId: string,
+    eventType: CancellableMapEventType,
+    targetId?: string,
+  ) {
+    if (
+      !isLearner ||
+      state.status !== "success" ||
+      !state.map.sessionId ||
+      !["STAGE1_4", "STAGE1_6"].includes(state.map.sessionProtocolKey ?? "")
+    ) return;
+    const idempotencyKey = newClientId();
+    try {
+      const targetPath = targetId ? `/${encodeURIComponent(targetId)}` : "";
+      await apiFetch(
+        `/api/maps/${encodeURIComponent(targetMapId)}/operation-cancellations/${eventType}${targetPath}`,
+        {
+          method: "POST",
+          ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
+        },
+      );
+    } catch {
+      // A telemetry failure must not block the local cancellation action.
+    }
+  }
+
   async function fetchCurrentKitMapSignature(targetMapId: string): Promise<string> {
     const response = await apiFetch(`/api/maps/${encodeURIComponent(targetMapId)}/kit-graph-signature`);
     if (!response.ok) throw new Error("マップの状態を確認できませんでした。");
@@ -472,7 +529,13 @@ export default function MapPage({
     try {
       const response = await apiFetch(`/api/maps/${encodeURIComponent(targetMapId)}/kit-feedback`);
       const result: unknown = await response.json().catch(() => null);
-      if (!response.ok || !isKitBuildFeedback(result)) throw new Error("feedback request failed");
+      if (!response.ok) {
+        if(result && typeof result==="object" && "logSaved" in result && result.logSaved===false)noteActivityLogFailure();
+        if(requestId===kitFeedbackRequestRef.current)setKitFeedbackDialog({status:"error",message:response.status<500 ? "一致状況の確認が受け付けられませんでした。現在の活動とキットの設定を確認してください。" : "一致状況の確認処理に失敗しました。もう一度試し、続く場合は研究者に連絡してください。"});
+        return;
+      }
+      if (!isKitBuildFeedback(result)) throw new Error("feedback request failed");
+      if ((result as KitBuildFeedbackResult & { logSaved?: boolean }).logSaved === false) noteActivityLogFailure();
       const verifiedSignature = await fetchCurrentKitMapSignature(targetMapId).catch(() => null);
       if (requestId !== kitFeedbackRequestRef.current) return;
       setKitBuildFeedback({ result, verifiedSignature, requestId });
@@ -488,6 +551,15 @@ export default function MapPage({
       if (requestId === kitFeedbackRequestRef.current) setKitFeedbackChecking(false);
     }
   }
+
+  useEffect(() => {
+    if (!isLearner || !learnerSessionId || !observationStageId || state.status !== "success" || observationMapType !== "KB" || kitFeedbackDialog?.status !== "result") return;
+    let active = true;
+    void sendObservedLearningEvent(learnerSessionId,{eventType:"FEEDBACK_DISPLAY",targetType:"FEEDBACK",stageId:observationStageId!,mapId:observationMapId!})
+      .then(saved=>{if(active&&!saved)noteActivityLogFailure();})
+      .catch(()=>{if(active)noteActivityLogFailure();});
+    return () => { active = false; };
+  }, [isLearner, kitFeedbackDialog, noteActivityLogFailure, state.status, learnerSessionId, observationStageId, observationMapId, observationMapType]);
 
   const reloadUndoRedoState = useCallback(
     async (targetMapId = mapId) => {
@@ -578,7 +650,7 @@ export default function MapPage({
           body: JSON.stringify({
             action,
             expectedSequenceNumber: undoRedoState.sequenceNumber,
-            idempotencyKey: crypto.randomUUID(),
+            idempotencyKey: newClientId(),
             clientTimestamp: new Date().toISOString(),
           }),
         },
@@ -633,6 +705,7 @@ export default function MapPage({
     if (
       !window.confirm(`提出後はこの${mapLabel}を編集できません。提出しますか？`)
     ) {
+      void recordMapOperationCancellation(state.map.id, "MAP_SUBMIT");
       return;
     }
 
@@ -652,7 +725,9 @@ export default function MapPage({
           error?: unknown;
           message?: unknown;
           feedback?: unknown;
+          logSaved?: boolean;
         } | null;
+        if (errorBody?.logSaved === false) noteActivityLogFailure();
         const message =
           response.status === 404
             ? "マップが見つからないため、提出できませんでした。"
@@ -849,6 +924,19 @@ export default function MapPage({
     } finally {
       setPositionSaving(false);
     }
+  }
+
+  async function saveLinkPosition(linkId: string, position: Point): Promise<boolean> {
+    setPositionSaving(true);setPositionFeedback({type:"saving",message:"リンクの位置を保存中…"});
+    try {
+      await trackMapEditorMutation(async()=>{
+        const r=await apiFetch(`/api/links/${encodeURIComponent(linkId)}/position`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({labelPositionX:position.x,labelPositionY:position.y,clientTimestamp:new Date().toISOString()})});
+        if(!r.ok)throw new Error("リンクの位置を保存できませんでした。サーバーの状態を再確認してください。");
+        await reloadMapFromServer();
+      });
+      await reloadUndoRedoState(mapId);setPositionFeedback({type:"success",message:"リンクの位置を保存しました。"});return true;
+    } catch {await reloadMapFromServer().catch(()=>undefined);setPositionFeedback({type:"error",message:"リンク位置の保存を確認できません。表示はドラッグ前の位置を保持します。通信復旧後に再読み込みして保存状態を確認してください。"});return false;}
+    finally{setPositionSaving(false);}
   }
 
   async function saveConceptLabel(conceptId: string, label: string) {
@@ -1925,6 +2013,9 @@ export default function MapPage({
           <IntegrationConceptMergeForm
             concepts={state.map.concepts}
             disabled={positionSaving || submitting || mergingConcepts}
+            onCancel={() =>
+              recordMapOperationCancellation(state.map.id, "MERGE_CONCEPT")
+            }
             onMerge={(conceptIds, label) =>
               trackMapEditorMutation(() =>
                 mergeConcepts(state.map.id, conceptIds, label),
@@ -1944,6 +2035,7 @@ export default function MapPage({
       <MapEditorShell
         map={state.map}
         isLearner={isLearner && state.map.sessionId !== null}
+        activityLogWarning={activityLogWarning}
         readOnly={
           isReadOnlyMap || submitting || (isIntegrationMap && mergingConcepts)
         }
@@ -1975,6 +2067,9 @@ export default function MapPage({
         undoRedoFeedback={undoRedoFeedback}
         onUndoRedo={performUndoRedo}
         onSubmit={submitMap}
+        onCancelOperation={(eventType, targetId) =>
+          recordMapOperationCancellation(state.map.id, eventType, targetId)
+        }
         onCreateConcept={(label) =>
           trackMapEditorMutation(() => createMapConcept(state.map.id, label))
         }
@@ -2016,6 +2111,7 @@ export default function MapPage({
           )
         }
         onPositionSave={saveConceptPosition}
+        onLinkPositionSave={saveLinkPosition}
       />
     );
   }
@@ -2171,6 +2267,7 @@ export default function MapPage({
           onKitLinkCreate={isKBMap ? reconstructKitLink : importKitLink}
           onDragStart={() => setPositionFeedback(null)}
           onPositionSave={saveConceptPosition}
+          onLinkPositionSave={state.map.type === "GOAL" ? undefined : saveLinkPosition}
           linkCreation={canvasLinkCreation}
           onMapLinkCreate={async (sourceConceptId, targetConceptId, label) => {
             const createdLinkId = await trackMapEditorMutation(() =>
@@ -2179,11 +2276,17 @@ export default function MapPage({
             setCanvasLinkCreation(null);
             return createdLinkId;
           }}
-          onMapLinkCreationCancel={(id) =>
+          onMapLinkCreationCancel={(id) => {
+            if (canvasLinkCreation?.id === id) {
+              void recordMapOperationCancellation(state.map.id, "ADD_LINK");
+            }
             setCanvasLinkCreation((current) =>
               current?.id === id ? null : current,
-            )
-          }
+            );
+          }}
+          onKitLinkCreationCancel={() => {
+            void recordMapOperationCancellation(state.map.id, "IMPORT_KIT_LINK");
+          }}
         />
       )}
     </MapPageFrame>
@@ -2273,6 +2376,7 @@ type MapEditorDrawerState =
 function MapEditorShell({
   map,
   isLearner,
+  activityLogWarning,
   readOnly,
   canCreateConcept,
   canCreateLink,
@@ -2297,6 +2401,7 @@ function MapEditorShell({
   undoRedoFeedback,
   onUndoRedo,
   onSubmit,
+  onCancelOperation,
   onCreateConcept,
   onSaveConceptLabel,
   onDeleteConcept,
@@ -2307,9 +2412,11 @@ function MapEditorShell({
   onKitConceptDrop,
   onKitLinkCreate,
   onPositionSave,
+  onLinkPositionSave,
 }: {
   map: MapResponse;
   isLearner: boolean;
+  activityLogWarning: boolean;
   readOnly: boolean;
   canCreateConcept: boolean;
   canCreateLink: boolean;
@@ -2335,6 +2442,10 @@ function MapEditorShell({
   undoRedoFeedback?: string | null;
   onUndoRedo?: (action: "UNDO" | "REDO") => Promise<void>;
   onSubmit: () => Promise<void>;
+  onCancelOperation: (
+    eventType: CancellableMapEventType,
+    targetId?: string,
+  ) => Promise<void>;
   onCreateConcept: (label: string) => Promise<Concept>;
   onSaveConceptLabel: (conceptId: string, label: string) => Promise<void>;
   onDeleteConcept: (conceptId: string) => Promise<void>;
@@ -2365,6 +2476,7 @@ function MapEditorShell({
     position: ConceptPosition,
     originalPosition: ConceptPosition,
   ) => Promise<ConceptPosition | null>;
+  onLinkPositionSave?: (linkId:string,position:Point)=>Promise<boolean>;
 }) {
   const [drawer, setDrawer] = useState<MapEditorDrawerState>({
     kind: "closed",
@@ -2404,6 +2516,26 @@ function MapEditorShell({
     if (drawerSaving) return;
     setDrawer({ kind: "closed" });
     setDrawerFeedback(null);
+  }
+
+  function cancelDrawer() {
+    if (drawerSaving) return;
+    if (drawerFeedback?.type !== "success") {
+      const cancellation =
+        drawer.kind === "add-concept"
+          ? ["ADD_CONCEPT"] as const
+          : drawer.kind === "add-link"
+            ? ["ADD_LINK"] as const
+            : drawer.kind === "edit-concept"
+              ? ["EDIT_CONCEPT", drawer.conceptId] as const
+              : drawer.kind === "edit-link"
+                ? canEditLinkLabel
+                  ? ["EDIT_LINK", drawer.linkId] as const
+                  : null
+                : null;
+      if (cancellation) void onCancelOperation(cancellation[0], cancellation[1]);
+    }
+    closeDrawer();
   }
 
   function openAddConcept() {
@@ -2502,7 +2634,10 @@ function MapEditorShell({
     ) {
       return;
     }
-    if (!window.confirm(`「${activeConcept.label}」を削除しますか？`)) return;
+    if (!window.confirm(`「${activeConcept.label}」を削除しますか？`)) {
+      void onCancelOperation("DELETE_CONCEPT", activeConcept.id);
+      return;
+    }
 
     setDrawerSaving(true);
     setDrawerFeedback(null);
@@ -2610,7 +2745,10 @@ function MapEditorShell({
 
   async function handleLinkDelete() {
     if (!activeLink || drawerSaving || interactionLocked) return;
-    if (!window.confirm(`「${activeLink.label}」を削除しますか？`)) return;
+    if (!window.confirm(`「${activeLink.label}」を削除しますか？`)) {
+      void onCancelOperation("DELETE_LINK", activeLink.id);
+      return;
+    }
 
     setDrawerSaving(true);
     setDrawerFeedback(null);
@@ -2667,6 +2805,8 @@ function MapEditorShell({
           {!isLearner && <span>{mapTitle}</span>}
         </div>
         <div className="map-editor-header-actions">
+          {isLearner&&map.sessionId&&<LearnerDeliveryStatus sessionId={map.sessionId}/>}
+          {activityLogWarning && <p className="session-error" role="status">一部の操作記録の保存を確認できていません。送信状態を確認してください。</p>}
           <a
             className="map-editor-back-link"
             href={
@@ -2814,6 +2954,7 @@ function MapEditorShell({
                 type="button"
                 disabled={linkCreationSaving || additionalBusy}
                 onClick={() => {
+                  if (linkCreation) void onCancelOperation("ADD_LINK");
                   setLinkCreation(null);
                   setLinkCreationFeedback(null);
                 }}
@@ -2853,14 +2994,22 @@ function MapEditorShell({
             onKitLinkCreate={onKitLinkCreate ?? (async () => undefined)}
             onDragStart={() => undefined}
             onPositionSave={onPositionSave}
+            onLinkPositionSave={onLinkPositionSave}
             linkCreation={linkCreation}
             onMapLinkCreate={handleMapLinkCreate}
             onMapLinkCreationCancel={(id) => {
+              if (linkCreation?.id === id) void onCancelOperation("ADD_LINK");
               setLinkCreation((current) =>
                 current?.id === id ? null : current,
               );
               setLinkCreationFeedback(null);
             }}
+            onKitLinkCreationCancel={() => {
+              void onCancelOperation("IMPORT_KIT_LINK");
+            }}
+            onCancelOperation={(eventType, targetId) =>
+              void onCancelOperation(eventType, targetId)
+            }
             onMapConceptSelect={
               canEditConceptStructure ? openConceptEditor : undefined
             }
@@ -2884,7 +3033,7 @@ function MapEditorShell({
                 type="button"
                 aria-label="Drawerを閉じる"
                 disabled={drawerSaving || additionalBusy}
-                onClick={closeDrawer}
+                onClick={cancelDrawer}
               >
                 ×
               </button>
@@ -2911,7 +3060,7 @@ function MapEditorShell({
                     type="button"
                     className="is-secondary"
                     disabled={drawerSaving || additionalBusy}
-                    onClick={closeDrawer}
+                    onClick={cancelDrawer}
                   >
                     キャンセル
                   </button>
@@ -2949,7 +3098,7 @@ function MapEditorShell({
                     type="button"
                     className="is-secondary"
                     disabled={drawerSaving || additionalBusy}
-                    onClick={closeDrawer}
+                  onClick={cancelDrawer}
                   >
                     キャンセル
                   </button>
@@ -2976,7 +3125,10 @@ function MapEditorShell({
                     type="text"
                     autoComplete="off"
                     value={conceptLabel}
-                    onChange={(event) => setConceptLabel(event.target.value)}
+                    onChange={(event) => {
+                      setConceptLabel(event.target.value);
+                      setDrawerFeedback(null);
+                    }}
                     disabled={drawerSaving || interactionLocked}
                     required
                   />
@@ -3023,7 +3175,10 @@ function MapEditorShell({
                       type="text"
                       autoComplete="off"
                       value={linkLabel}
-                      onChange={(event) => setLinkLabel(event.target.value)}
+                      onChange={(event) => {
+                        setLinkLabel(event.target.value);
+                        setDrawerFeedback(null);
+                      }}
                       disabled={drawerSaving || interactionLocked}
                       required
                     />
@@ -3200,11 +3355,14 @@ export function ConceptCanvas({
   onKitLinkCreate,
   onDragStart,
   onPositionSave,
+  onLinkPositionSave,
   onMapConceptSelect,
   onMapLinkSelect,
   linkCreation = null,
   onMapLinkCreate,
   onMapLinkCreationCancel,
+  onKitLinkCreationCancel,
+  onCancelOperation,
   highlightedConceptIds,
   highlightedLinkIds,
 }: {
@@ -3247,6 +3405,7 @@ export function ConceptCanvas({
     position: ConceptPosition,
     originalPosition: ConceptPosition,
   ) => Promise<ConceptPosition | null>;
+  onLinkPositionSave?: (linkId: string, position: Point) => Promise<boolean>;
   onMapConceptSelect?: (concept: Concept) => void;
   onMapLinkSelect?: (link: MapLink) => void;
   linkCreation?: { id: string; label: string } | null;
@@ -3256,6 +3415,8 @@ export function ConceptCanvas({
     label: string,
   ) => Promise<string | void>;
   onMapLinkCreationCancel?: (id: string) => void;
+  onKitLinkCreationCancel?: (id: string) => void;
+  onCancelOperation?: (eventType: CancellableMapEventType, targetId?: string) => void;
 }) {
   const edges = useMemo(
     () => mapLinksToEdges(links, concepts, mapId),
@@ -3323,9 +3484,12 @@ export function ConceptCanvas({
   >([]);
   const [mapTemporaryConnectorState, setMapTemporaryConnectorState] =
     useState<TemporaryConnector | null>(null);
-  const [linkConnectorPositions, setLinkConnectorPositions] = useState(
-    () => new Map<string, Point>(),
-  );
+  const savedLinkPositions = () => new Map(links.flatMap(link => typeof link.labelPositionX === "number" && typeof link.labelPositionY === "number" ? [[link.id,{x:link.labelPositionX,y:link.labelPositionY}] as const] : []));
+  const [linkPositionState,setLinkPositionState]=useState(()=>({links,positions:savedLinkPositions()}));
+  const linkConnectorPositions = linkPositionState.links===links ? linkPositionState.positions : savedLinkPositions();
+  function setLinkConnectorPositions(update:(current:Map<string,Point>)=>Map<string,Point>){
+    setLinkPositionState(current=>({links,positions:update(current.links===links?current.positions:savedLinkPositions())}));
+  }
   const [kitConceptSavingId, setKitConceptSavingId] = useState<string | null>(
     null,
   );
@@ -3534,8 +3698,8 @@ export function ConceptCanvas({
     const bounds = canvasRef.current?.getBoundingClientRect();
     if (!bounds) return null;
     return {
-      x: Math.max(0, Math.round(clientX - bounds.left)),
-      y: Math.max(0, Math.round(clientY - bounds.top)),
+      x: Math.max(0, Math.round((clientX - bounds.left) * (canvasRef.current!.offsetWidth / bounds.width))),
+      y: Math.max(0, Math.round((clientY - bounds.top) * (canvasRef.current!.offsetHeight / bounds.height))),
     };
   }
 
@@ -3834,6 +3998,7 @@ export function ConceptCanvas({
           updated.label,
         );
       }
+      if (createdLinkId && onLinkPositionSave) await onLinkPositionSave(createdLinkId,updated.position);
       if (createdLinkId) {
         setLinkConnectorPositions((current) => {
           const next = new Map(current);
@@ -3943,6 +4108,7 @@ export function ConceptCanvas({
 
   function cancelLabelEdit() {
     if (labelSaving) return;
+    if (editingConceptId) onCancelOperation?.("EDIT_CONCEPT", editingConceptId);
 
     setEditingConceptId(null);
     setEditingLabel("");
@@ -3982,6 +4148,9 @@ export function ConceptCanvas({
     ) {
       return;
     }
+    if (selectedLink && canEditLinkLabel) {
+      onCancelOperation?.("EDIT_LINK", selectedLink.id);
+    }
 
     setSelectedLinkId(null);
     setEditingLinkLabel("");
@@ -3995,6 +4164,12 @@ export function ConceptCanvas({
 
   function cancelLinkReconnect(link: MapLink) {
     if (reconnectingLinkId !== null) return;
+    if (
+      reconnectSourceConceptId !== link.sourceConceptId ||
+      reconnectTargetConceptId !== link.targetConceptId
+    ) {
+      onCancelOperation?.("RECONNECT_LINK", link.id);
+    }
 
     setReconnectSourceConceptId(link.sourceConceptId);
     setReconnectTargetConceptId(link.targetConceptId);
@@ -4062,6 +4237,9 @@ export function ConceptCanvas({
 
   function cancelLinkDeleteConfirmation() {
     if (deletingLinkId !== null) return;
+    if (confirmingDeleteLinkId) {
+      onCancelOperation?.("DELETE_LINK", confirmingDeleteLinkId);
+    }
 
     setConfirmingDeleteLinkId(null);
     setLinkDeleteFeedback(null);
@@ -4224,6 +4402,9 @@ export function ConceptCanvas({
 
   function cancelConceptDelete() {
     if (deletingConceptRef.current !== null) return;
+    if (confirmingDeleteConceptId) {
+      onCancelOperation?.("DELETE_CONCEPT", confirmingDeleteConceptId);
+    }
 
     setConfirmingDeleteConceptId(null);
     setDeleteFeedback(null);
@@ -4462,7 +4643,7 @@ export function ConceptCanvas({
   ) {
     if (
       readOnly ||
-      activeConnectorDragRef.current !== null ||
+      activeConnectorDragRef.current !== null || positionSaving ||
       !event.isPrimary ||
       event.button !== 0 ||
       (kind === "temporary" &&
@@ -4470,15 +4651,15 @@ export function ConceptCanvas({
     ) {
       return;
     }
-    const bounds = canvasRef.current?.getBoundingClientRect();
-    if (!bounds) return;
+    const point = clientToCanvasPoint(event.clientX,event.clientY);
+    if (!point) return;
     event.stopPropagation();
     activeConnectorDragRef.current = {
       kind,
       id,
       pointerId: event.pointerId,
-      offsetX: event.clientX - bounds.left - position.x,
-      offsetY: event.clientY - bounds.top - position.y,
+      offsetX: point.x - position.x,
+      offsetY: point.y - position.y,
       startClientX: event.clientX,
       startClientY: event.clientY,
       originalPosition: position,
@@ -4530,6 +4711,13 @@ export function ConceptCanvas({
     moveConnectorWithPointer(event);
     connectorDragCleanupRef.current?.();
     activeConnectorDragRef.current = null;
+    if (drag.moved && drag.kind === "saved" && onLinkPositionSave) {
+      const point=clientToCanvasPoint(event.clientX,event.clientY);
+      if(point){
+        const next={x:Math.max(0,point.x-drag.offsetX),y:Math.max(0,point.y-drag.offsetY)};
+        void onLinkPositionSave(drag.id,next).then(saved=>{if(!saved)setLinkConnectorPositions(current=>{const m=new Map(current);m.set(drag.id,drag.originalPosition);return m;});});
+      }
+    }
     if (drag.moved) {
       suppressConnectorClickRef.current = true;
       window.setTimeout(() => {
@@ -5042,6 +5230,7 @@ export function ConceptCanvas({
                         (candidate) => candidate.id !== connector.id,
                       ),
                     );
+                    onKitLinkCreationCancel?.(connector.id);
                   }
                 }}
               >
@@ -5516,7 +5705,7 @@ export function ConceptCanvas({
       <p className="canvas-caption">
         {readOnly
           ? "提出済みマップは読み取り専用です。"
-          : "Conceptをドラッグすると、移動後のpositionX / positionYを保存します。"}
+          : onLinkPositionSave ? "ConceptやLinkの文字部分は、ドラッグを離した位置で保存します。" : "Conceptをドラッグすると、移動後の位置を保存します。"}
       </p>
     </section>
   );
@@ -5583,10 +5772,12 @@ export function ReadOnlyMapSnapshot({
 function IntegrationConceptMergeForm({
   concepts,
   disabled,
+  onCancel,
   onMerge,
 }: {
   concepts: Concept[];
   disabled: boolean;
+  onCancel: () => Promise<void>;
   onMerge: (conceptIds: [string, string], label: string) => Promise<void>;
 }) {
   const [firstConceptId, setFirstConceptId] = useState("");
@@ -5640,9 +5831,13 @@ function IntegrationConceptMergeForm({
 
     const finalLabel = label.trim();
     const confirmed = window.confirm(
-      `「${firstConcept.label}」と「${secondConcept.label}」をMergeし、「${finalLabel}」として表示します。\n元のConceptはMerge済み状態で保持されます。確定しますか？`,
+      `「${firstConcept.label}」と「${secondConcept.label}」をMergeし、「${finalLabel}」として表示します。
+元のConceptはMerge済み状態で保持されます。確定しますか？`,
     );
-    if (!confirmed) return;
+    if (!confirmed) {
+      void onCancel();
+      return;
+    }
 
     setSaving(true);
     setFeedback({ type: "saving", message: "ConceptをMerge中…" });

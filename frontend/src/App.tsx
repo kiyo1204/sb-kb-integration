@@ -1,3 +1,5 @@
+import DataManagementPage from "./DataManagementPage";
+import EventExportPage from "./EventExportPage";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   apiFetch,
@@ -163,6 +165,9 @@ function AuthenticatedApp({
         <Stage1AnalysisPage sessionId={analysisSessionId} />
       </ResearcherOnly>
     );
+  if (window.location.pathname === "/research/data-management") return <ResearcherOnly><DataManagementPage/></ResearcherOnly>;
+  if (window.location.pathname === "/research/events") return <ResearcherOnly><EventExportPage browse/></ResearcherOnly>;
+  if (window.location.pathname === "/research/event-exports")return <ResearcherOnly><EventExportPage/></ResearcherOnly>;
   if (window.location.pathname === "/research/stage1/new")
     return (
       <ResearcherOnly>
