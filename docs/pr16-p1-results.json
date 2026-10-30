@@ -1,0 +1,73 @@
+{
+  "date": "2026-10-31 Asia/Tokyo",
+  "reviewedHead": "7b68baf599144b098d40b84c328916c2bb113847",
+  "branch": "codex/integrate-research-event-streams",
+  "scope": "PR16 two P1 corrections; local mock-only verification before push",
+  "migration": "1791040000000_separate_map_attempt_idempotency",
+  "databases": {
+    "targeted": "stage1_mock_pr16_p1",
+    "full": "stage1_mock_pr16_final",
+    "existingDatabaseAccess": false,
+    "safetyPassed": true,
+    "freshStreamPassed": true
+  },
+  "p1Scenarios": [
+    "179104 applies to existing FAILURE rows without rewriting them; success and attempt uniqueness are enforced",
+    "actual API process: logging pool.connect rejection preserves original 400 and 500, logSaved=false, no unhandled rejection/process exit or private error",
+    "connected logging INSERT failure preserves original 500 and Map state, logSaved=false, no private error",
+    "MOVE_LINK: retained FAILURE, four concurrent exact-key retries and later replay produce one SUCCESS and the same response",
+    "UNDO: retained FAILURE is not applied; exact-key retry/concurrency/replay produce one SUCCESS matching DB",
+    "REDO: retained FAILURE is not applied; exact-key retry/concurrency/replay produce one SUCCESS matching DB",
+    "REJECTED Stage access recovers: exact same request/key succeeds and retains original rejection",
+    "mixed history and researcher JSON Export retain separate outcomes without injected exception text"
+  ],
+  "p1ScenariosPassed": 8,
+  "fullSuite": {
+    "passed": 29,
+    "total": 29,
+    "results": "pr16-p1-full-suite-results.json"
+  },
+  "static": {
+    "passed": 6,
+    "total": 6,
+    "results": "pr16-p1-static-results.json"
+  },
+  "additionalChecks": [
+    "mock reset protection safety on each dedicated DB",
+    "fresh-stream API check on empty/seeded final DB"
+  ],
+  "initialAttempts": [
+    {
+      "phase": "test implementation typecheck",
+      "result": "failed",
+      "cause": "new test preload needed explicit this:Pool annotation; fixed before DB tests"
+    },
+    {
+      "phase": "first targeted test",
+      "result": "failed",
+      "evidence": "pr16-p1-targeted-initial-suite-results.json",
+      "cause": "test fixture set PENDING with non-null started_at; fixed fixture to preserve status/timing contract"
+    },
+    {
+      "phase": "targeted retry",
+      "result": "passed",
+      "evidence": "pr16-p1-targeted-suite-results.json",
+      "scenarios": 7,
+      "note": "before adding the migration preservation scenario; final suite contains all 8"
+    },
+    {
+      "phase": "fresh-stream check on targeted DB",
+      "result": "refused as designed",
+      "cause": "test requires empty event stream; targeted DB already had 21 events; full run moved to a newly created dedicated mock DB"
+    }
+  ],
+  "priorEvidence": "PR preflight and previous 28-test/CI records retained; not overwritten",
+  "githubCi": "not yet executed for this local revision at the time of this record; see PR for post-push result",
+  "limits": [
+    "fault connection rejection is deterministic test-only preload, not a physical DB network outage",
+    "no existing-data DB migration rehearsal",
+    "real LAN, 20 concurrent devices and production remain unverified",
+    "no total recovery guarantee for lost browser storage"
+  ],
+  "mockCleanup": "Both task-created containers removed after exact ID/name/purpose/nonce verification; ignored local manifests retained"
+}

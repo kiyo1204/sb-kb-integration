@@ -79,6 +79,7 @@ try {
   for (const test of [
     "test:stage1:integration",
     "test:map-api-v2",
+    "test:map-failure-retry",
     "test:parent-followup",
     "test:map-auto-submit-v2",
     "test:learning-activity-events",

@@ -74,3 +74,10 @@ HTTP LANは暗号化されず、認証トークンの既存sessionStorage経路�
 - backend `test:delivery-reliability`: 実APIの同時再送、順序競合、遅延観測、本人認可、報告検証、サーバー再起動、Map/評価の原子性・保存障害・応答喪失想定の再取得、提出後/期限後の内容保護。
 - frontend `test:delivery-browser`: 実Edge/IndexedDB、通信断・ACK喪失、ページ/ブラウザープロセス再起動、順次再送、保持上限・期限、操作キーの同時取得/再起動保持、不正保存/秘密フィールド拒否、保存不能の件数不明申告。既定はEdge、BROWSER_CHANNELでPlaywrightの導入済みブラウザーへ変更可能。
 - 既存Stage 1、Map API、自動提出、Undo/Redo、混在履歴、評価、監査、認可、Exportとv1〜v4結合検証、型検査・Lint・両ビルドも実行する。結果はissue8-results.jsonを参照。
+
+
+## 2026-10-31: 失敗後の同一キー再試行
+
+179104によりMapの監査キーを結果区分ごとに分離する。失敗/拒否の監査行は成功枠を占有しない。Undo/Redoは同じキーのSUCCESSだけを適用済みとして扱い、Link移動も保存に失敗した後に同じキーで回復できる。同じキー・同じ結果区分の失敗申告は監査上1件として保持し、成功後も削除しない。成功済み要求は既存のoperation_receiptsとロックで再実行せず元の結果を返す。キーとeventIdは同一ではなく、1つのキーに異なるoutcomeの複数eventIdが対応し得る。
+
+ログ用接続取得を含む記録処理の例外は元の操作失敗応答を失わせない。operationOutcomeとlogSaved:falseを分け、元のHTTPコードと安全なエラー本文を維持する。新しいキーや操作本文を自動生成して障害回復とみなさない。詳細は[イベント契約追補](research-events-v1.md#2026-10-31-pr-16-p1追補179104失敗記録と成功の冪等性)。

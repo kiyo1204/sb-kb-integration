@@ -1,3 +1,4 @@
+import { respondToMapFailure } from "./map-failure-response.js";
 import { validateMapStateV5, validMapCoordinate } from "./research-event-map-v5.js";
 import {EventExportService} from "./event-export-service.js";
 import {registerDataManagement} from "./data-management.js";
@@ -1722,11 +1723,10 @@ app.use("/api", (request, response, next) => {
     const status = response.statusCode;
     if (status < 400 || status === 401 || status === 403 ||
         body && typeof body==="object" && "error" in body && ["operation_already_committed","idempotency_conflict","operation_result_expired"].includes(String(body.error))) return originalJson(body);
-    void (async () => {
+    void respondToMapFailure(response, originalJson, body, async (outcome) => {
       let principal: ReturnType<typeof principalOf>;
-      try { principal=principalOf(response); } catch { return originalJson(body); }
+      try { principal=principalOf(response); } catch { return null; }
       const transactionFailure = body !== null && typeof body === "object" && "message" in body && typeof (body as {message?:unknown}).message === "string" && (body as {message:string}).message.includes("履歴を保存できません");
-      const outcome: "REJECTED" | "FAILURE" = status >= 500 || transactionFailure ? "FAILURE" : "REJECTED";
       let reasonCode: "VALIDATION" | "CONFLICT" | "DEADLINE" | "SERVER" | "PERMISSION" = status >= 500 || transactionFailure ? "SERVER" : status === 400 ? "VALIDATION" : "CONFLICT";
       if (status === 409 && body !== null && typeof body === "object" && "message" in body && typeof (body as {message?:unknown}).message === "string" && (body as {message:string}).message.includes("内容を確認してください")) reasonCode = "VALIDATION";
       let resolvedMapId = mapId;
@@ -1741,18 +1741,18 @@ app.use("/api", (request, response, next) => {
               (s.protocol_key='STAGE1_6' AND st.stage_type='INTEGRATION_MAP' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
              FROM ${table} item JOIN maps m ON m.id=item.map_id JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id
              WHERE item.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6')`,[targetId]);
-          if (!owner.rowCount) { await client.query("ROLLBACK"); return originalJson(body); }
+          if (!owner.rowCount) { await client.query("ROLLBACK"); return null; }
           resolvedMapId=owner.rows[0]!.mapId;
-          if (principal.role==="learner"&&principal.sessionId!==owner.rows[0]!.sessionId) {await client.query("ROLLBACK");return originalJson(body);}
+          if (principal.role==="learner"&&principal.sessionId!==owner.rows[0]!.sessionId) {await client.query("ROLLBACK");return null;}
           if(owner.rows[0]!.expired){reasonCode="DEADLINE";}
         }
-        if (!resolvedMapId) { await client.query("ROLLBACK"); return originalJson(body); }
+        if (!resolvedMapId) { await client.query("ROLLBACK"); return null; }
         const owner=await client.query<{sessionId:string;protocolKey:string;status:string;mapStatus:string;stageType:string;stageStatus:string;expired:boolean}>(
           `SELECT s.id AS "sessionId",s.protocol_key AS "protocolKey",s.status,m.status AS "mapStatus",st.stage_type AS "stageType",st.status AS "stageStatus",
             (s.protocol_key='STAGE1_6' AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
            FROM maps m JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id
            WHERE m.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6')`,[resolvedMapId]);
-        if (!owner.rowCount || principal.role==="learner"&&principal.sessionId!==owner.rows[0]!.sessionId) {await client.query("ROLLBACK");return originalJson(body);}
+        if (!owner.rowCount || principal.role==="learner"&&principal.sessionId!==owner.rows[0]!.sessionId) {await client.query("ROLLBACK");return null;}
         const sessionId=owner.rows[0]!.sessionId;
         if(owner.rows[0]!.expired){reasonCode="DEADLINE";}
         else if(owner.rows[0]!.mapStatus==="SUBMITTED") reasonCode="PERMISSION";
@@ -1765,30 +1765,30 @@ app.use("/api", (request, response, next) => {
         if(lockedOwner.rows[0]?.expired) reasonCode="DEADLINE";
         else if(lockedOwner.rows[0]?.mapStatus==="SUBMITTED"||lockedOwner.rows[0]?.status==="COMPLETED"||lockedOwner.rows[0]?.stageStatus==="COMPLETED") reasonCode="PERMISSION";
         const initial=(await client.query<{snapshot:MapHistorySnapshot}>("SELECT snapshot FROM map_initial_snapshots WHERE map_id=$1::uuid AND snapshot_version=1",[resolvedMapId])).rows[0]?.snapshot;
-        if(!initial){await client.query("ROLLBACK");return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});}
+        if(!initial){await client.query("ROLLBACK");return { operationOutcome: outcome, logSaved: false };}
         const legacy=await client.query<HistoryOperation>(`SELECT id,map_id AS "mapId",sequence_number AS "sequenceNumber",operation_type AS "operationType",target_type AS "targetType",target_id AS "targetId",before,after,related_operation_log_id AS "relatedOperationLogId" FROM map_operation_logs WHERE map_id=$1::uuid ORDER BY sequence_number`,[resolvedMapId]);
         const boundary=(await client.query<{legacyCount:string;legacyLastId:string|null;snapshot:MapHistorySnapshot}>(`SELECT legacy_count AS "legacyCount",legacy_last_id AS "legacyLastId",boundary_snapshot AS snapshot FROM map_history_boundaries WHERE map_id=$1::uuid`,[resolvedMapId])).rows[0];
         const stream=await client.query<MapHistoryEventV2>(`SELECT event_id AS "eventId",map_id AS "mapId",schema_version AS "schemaVersion",event_type AS "eventType",related_event_id AS "relatedEventId",related_legacy_operation_log_id AS "relatedLegacyOperationLogId",sequence_number AS "sequenceNumber",outcome,before_state AS before,after_state AS after FROM research_events WHERE map_id=$1::uuid AND schema_version IN (2,5) ORDER BY sequence_number`,[resolvedMapId]);
-        if(!boundary&&stream.rowCount){await client.query("ROLLBACK");return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});}
+        if(!boundary&&stream.rowCount){await client.query("ROLLBACK");return { operationOutcome: outcome, logSaved: false };}
         const baseBoundary={legacyCount:boundary?Number(boundary.legacyCount):legacy.rows.length,legacyLastId:boundary?boundary.legacyLastId:legacy.rows.at(-1)?.id??null};
         const oldReplay=replayMixedMapHistory(initial,baseBoundary,legacy.rows,[]);
         const currentReplay=oldReplay.status==="REPLAYABLE"?replayMixedMapHistory(initial,baseBoundary,legacy.rows,stream.rows):null;
         const currentSnapshot=await readCurrentMapHistorySnapshot(client,resolvedMapId);
         if(oldReplay.status!=="REPLAYABLE"||boundary&&!historySnapshotsEqual(oldReplay.state,boundary.snapshot)||!currentReplay||currentReplay.status!=="REPLAYABLE"||!currentSnapshot||!validateMapStateV5(currentSnapshot,resolvedMapId)||!historySnapshotsEqual(currentReplay.state,currentSnapshot)){
-          await client.query("ROLLBACK");return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});
+          await client.query("ROLLBACK");return { operationOutcome: outcome, logSaved: false };
         }
         if(!boundary) await client.query("INSERT INTO map_history_boundaries(map_id,legacy_count,legacy_last_id,boundary_snapshot) VALUES($1::uuid,$2,$3::uuid,$4::jsonb)",[resolvedMapId,legacy.rows.length,baseBoundary.legacyLastId,JSON.stringify(currentSnapshot)]);
         const idem=request.get("Idempotency-Key");
         const validIdem=idem&&uuidPattern.test(idem)?idem:null;
         if(validIdem) {
-          const prior=await client.query<{eventId:string;eventType:string;outcome:string}>(`SELECT event_id AS "eventId",event_type AS "eventType",outcome FROM research_events WHERE map_id=$1::uuid AND idempotency_key=$2::uuid`,[resolvedMapId,validIdem]);
+          const prior=await client.query<{eventId:string;eventType:string;outcome:string}>(`SELECT event_id AS "eventId",event_type AS "eventType",outcome FROM research_events WHERE map_id=$1::uuid AND idempotency_key=$2::uuid AND outcome=$3`,[resolvedMapId,validIdem,outcome]);
           if(prior.rowCount) {
             if(prior.rows[0]!.eventType===eventType&&prior.rows[0]!.outcome===outcome) {
               await client.query("COMMIT");
-              return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:true,eventId:prior.rows[0]!.eventId});
+              return { operationOutcome: outcome, logSaved: true, eventId: prior.rows[0]!.eventId };
             }
             await client.query("ROLLBACK");
-            return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});
+            return { operationOutcome: outcome, logSaved: false };
           }
         }
         const event=await insertResearchEvent(client,sessionId,principal.role==="learner"?"LEARNER":"RESEARCHER",{
@@ -1796,14 +1796,14 @@ app.use("/api", (request, response, next) => {
           outcome,reasonCode,clientTimeQuality:"NOT_APPLICABLE",beforeQuality:"MISSING",afterQuality:"MISSING",
           ...(validIdem?{idempotencyKey:validIdem}:{}),
         });
-        if(!event){await client.query("ROLLBACK");return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});}
+        if(!event){await client.query("ROLLBACK");return { operationOutcome: outcome, logSaved: false };}
         await client.query("COMMIT");
-        return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:true,eventId:event.eventId});
+        return { operationOutcome: outcome, logSaved: true, eventId: event.eventId };
       } catch {
         await client.query("ROLLBACK").catch(()=>undefined);
-        return originalJson({...((body&&typeof body==="object")?body:{}),operationOutcome:outcome,logSaved:false});
+        return { operationOutcome: outcome, logSaved: false };
       } finally {client.release();}
-    })();
+    });
     return response;
   }) as Response["json"];
   next();
@@ -1967,7 +1967,7 @@ const recordMapOperationCancellation = async (
       if (key) {
         const prior = await client.query<{ eventId: string; eventType: string; targetId: string | null }>(
           `SELECT event_id AS "eventId",event_type AS "eventType",target_id AS "targetId"
-           FROM research_events WHERE map_id=$1::uuid AND idempotency_key=$2::uuid`,
+           FROM research_events WHERE map_id=$1::uuid AND idempotency_key=$2::uuid AND outcome='CANCELLED'`,
           [mapId, key],
         );
         if (prior.rowCount) {
@@ -2212,7 +2212,7 @@ app.post("/api/maps/:mapId/undo-redo", async (request, response) => {
       let priorRequest = duplicate.rows[0];
       const boundaryTable = (await client.query<{ name: string | null }>("SELECT to_regclass('map_history_boundaries')::text AS name")).rows[0]?.name;
       if (!priorRequest && boundaryTable) {
-        const previous = await client.query<{ id: string; operationType: string; relatedOperationLogId: string | null; sequenceNumber: string }>(`SELECT event_id AS id,event_type AS "operationType",coalesce(related_event_id,related_legacy_operation_log_id) AS "relatedOperationLogId",sequence_number AS "sequenceNumber" FROM research_events WHERE map_id=$1::uuid AND idempotency_key=$2::uuid`, [mapId,idempotencyKey]);
+        const previous = await client.query<{ id: string; operationType: string; relatedOperationLogId: string | null; sequenceNumber: string }>(`SELECT event_id AS id,event_type AS "operationType",coalesce(related_event_id,related_legacy_operation_log_id) AS "relatedOperationLogId",sequence_number AS "sequenceNumber" FROM research_events WHERE map_id=$1::uuid AND idempotency_key=$2::uuid AND outcome='SUCCESS'`, [mapId,idempotencyKey]);
         priorRequest = previous.rows[0];
       }
       if (priorRequest) {

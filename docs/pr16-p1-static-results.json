@@ -1,0 +1,32 @@
+[
+  {
+    "command": "npm run typecheck --prefix backend",
+    "exitCode": 0,
+    "elapsedMs": 6151.0
+  },
+  {
+    "command": "npm run lint --prefix backend",
+    "exitCode": 0,
+    "elapsedMs": 6814.0
+  },
+  {
+    "command": "npm run build --prefix backend",
+    "exitCode": 0,
+    "elapsedMs": 6733.0
+  },
+  {
+    "command": "npm run typecheck --prefix frontend",
+    "exitCode": 0,
+    "elapsedMs": 6191.0
+  },
+  {
+    "command": "npm run lint --prefix frontend",
+    "exitCode": 0,
+    "elapsedMs": 13663.0
+  },
+  {
+    "command": "npm run build --prefix frontend",
+    "exitCode": 0,
+    "elapsedMs": 9819.0
+  }
+]
