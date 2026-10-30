@@ -125,14 +125,18 @@ async function create(name: string, flags: Map<string, string>) {
     flag: "wx",
     mode: 0o600,
   });
+  let ready = false;
   for (let i = 0; i < 40; i++) {
     try {
-      docker(["exec", id, "pg_isready", "-U", "stage1mock", "-d", name]);
+      // The image bootstrap server accepts Unix sockets before its final TCP server starts.
+      docker(["exec", id, "pg_isready", "-h", "127.0.0.1", "-U", "stage1mock", "-d", name]);
+      ready = true;
       break;
     } catch {
       await new Promise((r) => setTimeout(r, 500));
     }
   }
+  if (!ready) throw new Error("mock_database_not_ready");
   const { pool } = connect(manifest);
   try {
     await pool.query(
@@ -433,6 +437,7 @@ if (
       "execute_only_for_reset",
       "synthetic_attestation_required",
       "manifest_already_exists",
+      "mock_database_not_ready",
       "invalid_manifest",
       "not_dedicated_loopback_mock_container",
       "container_database_mismatch",

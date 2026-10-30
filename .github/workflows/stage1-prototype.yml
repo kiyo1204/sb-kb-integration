@@ -16,6 +16,7 @@ jobs:
       STAGE1_MOCK_DATA: ONLY_SYNTHETIC
       RESEARCH_BROWSER_CHECKS: '1'
       BROWSER_CHANNEL: chromium
+      RESEARCH_CHECK_REPORT_PREFIX: ci-current
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -55,8 +56,8 @@ jobs:
         with:
           name: mock-research-event-checks
           path: |
-            docs/issue13-suite-results.json
-            docs/issue13-scale-results.json
+            docs/ci-current-suite-results.json
+            docs/ci-current-scale-results.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Remove only this job's dedicated mock container
