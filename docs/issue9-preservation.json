@@ -1,0 +1,55 @@
+{
+  "branch": "codex/integrate-research-event-streams",
+  "headUnchanged": true,
+  "unchangedFileCount": 109,
+  "changedExistingFiles": [
+    "README.md",
+    "backend/package-lock.json",
+    "backend/package.json",
+    "backend/src/assessments.ts",
+    "backend/src/index.ts",
+    "backend/src/research-events.ts",
+    "backend/src/stage1-analysis.ts",
+    "docs/research-events-v1.md",
+    "frontend/package.json",
+    "frontend/src/App.tsx",
+    "frontend/src/HomePage.tsx",
+    "frontend/src/SessionFlowPage.tsx",
+    "frontend/src/Stage1AnalysisPage.tsx",
+    "frontend/src/design-system.css"
+  ],
+  "removedExistingFiles": [],
+  "unexpectedChanges": [],
+  "migrationFilesUnchanged": true,
+  "issue8CoreUnchanged": true,
+  "originalWorktrees": [
+    {
+      "issue": 4,
+      "root": "C:\\sb-kb-integration",
+      "branchUnchanged": true,
+      "filesChecked": 22,
+      "changedFiles": []
+    },
+    {
+      "issue": 5,
+      "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-5-learning-activity-events\\sb-kb-integration",
+      "branchUnchanged": true,
+      "filesChecked": 11,
+      "changedFiles": []
+    },
+    {
+      "issue": 6,
+      "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-6-assessment-event-logging\\sb-kb-integration",
+      "branchUnchanged": true,
+      "filesChecked": 10,
+      "changedFiles": []
+    },
+    {
+      "issue": 7,
+      "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-7-researcher-system-events\\sb-kb-integration",
+      "branchUnchanged": true,
+      "filesChecked": 13,
+      "changedFiles": []
+    }
+  ]
+}

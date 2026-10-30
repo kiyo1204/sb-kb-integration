@@ -1587,3 +1587,20 @@ textarea:focus {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Research event export layout; colors, controls and typography use shared tokens. */
+.event-export-form { display: grid; gap: 16px; }
+.event-export-form > label, .event-export-period label { display: grid; gap: 8px; }
+.event-export-options { display: flex; flex-wrap: wrap; gap: 12px 20px; }
+.event-export-options label { display: inline-flex; align-items: center; gap: 8px; }
+.event-export-period { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.event-export-table { overflow-x: auto; }
+.event-export-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.event-export-table td, .event-export-table th { padding: 10px; border-bottom: 1px solid var(--line); }
+
+/* Research timeline retains readable columns; narrow screens scroll the table. */
+.page.event-view-page { max-width: 1600px; width: calc(100% - 48px); }
+.event-timeline-table { min-width: 1280px; }
+.event-timeline-table td:first-child { min-width: 190px; white-space: nowrap; }
+.event-timeline-table td:nth-child(2) { min-width: 280px; overflow-wrap: anywhere; }
+.event-timeline-table th { white-space: nowrap; }

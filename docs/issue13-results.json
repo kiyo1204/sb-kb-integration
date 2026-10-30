@@ -1,0 +1,143 @@
+{
+  "branch": "codex/integrate-research-event-streams",
+  "existingDatabaseConnected": false,
+  "newDisposableDatabase": "stage1_mock_issue13",
+  "data": "synthetic fixtures only",
+  "catalog": {
+    "eventTypes": 39,
+    "legacyOperationVocabulary": 17,
+    "versionOutcomeFixtureCases": 354,
+    "strategy": "Explicit exhaustive typed registry + runtime key equality + per-version fixtures + server-audit DB roundtrip + existing actual API tests. Schema acceptance is not evidence that an operation was observed.",
+    "dictionary": "docs/research-event-test-matrix.md"
+  },
+  "suite": {
+    "checks": 26,
+    "allPassed": true,
+    "elapsedMs": 222258,
+    "details": "docs/issue13-suite-results.json"
+  },
+  "additionalPassed": [
+    "New mock database migration through179101",
+    "Issue12 reset refusal guards and explicit reset only on this disposable DB",
+    "Issue12 zero-legacy full six-stage API check, replay/Undo/Redo/analysis/old and new JSON/CSV",
+    "Updated P-ID dummy samples exact generation and references",
+    "Backend/frontend typecheck, lint, build",
+    "workflow YAML parse and git diff --check"
+  ],
+  "ci": {
+    "workflow": ".github/workflows/stage1-prototype.yml",
+    "runtime": "ubuntu-latest / Node22 / postgres17 dedicated Docker / Chromium",
+    "secretsRequired": false,
+    "actualGitHubRunExecuted": false,
+    "localBrowser": "Windows Edge",
+    "artifactContents": "Aggregate suite and scale metrics only, no raw events, URLs or credentials"
+  },
+  "scale": {
+    "fixture": "synthetic SQL fixture for loading measurement; not an end-to-end acquisition benchmark",
+    "databaseTotalsAtMeasurement": {
+      "sessions": 92,
+      "events": 14796,
+      "legacy_logs": 10
+    },
+    "participants": 20,
+    "sessions": 20,
+    "events": 4000,
+    "pageSize": 25,
+    "pages": 160,
+    "fixtureMs": 1468.6637000000003,
+    "prepareJsonCsvZipMs": 9111.605800000001,
+    "pageMedianMs": 10.548099999999977,
+    "pageP95Ms": 13.73569999999927,
+    "downloadAndValidateMs": 349.63920000000144,
+    "jsonBytes": 3796944,
+    "csvBytes": 1440242,
+    "environment": {
+      "os": "win32",
+      "release": "10.0.26300",
+      "node": "v24.15.0",
+      "cpu": "AMD Ryzen 7 7730U with Radeon Graphics         ",
+      "logicalCpus": 16,
+      "totalMemory": 14877257728,
+      "postgres": "17.11"
+    },
+    "guarantees": "Single machine mock run only; not a production performance guarantee; 20 sessions are populated, not 20 concurrent browsers"
+  },
+  "invariants": {
+    "duplicateSubmissions": 0,
+    "unsafeAudit": 0,
+    "wrongQuestions": 0
+  },
+  "changedExistingFiles": [
+    "backend\\package.json",
+    "backend\\src\\event-export-samples.ts",
+    "backend\\src\\scripts\\mock-db.ts",
+    "backend\\src\\scripts\\verify-assessment-events.ts",
+    "backend\\src\\scripts\\verify-data-management.ts",
+    "backend\\src\\scripts\\verify-delivery-reliability.ts",
+    "backend\\src\\scripts\\verify-event-export-samples.ts",
+    "backend\\src\\scripts\\verify-event-export.ts",
+    "backend\\src\\scripts\\verify-integrated-streams.ts",
+    "backend\\src\\scripts\\verify-integration-invariants.ts",
+    "backend\\src\\scripts\\verify-learning-activity-events.ts",
+    "backend\\src\\scripts\\verify-map-api-v2.ts",
+    "backend\\src\\scripts\\verify-map-auto-submit-v2.ts",
+    "backend\\src\\scripts\\verify-mock-reset-new-stream.ts",
+    "backend\\src\\scripts\\verify-mock-reset-safety.ts",
+    "backend\\src\\scripts\\verify-research-events.ts",
+    "backend\\src\\scripts\\verify-server-audit.ts",
+    "backend\\src\\scripts\\verify-server-recovery.ts",
+    "backend\\src\\scripts\\verify-stage1.ts",
+    "frontend\\package.json",
+    "frontend\\scripts\\verify-data-management-browser.ts",
+    "frontend\\scripts\\verify-event-export-browser.ts",
+    "docs\\research-data-management.md",
+    "docs\\research-event-export.md",
+    "docs\\research-event-viewer.md",
+    "docs\\samples\\event-export\\activity_times.csv",
+    "docs\\samples\\event-export\\assessment_events.csv",
+    "docs\\samples\\event-export\\events.csv",
+    "docs\\samples\\event-export\\events.json",
+    "docs\\samples\\event-export\\map_operations.csv",
+    "docs\\samples\\event-export\\researcher_events.csv",
+    "docs\\samples\\event-export\\system_events.csv",
+    ".github\\workflows\\stage1-prototype.yml"
+  ],
+  "otherChangedFiles": [
+    "README.md"
+  ],
+  "newFiles": [
+    "backend/src/event-test-matrix.ts",
+    "backend/src/scripts/verify-event-catalog.ts",
+    "backend/src/scripts/verify-test-target-guards.ts",
+    "backend/src/scripts/run-research-event-suite.ts",
+    "backend/src/scripts/verify-event-scale.ts",
+    "frontend/scripts/verify-research-log-ui.ts",
+    "docs/research-data-dictionary.md",
+    "docs/research-event-test-matrix.md",
+    "docs/issue13-baseline.json",
+    "docs/issue13-results.json",
+    "docs/issue13-suite-results.json",
+    "docs/issue13-scale-results.json",
+    "docs/issue13-invariants.json"
+  ],
+  "preservation": {
+    "removedExistingFiles": [],
+    "existingMigrationsUnchanged": true,
+    "applicationCollectionAndResearchConditionsUnchanged": true,
+    "originalIssueWorktreesEdited": false,
+    "issue4to12UncommittedChangesRetained": true
+  },
+  "knownLimits": [
+    "MAP_SAVE is reserved with no independent collection endpoint; each edit API records the confirmed operation.",
+    "Only server-received pending ADD_LINK cancellation is observable; browser-local pre-send cancellation is not recorded.",
+    "Initial snapshot absence is UNAVAILABLE; partial/inconsistent streams are PARTIAL. No state is invented.",
+    "Bulk assessment-settings audit may have target_id=null; session scope remains explicit.",
+    "Restart test uses fresh TCP connections; one Windows stale-connection ECONNRESET was observed before this test isolation fix, with no DB inconsistency.",
+    "The final benchmark is 20 synthetic sessions and 4000 selected events from a mock DB with other regression fixtures, not 20 concurrent real browsers.",
+    "GitHub-hosted Ubuntu/Chromium CI has been configured and YAML-validated but not executed from this uncommitted task.",
+    "Offline/unknown clients, lost ACK, external downloads/backups/WAL, full secret detection and production readiness are not guaranteed.",
+    "No physical erase, backup restore drill or production load guarantee."
+  ],
+  "state": "Uncommitted. No git reset/stash/branch switch/commit/PR/issue mutation. Existing DB never connected. Only this run's disposable container removed.",
+  "disposableContainerRemoved": true
+}

@@ -1,0 +1,2 @@
+# Preserve exact CSV record and embedded-cell newlines across platforms.
+docs/samples/event-export/*.csv -text

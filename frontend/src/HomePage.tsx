@@ -143,6 +143,9 @@ export default function HomePage({
                   セッションを作成
                   <span aria-hidden="true">→</span>
                 </a>
+                <a className="home-secondary-link" href="/research/data-management">研究データ・保存期限・明示削除</a>
+                <a className="home-secondary-link" href="/research/events">研究イベントの時系列ログ</a>
+                <a className="home-secondary-link" href="/research/event-exports">研究イベントを絞り込み出力</a>
                 <a className="home-secondary-link" href="/research/goal-maps">
                   ゴールマップを作成・管理
                   <span aria-hidden="true">→</span>

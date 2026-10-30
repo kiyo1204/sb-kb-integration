@@ -1,0 +1,225 @@
+{
+  "date": "2026-10-29",
+  "branch": "codex/integrate-research-event-streams",
+  "existingDatabaseConnected": false,
+  "schemaChanges": false,
+  "disposableDatabase": {
+    "host": "127.0.0.1",
+    "port": 55439,
+    "database": "issue9",
+    "existingMigrationsPreparedOnly": true,
+    "autoSubmitMismatch": 0
+  },
+  "checks": [
+    {
+      "exitCode": 0,
+      "check": "test:stage1:integration"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:map-api-v2"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:map-auto-submit-v2"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:undo-redo:unit"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:map-mixed-history"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:learning-activity-events"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:assessment-events"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:server-audit"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:research-events"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:research-event-schema"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:audit-routing"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:integrated-streams"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:integration-invariants"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:safe-server-error"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:event-export"
+    },
+    {
+      "exitCode": 0,
+      "check": "test:event-export-samples"
+    },
+    {
+      "exitCode": 0,
+      "check": "typecheck"
+    },
+    {
+      "exitCode": 0,
+      "check": "lint"
+    },
+    {
+      "exitCode": 0,
+      "check": "build"
+    },
+    {
+      "check": "test:server-recovery",
+      "exitCode": 0
+    },
+    {
+      "check": "frontend:test:event-export-browser",
+      "exitCode": 0
+    },
+    {
+      "check": "frontend:test:delivery-browser",
+      "exitCode": 0
+    },
+    {
+      "check": "frontend:typecheck",
+      "exitCode": 0
+    },
+    {
+      "check": "frontend:lint",
+      "exitCode": 0
+    },
+    {
+      "check": "frontend:build",
+      "exitCode": 0
+    },
+    {
+      "check": "git diff --check",
+      "exitCode": 0
+    }
+  ],
+  "eventExportVerification": {
+    "versions": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "legacyIncluded": true,
+    "commonEventIdCountTimeOutcomeMatch": true,
+    "detailReferencesMatch": true,
+    "zipIndividualFileMatch": true,
+    "filters": [
+      "Session",
+      "L-SessionUUID",
+      "studyGroup",
+      "activity",
+      "eventType",
+      "server_timestamp[from,to)",
+      "AND/OR combinations",
+      "empty results"
+    ],
+    "bulkEvents": 3000,
+    "concurrentInsertExcludedFromSnapshot": true,
+    "roleAndSecretRejection": true,
+    "csvFormulaProtection": true,
+    "limitsAndExpiryAndActiveDownloads": true,
+    "sampleEvents": 12
+  },
+  "preserved": {
+    "headUnchanged": true,
+    "removedExistingFiles": [],
+    "unexpectedChanges": [],
+    "migrationsUnchanged": true,
+    "issue8CoreUnchanged": true,
+    "originalWorktrees": [
+      {
+        "issue": 4,
+        "root": "C:\\sb-kb-integration",
+        "branchUnchanged": true,
+        "filesChecked": 22,
+        "changedFiles": []
+      },
+      {
+        "issue": 5,
+        "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-5-learning-activity-events\\sb-kb-integration",
+        "branchUnchanged": true,
+        "filesChecked": 11,
+        "changedFiles": []
+      },
+      {
+        "issue": 6,
+        "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-6-assessment-event-logging\\sb-kb-integration",
+        "branchUnchanged": true,
+        "filesChecked": 10,
+        "changedFiles": []
+      },
+      {
+        "issue": 7,
+        "root": "C:\\Users\\kyoum\\.codex\\worktrees\\issue-7-researcher-system-events\\sb-kb-integration",
+        "branchUnchanged": true,
+        "filesChecked": 13,
+        "changedFiles": []
+      }
+    ]
+  },
+  "changedExistingFiles": [
+    "README.md",
+    "backend/package-lock.json",
+    "backend/package.json",
+    "backend/src/assessments.ts",
+    "backend/src/index.ts",
+    "backend/src/research-events.ts",
+    "backend/src/stage1-analysis.ts",
+    "docs/research-events-v1.md",
+    "frontend/package.json",
+    "frontend/src/App.tsx",
+    "frontend/src/HomePage.tsx",
+    "frontend/src/SessionFlowPage.tsx",
+    "frontend/src/Stage1AnalysisPage.tsx",
+    "frontend/src/design-system.css"
+  ],
+  "implementationFiles": [
+    "backend/src/csv.ts",
+    "backend/src/research-event-catalog.ts",
+    "backend/src/event-export-contract.ts",
+    "backend/src/event-export-query.ts",
+    "backend/src/event-export-service.ts",
+    "backend/src/event-export-routes.ts",
+    "backend/src/event-export-dictionary.ts",
+    "backend/src/event-export-samples.ts",
+    "backend/src/scripts/verify-event-export.ts",
+    "backend/src/scripts/verify-event-export-samples.ts",
+    "backend/src/scripts/generate-event-export-samples.ts",
+    "frontend/src/EventExportPage.tsx",
+    "frontend/scripts/verify-event-export-browser.ts",
+    "docs/research-event-export.md",
+    "docs/samples/event-export/"
+  ],
+  "limitations": [
+    "仮名IDはSession内で安定するL-SessionUUID。人物の複数Sessionの対応管理/再発行はIssue #11の対象。",
+    "実Excelでの開封と本番規模での性能は未確認。3,000件と実Edge/隔離APIで確認。",
+    "秘密情報/個人情報の完全検出は保証しない。現行LANは開発・模擬データ専用。",
+    "旧履歴境界はメタデータを出力し、抽出済みファイル単独で完全再生を保証しない。",
+    "初期の模擬auto-submit状態不整合はfixtureを修正し隔離DBを作り直して全回帰を再実行済み。Node/Windows検証終了時にuv handle assertionを1回観測、最終再実行は成功。"
+  ],
+  "state": "未コミット。ブランチ切替/reset/stash/PR/Issue変更なし。既存DB未接続。検証API停止、今回作成した使い捨てDBコンテナーだけを削除済み。"
+}

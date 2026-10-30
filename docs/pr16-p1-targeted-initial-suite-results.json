@@ -1,0 +1,7 @@
+[
+  {
+    "test": "test:map-failure-retry",
+    "exitCode": 1,
+    "elapsedMs": 5196
+  }
+]

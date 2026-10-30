@@ -1,0 +1,424 @@
+{
+  "completedAt": "2026-10-30T09:19:17.428380+00:00",
+  "branch": "codex/integrate-research-event-streams",
+  "head": "7ae20d03b8a97dbd212e3fcc70ca6516889e089f",
+  "workspace": "C:\\Users\\kyoum\\.codex\\worktrees\\integrate-research-event-streams\\sb-kb-integration",
+  "statuses": [
+    {
+      "item": "Link位置",
+      "status": "解消（研究用Stage 1の3種類）",
+      "evidence": [
+        "backend/src/index.ts",
+        "backend/src/research-event-map-v5.ts",
+        "backend/src/map-history.ts",
+        "backend/src/map-mixed-history.ts",
+        "backend/src/map-undo-redo.ts",
+        "frontend/src/MapPage.tsx",
+        "test:parent-followup",
+        "test:link-position-browser",
+        "test:map-mixed-history"
+      ],
+      "limits": "初回の未割当座標は自動配置として明示。旧表示座標を捏造しない。Goal/チュートリアルは新しいSession記録対象にしない。"
+    },
+    {
+      "item": "Kit結果分類",
+      "status": "解消",
+      "evidence": [
+        "backend/src/research-event-feedback-v6.ts",
+        "backend/src/index.ts",
+        "backend/src/event-export-contract.ts",
+        "frontend/src/EventTimeline.tsx",
+        "test:parent-followup",
+        "test:event-export-samples",
+        "test:research-log-ui"
+      ],
+      "semantics": "v6 SUCCESS + matched true/false、REJECTED/FAILUREは結果なし。旧v1 outcomeは維持。"
+    },
+    {
+      "item": "所有者不明の旧下書き",
+      "status": "一部解消",
+      "evidence": [
+        "frontend/src/assessment-drafts.ts",
+        "frontend/src/DataManagementPage.tsx",
+        "docs/research-data-management.md",
+        "test:delivery-browser",
+        "test:data-management-browser"
+      ],
+      "deleted": false,
+      "moved": false,
+      "automaticallyRecovered": false,
+      "answerBodyUploaded": false,
+      "deletionDeferred": true,
+      "reason": "認証主体と入力来歴を安全に特定できない。隔離件数だけ表示し、本文/IDから所有者を推測しない。"
+    },
+    {
+      "item": "回帰確認",
+      "status": "解消（模擬環境）",
+      "evidence": [
+        "docs/parent-followup-complete-suite-results.json",
+        ".github/workflows/stage1-prototype.yml",
+        "backend/src/event-test-matrix.ts",
+        "docs/research-event-test-matrix.md",
+        "docs/samples/event-export"
+      ],
+      "notes": "一括28検証、40種/468契約ケース、空履歴起動とリセット防護、両型検査/Lint/ビルド成功。"
+    }
+  ],
+  "suite": [
+    {
+      "test": "test:test-target-guards",
+      "exitCode": 0,
+      "elapsedMs": 1244
+    },
+    {
+      "test": "test:event-catalog",
+      "exitCode": 0,
+      "elapsedMs": 2420
+    },
+    {
+      "test": "test:research-event-schema",
+      "exitCode": 0,
+      "elapsedMs": 1161
+    },
+    {
+      "test": "test:undo-redo:unit",
+      "exitCode": 0,
+      "elapsedMs": 1362
+    },
+    {
+      "test": "test:map-mixed-history",
+      "exitCode": 0,
+      "elapsedMs": 1212
+    },
+    {
+      "test": "test:research-events",
+      "exitCode": 0,
+      "elapsedMs": 3722
+    },
+    {
+      "test": "test:event-export-samples",
+      "exitCode": 0,
+      "elapsedMs": 1384
+    },
+    {
+      "test": "test:event-export",
+      "exitCode": 0,
+      "elapsedMs": 19785
+    },
+    {
+      "test": "test:data-management",
+      "exitCode": 0,
+      "elapsedMs": 4180
+    },
+    {
+      "test": "test:stage1:integration",
+      "exitCode": 0,
+      "elapsedMs": 17458
+    },
+    {
+      "test": "test:map-api-v2",
+      "exitCode": 0,
+      "elapsedMs": 5273
+    },
+    {
+      "test": "test:parent-followup",
+      "exitCode": 0,
+      "elapsedMs": 9793
+    },
+    {
+      "test": "test:map-auto-submit-v2",
+      "exitCode": 0,
+      "elapsedMs": 3254
+    },
+    {
+      "test": "test:learning-activity-events",
+      "exitCode": 0,
+      "elapsedMs": 3964
+    },
+    {
+      "test": "test:assessment-events",
+      "exitCode": 0,
+      "elapsedMs": 5911
+    },
+    {
+      "test": "test:server-audit",
+      "exitCode": 0,
+      "elapsedMs": 7775
+    },
+    {
+      "test": "test:audit-routing",
+      "exitCode": 0,
+      "elapsedMs": 2245
+    },
+    {
+      "test": "test:integrated-streams",
+      "exitCode": 0,
+      "elapsedMs": 5478
+    },
+    {
+      "test": "test:integration-invariants",
+      "exitCode": 0,
+      "elapsedMs": 1803
+    },
+    {
+      "test": "test:safe-server-error",
+      "exitCode": 0,
+      "elapsedMs": 1125
+    },
+    {
+      "test": "test:server-recovery",
+      "exitCode": 0,
+      "elapsedMs": 5667
+    },
+    {
+      "test": "test:delivery-reliability",
+      "exitCode": 0,
+      "elapsedMs": 9990
+    },
+    {
+      "test": "test:event-scale",
+      "exitCode": 0,
+      "elapsedMs": 11213
+    },
+    {
+      "test": "test:research-log-ui",
+      "exitCode": 0,
+      "elapsedMs": 10879
+    },
+    {
+      "test": "test:link-position-browser",
+      "exitCode": 0,
+      "elapsedMs": 10550
+    },
+    {
+      "test": "test:delivery-browser",
+      "exitCode": 0,
+      "elapsedMs": 18967
+    },
+    {
+      "test": "test:event-export-browser",
+      "exitCode": 0,
+      "elapsedMs": 44854
+    },
+    {
+      "test": "test:data-management-browser",
+      "exitCode": 0,
+      "elapsedMs": 18423
+    }
+  ],
+  "suiteEnv": {
+    "NODE_ENV": "development",
+    "STAGE1_MOCK_DATA": "ONLY_SYNTHETIC",
+    "RESEARCH_BROWSER_CHECKS": "1",
+    "RESEARCH_CHECK_REPORT_PREFIX": "parent-followup-complete",
+    "DATABASE_URL": "unset in caller; internally generated from dedicated manifest; not recorded"
+  },
+  "commands": [
+    {
+      "command": "npm run db:mock --prefix backend -- create --name stage1_mock_parent_followup --mock-data-only",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- migrate --name stage1_mock_parent_followup",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- seed --name stage1_mock_parent_followup",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- suite --name stage1_mock_parent_followup",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- scale --name stage1_mock_parent_followup",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- create --name stage1_mock_parent_fresh --mock-data-only",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- migrate --name stage1_mock_parent_fresh",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- safety --name stage1_mock_parent_fresh",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- seed --name stage1_mock_parent_fresh",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:mock --prefix backend -- check --name stage1_mock_parent_fresh",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run typecheck --prefix backend",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run lint --prefix backend",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run build --prefix backend",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run typecheck --prefix frontend",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run lint --prefix frontend",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run build --prefix frontend",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run samples:event-export --prefix backend",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:event-catalog --prefix backend -- --write-dictionary",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:event-export-samples --prefix backend",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:map-mixed-history --prefix backend",
+      "exitCode": 0
+    }
+  ],
+  "migrationsAdded": [
+    "1791020000000_add_link_positions_feedback_v6.js",
+    "1791030000000_align_v5_jsonb_storage_guard.js"
+  ],
+  "existingMigrationsUnchanged": true,
+  "v2MapValidatorUnchanged": true,
+  "catalogTypes": 40,
+  "catalogContractCases": 468,
+  "exportSchemaVersion": 2,
+  "sampleEvents": 17,
+  "sampleFiles": 9,
+  "changedExistingFiles": [
+    ".github/workflows/stage1-prototype.yml",
+    "README.md",
+    "backend/package.json",
+    "backend/src/event-export-contract.ts",
+    "backend/src/event-export-dictionary.ts",
+    "backend/src/event-export-query.ts",
+    "backend/src/event-export-samples.ts",
+    "backend/src/event-test-matrix.ts",
+    "backend/src/index.ts",
+    "backend/src/map-history.ts",
+    "backend/src/map-mixed-history.ts",
+    "backend/src/map-undo-redo.ts",
+    "backend/src/research-event-catalog.ts",
+    "backend/src/research-events.ts",
+    "backend/src/research-export.ts",
+    "backend/src/scripts/run-research-event-suite.ts",
+    "backend/src/scripts/verify-event-catalog.ts",
+    "backend/src/scripts/verify-event-export-samples.ts",
+    "backend/src/scripts/verify-integrated-streams.ts",
+    "backend/src/scripts/verify-learning-activity-events.ts",
+    "backend/src/scripts/verify-map-mixed-history.ts",
+    "backend/src/scripts/verify-mock-reset-new-stream.ts",
+    "backend/src/scripts/verify-server-audit.ts",
+    "backend/src/scripts/verify-stage1.ts",
+    "backend/src/stage1-analysis.ts",
+    "docs/parent-issue-2-audit.md",
+    "docs/research-data-dictionary.md",
+    "docs/research-data-management.md",
+    "docs/research-event-delivery.md",
+    "docs/research-event-export.md",
+    "docs/research-event-test-matrix.md",
+    "docs/research-event-viewer.md",
+    "docs/research-events-v1.md",
+    "docs/samples/event-export/activity_times.csv",
+    "docs/samples/event-export/assessment_events.csv",
+    "docs/samples/event-export/data-dictionary.md",
+    "docs/samples/event-export/events.csv",
+    "docs/samples/event-export/events.json",
+    "docs/samples/event-export/manifest.json",
+    "docs/samples/event-export/map_operations.csv",
+    "docs/samples/event-export/researcher_events.csv",
+    "docs/samples/event-export/system_events.csv",
+    "frontend/package.json",
+    "frontend/scripts/verify-data-management-browser.ts",
+    "frontend/scripts/verify-delivery-browser.ts",
+    "frontend/scripts/verify-research-log-ui.ts",
+    "frontend/src/DataManagementPage.tsx",
+    "frontend/src/EventExportPage.tsx",
+    "frontend/src/EventTimeline.tsx",
+    "frontend/src/MapPage.tsx",
+    "frontend/src/Stage1AnalysisPage.tsx",
+    "frontend/src/assessment-drafts.ts"
+  ],
+  "newFiles": [
+    "backend/migrations/1791020000000_add_link_positions_feedback_v6.js",
+    "backend/migrations/1791030000000_align_v5_jsonb_storage_guard.js",
+    "backend/src/research-event-feedback-v6.ts",
+    "backend/src/research-event-map-v5.ts",
+    "backend/src/scripts/verify-parent-followup.ts",
+    "docs/parent-followup-browser-suite-results.json",
+    "docs/parent-followup-complete-invariants.json",
+    "docs/parent-followup-complete-scale-results.json",
+    "docs/parent-followup-complete-suite-results.json",
+    "docs/parent-followup-final-invariants.json",
+    "docs/parent-followup-final-suite-results.json",
+    "docs/parent-followup-initial-suite-results.json",
+    "docs/parent-followup-resumed-suite-results.json",
+    "docs/parent-followup-scale-results.json",
+    "docs/parent-followup-second-suite-results.json",
+    "docs/parent-followup-suite-results.json",
+    "docs/parent-followup-targeted-suite-results.json",
+    "docs/parent-followup-third-suite-results.json",
+    "docs/parent-followup.md",
+    "frontend/scripts/verify-link-position-browser.ts"
+  ],
+  "baselineFilesMissing": [],
+  "earlierReportsPreserved": true,
+  "existingDatabaseConnected": false,
+  "githubMutated": false,
+  "committed": false,
+  "correctedIntermediateFailures": [
+    "追加fixtureのSession開始時刻不足を修正。",
+    "追加型/未使用変数/JSX中継の重複を修正。",
+    "自動提出失敗注入と新規操作の期待値のv2固定をv5へ更新。",
+    "途中の代表規模テストがWindows native exit 3221226505 (0xC0000409) で異常終了。単独再試行と最終一括の両方が成功。原因は特定していない。"
+  ],
+  "limits": [
+    "所有者不明の旧下書きは保持。安全な個別識別・削除は未実装。",
+    "平文下書きの暗号化/保存期限、未接続/別origin/別タブ/バックアップの完全消去は保証しない。",
+    "未知秘密情報の完全検出はできない。",
+    "GitHub/Linux CIの実走行、実データ、実機LAN/20端末同時、本番性能/安全性は未確認。",
+    "位置UIは実コンポーネント+HTTP fixture、DB記録/再生は実HTTP APIで別に確認。実ユーザーの保存領域を調査/削除していない。"
+  ],
+  "disposableDatabases": [
+    {
+      "name": "stage1_mock_parent_followup",
+      "createdHere": true,
+      "cleanup": "removed_after_exact_id_purpose_nonce_verification"
+    },
+    {
+      "name": "stage1_mock_parent_fresh",
+      "createdHere": true,
+      "cleanup": "removed_after_exact_id_purpose_nonce_verification"
+    }
+  ],
+  "preservedIssue3Through13AndAuditChanges": true,
+  "finalStaticChecks": {
+    "backend:typecheck": 0,
+    "backend:lint": 0,
+    "backend:build": 0,
+    "frontend:typecheck": 0,
+    "frontend:lint": 0,
+    "frontend:build": 0
+  }
+}

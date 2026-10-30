@@ -7,6 +7,7 @@ const MUTABLE_OPERATION_TYPES = new Set([
   "MOVE_CONCEPT",
   "ADD_LINK",
   "EDIT_LINK",
+  "MOVE_LINK",
   "DELETE_LINK",
   "RECONNECT_LINK",
   "IMPORT_KIT_CONCEPT",
@@ -32,6 +33,7 @@ export function deriveUndoRedoAvailability(
   const byId = new Map<string, HistoryOperation>();
 
   for (const operation of ordered) {
+    if (["MAP_SAVE", "MAP_KIT_ASSIGN", "MAP_SUBMIT", "MAP_AUTO_SUBMIT"].includes(operation.operationType)) continue;
     if (
       operation.operationType === "UNDO" ||
       operation.operationType === "REDO"
@@ -115,6 +117,8 @@ function canonicalSnapshot(snapshot: MapHistorySnapshot) {
         sourceConceptId: item.sourceConceptId,
         targetConceptId: item.targetConceptId,
         label: item.label,
+        labelPositionX: item.labelPositionX ?? null,
+        labelPositionY: item.labelPositionY ?? null,
         provenance: canonicalProvenance(item.provenance),
       }))
       .sort((left, right) => left.id.localeCompare(right.id)),

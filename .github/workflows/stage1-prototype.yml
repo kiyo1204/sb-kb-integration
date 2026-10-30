@@ -1,72 +1,76 @@
-name: Stage 1 prototype checks
+name: Research event integrity checks
 on:
   push:
-    branches: [feature/stage1-research-prototype]
+    branches: [main, 'codex/**', feature/stage1-research-prototype]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
-  static-checks:
+  isolated-research-events:
     runs-on: ubuntu-latest
-    services:
-      db:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: stage1_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d stage1_test"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+    timeout-minutes: 30
     env:
-      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/stage1_test
+      NODE_ENV: development
+      STAGE1_MOCK_DATA: ONLY_SYNTHETIC
+      RESEARCH_BROWSER_CHECKS: '1'
+      BROWSER_CHANNEL: chromium
+      RESEARCH_CHECK_REPORT_PREFIX: ci-current
     steps:
       - uses: actions/checkout@v4
-      - name: Create ephemeral researcher credential
-        run: |
-          token=$(openssl rand -hex 32)
-          echo "::add-mask::$token"
-          echo "RESEARCHER_API_TOKEN=$token" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             backend/package-lock.json
             frontend/package-lock.json
-      - name: Install backend
-        run: npm ci --prefix backend
-      - name: Install frontend
-        run: npm ci --prefix frontend
-      - name: Backend typecheck
-        run: npm run typecheck --prefix backend
-      - name: Frontend typecheck
-        run: npm run typecheck --prefix frontend
-      - name: Backend lint
-        run: npm run lint --prefix backend
-      - name: Undo/Redo reducer unit test
-        run: npm run test:undo-redo:unit --prefix backend
-      - name: Frontend lint
-        run: npm run lint --prefix frontend
-      - name: Build
+      - run: npm ci --prefix backend
+      - run: npm ci --prefix frontend
+      - name: Install disposable browser runtime
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Static checks and builds
         run: |
+          npm run typecheck --prefix backend
+          npm run lint --prefix backend
           npm run build --prefix backend
+          npm run typecheck --prefix frontend
+          npm run lint --prefix frontend
           npm run build --prefix frontend
-      - name: Migrate and seed PostgreSQL
+      - name: Create a new mock database (never a repository DATABASE_URL)
+        run: npm run db:mock --prefix backend -- create --name stage1_mock_ci --mock-data-only
+      - name: Apply ordered migrations and verify reset protections
         run: |
-          npm run db:migrate --prefix backend -- up
-          npm run db:seed:dev --prefix backend
-      - name: Start backend service
+          npm run db:mock --prefix backend -- migrate --name stage1_mock_ci
+          npm run db:mock --prefix backend -- safety --name stage1_mock_ci
+          npm run db:mock --prefix backend -- seed --name stage1_mock_ci
+      - name: Empty legacy stream full API flow
+        run: npm run db:mock --prefix backend -- check --name stage1_mock_ci
+      - name: Catalog, v5 Link positions, v6 feedback, replay, delivery, export, deletion and browser suite
+        run: npm run db:mock --prefix backend -- suite --name stage1_mock_ci
+      - name: Upload aggregate mock results (no raw event data or credentials)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-research-event-checks
+          path: |
+            docs/ci-current-suite-results.json
+            docs/ci-current-scale-results.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Remove only this job's dedicated mock container
+        if: always()
         run: |
-          DATABASE_URL="$DATABASE_URL" node backend/dist/index.js > /tmp/stage1-backend.log 2>&1 &
-          for i in $(seq 1 30); do
-            if curl --silent --fail http://127.0.0.1:3000/api/health; then exit 0; fi
-            sleep 2
-          done
-          cat /tmp/stage1-backend.log
-          exit 1
-      - name: Stage1 integration test
-        run: npm run test:stage1:integration --prefix backend
+          node --input-type=module <<'NODE'
+          import {existsSync,readFileSync} from 'node:fs';
+          import {execFileSync} from 'node:child_process';
+          const path='.local/mock-reset/stage1_mock_ci.json';
+          if(!existsSync(path))process.exit(0);
+          const m=JSON.parse(readFileSync(path,'utf8'));
+          if(m.name!=='stage1_mock_ci'||!/^[a-f0-9]{64}$/.test(m.containerId))throw new Error('unexpected mock manifest');
+          const c=JSON.parse(execFileSync('docker',['inspect',m.containerId],{encoding:'utf8'}))[0];
+          if(c.Id!==m.containerId||c.Config.Labels['stage1.purpose']!=='isolated-mock-reset'||c.Config.Labels['stage1.nonce']!==m.nonce)throw new Error('mock cleanup identity mismatch');
+          execFileSync('docker',['rm','--force','--volumes',m.containerId],{stdio:'inherit'});
+          NODE

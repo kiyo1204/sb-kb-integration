@@ -7,3 +7,9 @@ coverage/
 *.tsbuildinfo
 .DS_Store
 *.log
+
+# Dedicated disposable mock DB manifests (never research data).
+.local/mock-reset/
+
+# Vite generated dependency optimization cache at repository root.
+/.vite/deps/

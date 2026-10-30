@@ -1,0 +1,93 @@
+{
+  "completedAt": "2026-10-30T10:25:36.973264+00:00",
+  "worktree": "C:\\Users\\kyoum\\.codex\\worktrees\\integrate-research-event-streams\\sb-kb-integration",
+  "branch": "codex/integrate-research-event-streams",
+  "head": "7ae20d03b8a97dbd212e3fcc70ca6516889e089f",
+  "suiteCount": 28,
+  "suiteAllPassed": true,
+  "priorFiveIncluded": [
+    "test:data-management",
+    "test:link-position-browser",
+    "test:delivery-browser",
+    "test:parent-followup",
+    "test:map-mixed-history"
+  ],
+  "static": [
+    {
+      "check": "typecheck",
+      "exitCode": 0,
+      "part": "backend"
+    },
+    {
+      "check": "lint",
+      "exitCode": 0,
+      "part": "backend"
+    },
+    {
+      "check": "build",
+      "exitCode": 0,
+      "part": "backend"
+    },
+    {
+      "check": "typecheck",
+      "exitCode": 0,
+      "part": "frontend"
+    },
+    {
+      "check": "lint",
+      "exitCode": 0,
+      "part": "frontend"
+    },
+    {
+      "check": "build",
+      "exitCode": 0,
+      "part": "frontend"
+    }
+  ],
+  "additionalChecks": {
+    "test:mock-reset-safety": "PASS",
+    "test:mock-reset-new-stream": "PASS"
+  },
+  "commands": [
+    "npm run typecheck --prefix backend",
+    "npm run lint --prefix backend",
+    "npm run build --prefix backend",
+    "npm run typecheck --prefix frontend",
+    "npm run lint --prefix frontend",
+    "npm run build --prefix frontend",
+    "npm run db:mock --prefix backend -- create --name stage1_mock_pr_preflight --mock-data-only",
+    "npm run db:mock --prefix backend -- migrate --name stage1_mock_pr_preflight",
+    "npm run db:mock --prefix backend -- safety --name stage1_mock_pr_preflight",
+    "npm run db:mock --prefix backend -- seed --name stage1_mock_pr_preflight",
+    "npm run db:mock --prefix backend -- check --name stage1_mock_pr_preflight",
+    "npm run db:mock --prefix backend -- suite --name stage1_mock_pr_preflight"
+  ],
+  "suiteEnvironment": {
+    "NODE_ENV": "development",
+    "STAGE1_MOCK_DATA": "ONLY_SYNTHETIC",
+    "DATABASE_URL": "unset in caller; dedicated mock manifest only",
+    "RESEARCH_BROWSER_CHECKS": "1",
+    "RESEARCH_SUITE_ONLY": "unset",
+    "RESEARCH_CHECK_REPORT_PREFIX": "pr-preflight"
+  },
+  "initialFailure": {
+    "step": "check",
+    "cause": "Operator ran seed before safety, whose intentional reset removed the kit fixture. Session creation returned 404.",
+    "secondaryExit": "Windows native 0xC0000409 after the failed assertion",
+    "correction": "Reran standard safety -> seed -> check -> suite order; no source changes",
+    "finalOutcome": "PASS"
+  },
+  "sourceFixesThisRun": [],
+  "baselineFilesPreservedBeforeReportUpdates": 164,
+  "existingDatabaseConnected": false,
+  "githubCiExecuted": false,
+  "githubMutated": false,
+  "staged": false,
+  "committed": false,
+  "mockCleanup": "Exact ID + purpose + nonce verified; only newly created container and volumes removed",
+  "limits": [
+    "GitHub/Linux CI not run",
+    "Real LAN, twenty concurrent devices and production use not verified",
+    "Browser fault injection uses HTTP fixtures; DB API tests run separately"
+  ]
+}

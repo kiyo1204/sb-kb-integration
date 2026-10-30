@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import {assessmentDraftKey,recoverAssessmentDraft,writeAssessmentDraft} from "./assessment-drafts";
+import {requestDigest} from "./client-identity";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, downloadApiFile, uiText } from "./auth-client";
 
 type Category = "DESCRIPTION" | "RETENTION" | "TRANSFER";
@@ -9,6 +11,7 @@ type ResearchData = {
   questions: Array<Question & { id: string; displayOrder: number }>;
   stages: Array<{ stageId: string; stageType: string; status: string; submittedAt: string | null }>;
   answers: Array<{ stageId: string; questionId: string; answer: string }>;
+  events: Array<{ eventId: string; activity: string; eventType: string; outcome: string; serverTimestamp: string; targetId: string; before: { answer: string | null } | null; after: { answer: string | null } | null }>;
 };
 const categoryLabels: Record<Category, string> = { DESCRIPTION: "記述", RETENTION: "保持", TRANSFER: "転移" };
 
@@ -60,38 +63,51 @@ export function ResearchAssessment({ sessionId }: { sessionId: string }) {
       {data.questions.map((q, index) => <div key={q.id}><p>{index + 1}. {q.prompt}</p><p>回答: {data.answers.find(a => a.stageId === stage.stageId && a.questionId === q.id)?.answer || "（空欄）"}</p></div>)}
     </div>)}</div>}
     <div className="assessment-actions"><button className="session-secondary-button" type="button" onClick={() => void download(`/api/research/stage1/sessions/${sessionId}/assessment-answers.csv`)}>評価回答CSVを出力</button>{data.session.status === "COMPLETED" && <> <button className="session-secondary-button" type="button" onClick={() => void download(`/api/research/sessions/${sessionId}/export`)}>生データJSONを出力</button></>}</div>
+    <details><summary>回答の確定編集・提出履歴（未提出を含む）</summary>
+      {(data.events ?? []).map(event => <article key={event.eventId}>
+        <h4>{event.activity === "PRE_ASSESSMENT" ? "事前評価" : "事後評価"}：{event.eventType === "ASSESSMENT_SUBMIT" ? "提出" : "回答編集"}・{event.outcome}</h4>
+        <p>{new Date(event.serverTimestamp).toLocaleString()} ／ 対象: {event.targetId}</p>
+        {event.before && <p>変更前: {event.before.answer ?? "回答なし"}</p>}
+        {event.after && <p>変更後: {event.after.answer ?? "回答なし"}</p>}
+      </article>)}
+    </details>
     {message && <p className="assessment-status" role="status">{message}</p>}
   </section>;
 }
 
-export function LearnerAssessment({ stageId, onSubmitted }: { stageId: string; onSubmitted: () => Promise<void> }) {
+export function LearnerAssessment({ sessionId, stageId, onSubmitted }: { sessionId: string; stageId: string; onSubmitted: (activityLogSaved: boolean) => Promise<void> }) {
+  const [deleted,setDeleted]=useState(false);
+  const deletedRef = useRef(false);
+
   const [questions, setQuestions] = useState<LearnerQuestion[] | null>(null);
   const [message, setMessage] = useState("");
   const [showMissing, setShowMissing] = useState(false);
   const [busy, setBusy] = useState(false);
   const latest = useRef<LearnerQuestion[]>([]);
   const queue = useRef<Promise<void>>(Promise.resolve());
-  const timer = useRef<number | null>(null);
-  const cacheKey = `stage1-assessment-draft-${stageId}`;
+  useEffect(()=>{const onDeleted=(event:Event)=>{if(event instanceof CustomEvent&&event.detail===requestDigest(sessionId)){deletedRef.current=true;latest.current=[];setQuestions([]);setDeleted(true);}};window.addEventListener("stage1-assessment-deleted",onDeleted);return()=>window.removeEventListener("stage1-assessment-deleted",onDeleted);},[sessionId]);
+  const cacheKey = assessmentDraftKey(sessionId,stageId);
   const path = `/api/session-stages/${stageId}/assessment`;
   function payload(list: LearnerQuestion[]) { return list.map(q => ({ questionId: q.id, answer: q.answer })); }
-  function persist(list: LearnerQuestion[]) {
+  const persist = useCallback((list: LearnerQuestion[]) => {
     const answers = payload(list).filter(answer => answer.answer.trim());
     const serialized = JSON.stringify(payload(list));
     queue.current = queue.current.catch(() => undefined).then(async () => {
+      if (deletedRef.current) return;
       await json(`${path}/save`, "POST", { answers });
+      if (deletedRef.current) return;
       if (localStorage.getItem(cacheKey) === serialized) localStorage.removeItem(cacheKey);
       setMessage("回答を保存しました。");
-    }).catch(() => { setMessage("サーバーに保存できませんでした。入力内容はこのブラウザーに保持されています。"); });
-  }
+    }).catch(() => { if (!deletedRef.current) setMessage("サーバーに保存できませんでした。画面の入力内容と保存状態を確認してください。"); });
+  }, [path, cacheKey]);
   useEffect(() => {
     let active = true;
     json<{ questions: LearnerQuestion[] }>(path).then(data => {
-      if (!active) return;
+      if (!active || deletedRef.current) return;
       let restored = data.questions;
       let recovered = false;
       try {
-        const draft = JSON.parse(localStorage.getItem(cacheKey) ?? "null") as Array<{questionId: string; answer: string}> | null;
+        const draft = JSON.parse(recoverAssessmentDraft(sessionId,stageId) ?? "null") as Array<{questionId: string; answer: string}> | null;
         if (Array.isArray(draft)) {
           restored = data.questions.map(q => ({ ...q, answer: draft.find(a => a.questionId === q.id && typeof a.answer === "string")?.answer ?? q.answer }));
           recovered = true;
@@ -100,17 +116,19 @@ export function LearnerAssessment({ stageId, onSubmitted }: { stageId: string; o
       latest.current = restored; setQuestions(restored);
       if (recovered) persist(restored);
     }).catch(err => { if (active) setMessage(err instanceof Error ? err.message : "評価を取得できませんでした。"); });
-    return () => { active = false; if (timer.current !== null) window.clearTimeout(timer.current); };
-  }, [path, cacheKey]);
+    return () => { active = false; };
+  }, [path, cacheKey, persist, sessionId, stageId]);
   function change(id: string, answer: string) {
+    if (deletedRef.current) return;
     const next = latest.current.map(q => q.id === id ? { ...q, answer } : q);
     latest.current = next; setQuestions(next);
-    try { localStorage.setItem(cacheKey, JSON.stringify(payload(next))); } catch { setMessage("ブラウザーに一時保存できません。保存状態を確認してください。"); }
-    if (timer.current !== null) window.clearTimeout(timer.current);
-    setMessage("保存中…");
-    timer.current = window.setTimeout(() => persist(next), 700);
+    try {
+      writeAssessmentDraft(sessionId,stageId,JSON.stringify(payload(next)));
+      setMessage("入力中（欄を離れると保存します）");
+    } catch { setMessage("ブラウザーに一時保存できません。入力内容は画面内にあります。保存状態を確認してください。"); }
   }
   async function submit() {
+    if (deletedRef.current) return;
     const answers = payload(latest.current);
     const missing = latest.current.flatMap((q, index) => q.answer.trim() ? [] : [index + 1]);
     if (missing.length) {
@@ -122,14 +140,19 @@ export function LearnerAssessment({ stageId, onSubmitted }: { stageId: string; o
     setShowMissing(false);
     if (!window.confirm("回答を提出しますか？")) return;
     setBusy(true); setMessage("");
-    if (timer.current !== null) window.clearTimeout(timer.current);
-    try { await queue.current; await json(`${path}/submit`, "POST", { answers }); try { localStorage.removeItem(cacheKey); } catch { /* The submission is already saved on the server. */ } await onSubmitted(); }
+    try {
+      await queue.current;
+      const result = await json<{ activityLogSaved?: boolean }>(`${path}/submit`, "POST", { answers });
+      try { localStorage.removeItem(cacheKey); } catch { /* The submission is already saved on the server. */ }
+      await onSubmitted(result.activityLogSaved !== false);
+    }
     catch (err) { setMessage(err instanceof Error ? err.message : "提出できませんでした。"); }
     finally { setBusy(false); }
   }
+  if(deleted)return <p role="alert">このセッションの研究データは削除されています。回答を続けることはできません。</p>;
   if (!questions) return <p role="status">{message || "評価を読み込んでいます…"}</p>;
   return <div className="learner-assessment"><p>すべての問題に記述で回答し、提出してください。</p>
-    {questions.map((q, index) => <div className="assessment-question" key={q.id}><label className="assessment-field" htmlFor={`answer-${q.id}`}>問題 {index + 1}：{q.prompt}</label><textarea id={`answer-${q.id}`} rows={4} value={q.answer} disabled={busy} required aria-invalid={showMissing && !q.answer.trim() || undefined} onChange={e => change(q.id, e.target.value)} /></div>)}
+    {questions.map((q, index) => <div className="assessment-question" key={q.id}><label className="assessment-field" htmlFor={`answer-${q.id}`}>問題 {index + 1}：{q.prompt}</label><textarea id={`answer-${q.id}`} rows={4} value={q.answer} disabled={busy} required aria-invalid={showMissing && !q.answer.trim() || undefined} onChange={e => change(q.id, e.target.value)} onBlur={() => persist(latest.current)} /></div>)}
     <div className="assessment-actions"><p>未回答: {questions.filter(q => !q.answer.trim()).length}問</p>
     <button className="session-primary-button" type="button" disabled={busy} onClick={() => void submit()}>回答を確認して提出</button></div>
     {showMissing && questions.some(q => !q.answer.trim()) && <p className="assessment-status" role="alert">問題 {questions.flatMap((q, index) => q.answer.trim() ? [] : [index + 1]).join("、")} に回答してください。空白だけでは提出できません。</p>}

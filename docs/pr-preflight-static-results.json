@@ -1,0 +1,32 @@
+[
+  {
+    "check": "typecheck",
+    "exitCode": 0,
+    "part": "backend"
+  },
+  {
+    "check": "lint",
+    "exitCode": 0,
+    "part": "backend"
+  },
+  {
+    "check": "build",
+    "exitCode": 0,
+    "part": "backend"
+  },
+  {
+    "check": "typecheck",
+    "exitCode": 0,
+    "part": "frontend"
+  },
+  {
+    "check": "lint",
+    "exitCode": 0,
+    "part": "frontend"
+  },
+  {
+    "check": "build",
+    "exitCode": 0,
+    "part": "frontend"
+  }
+]

@@ -1,0 +1,49 @@
+{
+  "branch": "codex/integrate-research-event-streams",
+  "existingDatabaseConnected": false,
+  "existingResearchDataResetDeletedConverted": false,
+  "onlyResetDatabase": "new dedicated stage1_mock_issue12",
+  "newAppMigrations": false,
+  "changes": [
+    "backend\\package.json",
+    "backend\\src\\event-export-routes.ts",
+    "backend\\src\\index.ts"
+  ],
+  "otherFiles": [
+    "README.md",
+    ".gitignore"
+  ],
+  "newImplementation": [
+    "backend/src/scripts/mock-db.ts",
+    "backend/src/scripts/verify-mock-reset-safety.ts",
+    "backend/src/scripts/verify-mock-reset-new-stream.ts",
+    "docs/development-event-stream-reset.md"
+  ],
+  "checksPassed": [
+    "Dedicated Docker create, guard, ordered migrate through179101 and dummy seed",
+    "Default plan and reset without execute are dry-run; matching row fingerprints preserved",
+    "Reject NODE_ENV production, unknown mock setting, existing DATABASE_URL, missing/wrong database/backup/plan flags",
+    "Reject altered real-data purpose marker, active DB clients, stale plan",
+    "Explicit reset on dedicated DB cleared legacy fixture and all application tables without conversion; default research row reinitialized",
+    "Real API full CONTROL six-stage flow from empty old/new streams, Kit imports, assessment, deadline fixture, map v2 ADD/UNDO/REDO, replay, completed Session analysis, old raw JSON, new JSON/CSV and learner403",
+    "Zero map_operation_logs after full real API check; legacy_count=0 for new map boundary",
+    "Existing Undo/Redo unit and mixed-history verification",
+    "Backend typecheck/lint/build; frontend typecheck/lint/build",
+    "git diff --check"
+  ],
+  "preservation": {
+    "removedFiles": [],
+    "originalMigrationsUnchanged": true,
+    "issue4to11UncommittedWorkRetained": true,
+    "otherWorktreesEdited": false
+  },
+  "limits": [
+    "Mock-only provenance/attestation cannot inspect free text and prove no real data was manually imported; never import real data or forge guard metadata. Unknown existing DBs are unsupported.",
+    "Windows/Docker only tested here; Linux/macOS reset runtime not verified.",
+    "No backup restoration drill; operator must verify backup before irreversible reset.",
+    "Browser IndexedDB, downloaded files, backups and physical storage residuals are not erased by DB reset.",
+    "One intermediate child ended without verification output; retry passed. Safe child status/signal diagnostics added.",
+    "Initial new-flow fixture errors were corrected to follow existing question minimum and activity order; application research conditions were unchanged."
+  ],
+  "state": "Uncommitted; no branch switch/reset/stash/commit/PR/issue actions. Existing DB never connected."
+}

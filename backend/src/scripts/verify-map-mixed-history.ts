@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import { replayMixedMapHistory, type MapHistoryEventV2 } from "../map-mixed-history.js";
+import { deriveUndoRedoAvailability, historySnapshotsEqual } from "../map-undo-redo.js";
+import type { HistoryOperation, MapHistorySnapshot } from "../map-history.js";
+import { replayMapAt } from "../map-history.js";
+
+const mapId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const conceptId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const initial: MapHistorySnapshot = { snapshotVersion: 1, mapId, mapType: "PRIOR", basedOnMapId: null, kitDefinitionId: null, concepts: [], links: [] };
+const concept = { id: conceptId, mapId, label: "概念", positionX: 10, positionY: 20, mergedIntoConceptId: null, provenance: [] };
+const added: MapHistorySnapshot = { ...initial, concepts: [concept] };
+const moved: MapHistorySnapshot = { ...initial, concepts: [{ ...concept, positionX: 30 }] };
+const legacy: HistoryOperation[] = [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", mapId, sequenceNumber: "1", operationType: "ADD_CONCEPT", targetType: "CONCEPT", targetId: conceptId, before: null, after: concept }];
+const boundary = { legacyCount: 1, legacyLastId: legacy[0]!.id };
+const event = (eventId: string, sequenceNumber: string, before: unknown, after: unknown, outcome = "SUCCESS", eventType = "MOVE_CONCEPT", relatedEventId: string | null = null): MapHistoryEventV2 => ({ eventId, sequenceNumber, mapId, schemaVersion: 2, eventType, relatedEventId, outcome, before, after });
+const move = event("new-move", "4", added, moved);
+const undo = event("new-undo", "9", moved, added, "SUCCESS", "UNDO", move.eventId);
+const redo = event("new-redo", "12", added, moved, "SUCCESS", "REDO", move.eventId);
+const rejection = event("new-rejected", "13", moved, moved, "REJECTED");
+const onlyLegacy = replayMixedMapHistory(initial, boundary, legacy, []);
+assert.equal(onlyLegacy.status, "REPLAYABLE");
+if (onlyLegacy.status === "REPLAYABLE") assert.ok(historySnapshotsEqual(onlyLegacy.state, added));
+const mixed = replayMixedMapHistory(initial, boundary, legacy, [move, undo, redo, rejection]);
+assert.equal(mixed.status, "REPLAYABLE");
+if (mixed.status === "REPLAYABLE") assert.ok(historySnapshotsEqual(mixed.state, moved));
+assert.equal(replayMixedMapHistory(initial, { legacyCount: 0, legacyLastId: null }, legacy, []).status, "PARTIAL");
+assert.equal(replayMixedMapHistory(initial, boundary, legacy, [event("wrong", "4", initial, moved)]).status, "PARTIAL");
+assert.equal(replayMixedMapHistory(initial, boundary, legacy, [move, event("duplicate-order", "4", moved, added)]).status, "PARTIAL");
+assert.equal(replayMixedMapHistory(initial, boundary, legacy, [move, event("bad-rejection", "6", moved, added, "REJECTED")]).status, "PARTIAL");
+assert.equal(replayMixedMapHistory(initial, boundary, legacy, [event("bad-undo", "4", added, initial, "SUCCESS", "UNDO", "missing")]).status, "PARTIAL");
+const v2Operation: HistoryOperation = { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", mapId, sequenceNumber: "2", operationType: "MOVE_CONCEPT", targetType: "CONCEPT", targetId: conceptId, before: added, after: moved, historyFormat: "V2" };
+const unified = replayMapAt(initial, [...legacy, v2Operation], 2);
+assert.equal(unified.status, "REPLAYABLE");
+if (unified.status === "REPLAYABLE") assert.ok(historySnapshotsEqual(unified.state, moved));
+assert.equal(replayMapAt(initial, [...legacy, { ...v2Operation, before: initial }], 2).status, "PARTIAL");
+const undoNew: HistoryOperation = { ...v2Operation, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", sequenceNumber: "3", operationType: "UNDO", targetType: "MAP", before: moved, after: added, relatedOperationLogId: v2Operation.id };
+const redoNew: HistoryOperation = { ...undoNew, id: "ffffffff-ffff-4fff-8fff-ffffffffffff", sequenceNumber: "4", operationType: "REDO", before: added, after: moved };
+const afterNewUndo = replayMapAt(initial, [...legacy, v2Operation, undoNew], 3);
+assert.equal(afterNewUndo.status, "REPLAYABLE");
+if (afterNewUndo.status === "REPLAYABLE") assert.ok(historySnapshotsEqual(afterNewUndo.state, added));
+const afterNewRedo = replayMapAt(initial, [...legacy, v2Operation, undoNew, redoNew], 4);
+assert.equal(afterNewRedo.status, "REPLAYABLE");
+if (afterNewRedo.status === "REPLAYABLE") assert.ok(historySnapshotsEqual(afterNewRedo.state, moved));
+assert.equal(deriveUndoRedoAvailability([...legacy, v2Operation, undoNew]).redoOperation?.id, v2Operation.id);
+assert.equal(deriveUndoRedoAvailability([...legacy, v2Operation, undoNew, redoNew]).undoOperation?.id, v2Operation.id);
+for (const mapType of ["PRIOR", "KB", "INTEGRATION"]) {
+  const before: MapHistorySnapshot = { ...initial, mapType };
+  const after: MapHistorySnapshot = { ...before, concepts: [{ ...concept, provenance: [{ id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", targetConceptId: conceptId, sourceConceptId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", relationType: "CLONED_FROM", createdAt: "2026-01-01T00:00:00Z" }] }] };
+  const replay = replayMixedMapHistory(before, { legacyCount: 0, legacyLastId: null }, [], [event("new-add", "1", before, after, "SUCCESS", "ADD_CONCEPT")]);
+  assert.equal(replay.status, "REPLAYABLE");
+  if (replay.status === "REPLAYABLE") assert.ok(historySnapshotsEqual(replay.state, after));
+}
+console.log("Mixed legacy/new map replay checks succeeded");
+
+const linked:MapHistorySnapshot={...moved,links:[{id:"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef",mapId,sourceConceptId:conceptId,targetConceptId:conceptId,label:"関係",provenance:[]}]};
+const positioned:MapHistorySnapshot={...linked,links:[{...linked.links[0],labelPositionX:100,labelPositionY:200}]};
+const v2Link=event("v2-link","14",moved,linked,"SUCCESS","ADD_LINK");
+const v5Move={...event("v5-link-move","15",linked,positioned,"SUCCESS","MOVE_LINK"),schemaVersion:5};
+const v5Undo={...event("v5-link-undo","16",positioned,linked,"SUCCESS","UNDO",v5Move.eventId),schemaVersion:5};
+const v5Redo={...event("v5-link-redo","17",linked,positioned,"SUCCESS","REDO",v5Move.eventId),schemaVersion:5};
+const versioned=replayMixedMapHistory(initial,boundary,legacy,[move,undo,redo,v2Link,v5Move,v5Undo,v5Redo]);
+assert.equal(versioned.status,"REPLAYABLE");if(versioned.status==="REPLAYABLE")assert.ok(historySnapshotsEqual(versioned.state,positioned));
+assert.equal(replayMixedMapHistory(initial,boundary,legacy,[move,v2Link,{...v5Move,before:initial}]).status,"PARTIAL");
+console.log("Legacy + v2 + v5 position/Undo/Redo continuity: PASS");
+
+assert.equal(replayMapAt(linked,[{id:"legacy-unknown-move",mapId,sequenceNumber:"1",operationType:"MOVE_LINK",targetType:"LINK",targetId:linked.links[0].id,before:linked.links[0],after:positioned.links[0]}],1).status,"PARTIAL","New v5 vocabulary must not reinterpret an unknown legacy operation");

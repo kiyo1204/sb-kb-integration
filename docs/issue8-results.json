@@ -1,0 +1,151 @@
+{
+  "date": "2026-10-29",
+  "branch": "codex/integrate-research-event-streams",
+  "existingDatabaseTouched": false,
+  "server": {
+    "migrations": [
+      "1790890000000_create_research_events",
+      "1790900000000_allow_research_event_schema_v2",
+      "1790910000000_create_map_history_boundaries",
+      "1790920000000_add_event_legacy_reference",
+      "1790930000000_add_research_annotation_event_refs",
+      "1790950000000_add_assessment_events_v3",
+      "1790960000000_add_server_audit_events",
+      "1790970000000_add_delivery_reliability",
+      "1790980000000_allow_unknown_delivery_storage",
+      "1790990000000_allow_delivery_in_flight"
+    ],
+    "observedReceipts": 20,
+    "receiptSessionMismatch": 0,
+    "duplicateObservationSequence": 0,
+    "operationReceipts": 44,
+    "testTriggersRemaining": 0
+  },
+  "checks": [
+    {
+      "check": "test:stage1:integration",
+      "exitCode": 0
+    },
+    {
+      "check": "test:map-api-v2",
+      "exitCode": 0
+    },
+    {
+      "check": "test:map-auto-submit-v2",
+      "exitCode": 0
+    },
+    {
+      "check": "test:undo-redo:unit",
+      "exitCode": 0
+    },
+    {
+      "check": "test:map-mixed-history",
+      "exitCode": 0
+    },
+    {
+      "check": "test:learning-activity-events",
+      "exitCode": 0
+    },
+    {
+      "check": "test:assessment-events",
+      "exitCode": 0
+    },
+    {
+      "check": "test:server-audit",
+      "exitCode": 0
+    },
+    {
+      "check": "test:research-events",
+      "exitCode": 0
+    },
+    {
+      "check": "test:research-event-schema",
+      "exitCode": 0
+    },
+    {
+      "check": "test:audit-routing",
+      "exitCode": 0
+    },
+    {
+      "check": "test:integrated-streams",
+      "exitCode": 0
+    },
+    {
+      "check": "test:integration-invariants",
+      "exitCode": 0
+    },
+    {
+      "check": "test:safe-server-error",
+      "exitCode": 0
+    },
+    {
+      "check": "typecheck",
+      "exitCode": 0
+    },
+    {
+      "check": "lint",
+      "exitCode": 0
+    },
+    {
+      "check": "build",
+      "exitCode": 0
+    },
+    {
+      "check": "test:delivery-reliability",
+      "exitCode": 0
+    },
+    {
+      "check": "test:server-recovery",
+      "exitCode": 0
+    },
+    {
+      "check": "frontend:test:delivery-browser",
+      "exitCode": 0
+    },
+    {
+      "check": "frontend:typecheck",
+      "exitCode": 0
+    },
+    {
+      "check": "frontend:lint",
+      "exitCode": 0
+    },
+    {
+      "check": "frontend:build",
+      "exitCode": 0
+    },
+    {
+      "check": "git diff --check",
+      "exitCode": 0
+    }
+  ],
+  "sourcesUnchanged": [
+    {
+      "issue": 4,
+      "files": 22,
+      "unchanged": true
+    },
+    {
+      "issue": 5,
+      "files": 11,
+      "unchanged": true
+    },
+    {
+      "issue": 6,
+      "files": 10,
+      "unchanged": true
+    },
+    {
+      "issue": 7,
+      "files": 13,
+      "unchanged": true
+    }
+  ],
+  "caveats": [
+    "ブラウザーの未観測、保持COMMIT前の終了、記憶領域消去や報告前の終了は復旧保証不可。未報告から欠損なしと推定しない。",
+    "既存回答ドラフトは平文localStorage。観測キュー/操作キーには回答を追加していない。",
+    "検証Nodeプロセスが1回0xC0000409で終了。原因未特定。残存テストトリガー/プロセスがないことを確認し再実行は成功。",
+    "既存依存のnpm監査high 3件は本作業の範囲外。無関係なaudit fixは実施していない。"
+  ],
+  "retainedState": "全て未コミット。Issue/PR操作なし。検証API停止、今回作成した隔離DBコンテナーのみ削除済み。既存DB/元作業場所は変更なし。"
+}

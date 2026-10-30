@@ -1,0 +1,58 @@
+{
+  "branch": "codex/integrate-research-event-streams",
+  "existingDatabaseConnected": false,
+  "schemaChanges": false,
+  "newDisposableDatabaseOnly": true,
+  "changedExistingFiles": [
+    "backend\\src\\event-export-contract.ts",
+    "backend\\src\\event-export-dictionary.ts",
+    "backend\\src\\event-export-query.ts",
+    "backend\\src\\event-export-routes.ts",
+    "backend\\src\\event-export-service.ts",
+    "backend\\src\\scripts\\verify-event-export.ts",
+    "frontend\\tsconfig.tsbuildinfo",
+    "frontend\\scripts\\verify-event-export-browser.ts",
+    "frontend\\src\\App.tsx",
+    "frontend\\src\\design-system.css",
+    "frontend\\src\\EventExportPage.tsx",
+    "frontend\\src\\HomePage.tsx",
+    "docs\\research-event-export.md"
+  ],
+  "removedExistingFiles": [],
+  "newFiles": [
+    "frontend/src/EventTimeline.tsx",
+    "docs/research-event-viewer.md",
+    "docs/issue10-baseline.json",
+    "docs/issue10-results.json"
+  ],
+  "otherChangedFiles": [
+    "README.md"
+  ],
+  "checksPassed": [
+    "test:event-export (HTTP snapshot paging 3000 events, details, all outcomes, export identity, 401/403/400/404)",
+    "test:event-export-browser (real Edge, actual isolated API, filter/details/page/ZIP/UI denial)",
+    "test:event-export-samples",
+    "test:stage1:integration",
+    "test:research-event-schema",
+    "test:research-events",
+    "test:undo-redo:unit",
+    "test:map-mixed-history",
+    "backend typecheck/lint/build",
+    "frontend typecheck/lint/build",
+    "git diff --check"
+  ],
+  "limitations": [
+    "Initial search prepares the entire bounded temporary snapshot (120 seconds / 256MiB / 4 concurrent jobs). Pages are 25 events; offset index memory scales with event count.",
+    "15 minute expiration or server restart requires a new search.",
+    "Session-scoped pseudonym only; cross-session person mapping remains Issue #11.",
+    "Delivery status is latest session-wide reported/verified data, not a historical assertion for the selected event. No unobserved recovery inferred.",
+    "Production-scale performance and actual Excel application opening remain unverified. Secret-pattern detection is not complete."
+  ],
+  "preservation": {
+    "removedFiles": [],
+    "migrationsUnchanged": true,
+    "issue8CoreUnchanged": true,
+    "originalWorktreesEdited": false
+  },
+  "state": "Uncommitted; no branch switch/reset/stash/commit/PR/issue changes."
+}

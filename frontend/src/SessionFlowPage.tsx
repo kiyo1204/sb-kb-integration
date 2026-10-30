@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import {LearnerDeliveryStatus,ResearchDeliveryStatus} from "./DeliveryStatus";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, uiText } from "./auth-client";
+import { sendObservedLearningEvent, useObservedLearningScreen, type ObservedLearningEvent } from "./learning-events";
 import { LearnerAssessment, ResearchAssessment } from "./Assessment";
 import { ReadOnlyMapSnapshot, type HistoricalMapSnapshot } from "./MapPage";
 
@@ -125,9 +127,12 @@ function SessionDashboard({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activityLogWarning, setActivityLogWarning] = useState(false);
+  const noteActivityLogFailure = useCallback(() => setActivityLogWarning(true), []);
   const currentStageId = flow?.currentStage?.id;
   const currentStageStatus = flow?.currentStage?.status;
   const currentStageType = flow?.currentStage?.stageType;
+  useObservedLearningScreen(sessionId, currentStageId, undefined, isLearner && currentStageStatus === "IN_PROGRESS", noteActivityLogFailure);
   const studyExpired = flow?.session.protocolKey === "STAGE1_6" && currentStageType === "SELF_STUDY" && !!flow.currentStage?.startedAt && flow.session.groupActivitySeconds !== null && clock + serverOffset >= Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000;
   const integrationExpired = flow?.session.protocolKey === "STAGE1_6" && flow.session.studyGroup === "EXPERIMENTAL" && currentStageType === "INTEGRATION_MAP" && currentStageStatus === "IN_PROGRESS" && !!flow.currentStage?.startedAt && flow.session.groupActivitySeconds !== null && clock + serverOffset >= Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000;
 
@@ -276,7 +281,8 @@ function SessionDashboard({
     setBusy(true);
     setError(null);
     try {
-      await requestJson(`/api/session-stages/${flow.currentStage.id}/complete`, "POST", {});
+      const completion = await requestJson<{ logSaved?: boolean }>(`/api/session-stages/${flow.currentStage.id}/complete`, "POST", {});
+      if (completion.logSaved === false) noteActivityLogFailure();
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "活動を完了できませんでした。");
@@ -287,7 +293,8 @@ function SessionDashboard({
     setBusy(true);
     setError(null);
     try {
-      await requestJson(`/api/sessions/${sessionId}/start`, "POST", {});
+      const started = await requestJson<{ logSaved?: boolean }>(`/api/sessions/${sessionId}/start`, "POST", {});
+      if (started.logSaved === false) noteActivityLogFailure();
       await reload();
     } catch (startError) {
       setError(
@@ -306,7 +313,8 @@ function SessionDashboard({
     setBusy(true);
     setError(null);
     try {
-      await requestJson(`/api/session-stages/${stage.id}/start`, "POST", {});
+      const started = await requestJson<{ logSaved?: boolean }>(`/api/session-stages/${stage.id}/start`, "POST", {});
+      if (started.logSaved === false) noteActivityLogFailure();
       if (["LESSON", "SELF_STUDY", "PRE_ASSESSMENT", "POST_ASSESSMENT"].includes(stage.stageType)) {
         await reload();
         return;
@@ -382,7 +390,8 @@ function SessionDashboard({
     setBusy(true);
     setError(null);
     try {
-      await requestJson(`/api/session-stages/${stage.id}/complete`, "POST", {});
+      const completion = await requestJson<{ logSaved?: boolean }>(`/api/session-stages/${stage.id}/complete`, "POST", {});
+      if (completion.logSaved === false) noteActivityLogFailure();
       await reload();
     } catch (completeError) {
       setError(
@@ -438,7 +447,7 @@ function SessionDashboard({
       <section className="session-card" aria-labelledby="session-title">
         <h1 id="session-title">学習・再構成フロー</h1>
         {!isLearner && (
-          <p className="session-id">セッション ID: {flow.session.id}</p>
+          <p className="session-id">セッション ID: {flow.session.id} <a href={`/research/event-exports?sessionId=${sessionId}`}>研究イベントを絞り込み出力</a></p>
         )}
 
         {flow.session.status === "NOT_STARTED" && (
@@ -474,7 +483,7 @@ function SessionDashboard({
                   ? "続ける"
                   : "開始する"}
             </button>}
-            {(current.stageType === "PRE_ASSESSMENT" || current.stageType === "POST_ASSESSMENT") && current.status === "IN_PROGRESS" && <LearnerAssessment key={current.id} stageId={current.id} onSubmitted={reload} />}
+            {(current.stageType === "PRE_ASSESSMENT" || current.stageType === "POST_ASSESSMENT") && current.status === "IN_PROGRESS" && <LearnerAssessment sessionId={sessionId} key={current.id} stageId={current.id} onSubmitted={async (logSaved) => { if (!logSaved) noteActivityLogFailure(); await reload(); }} />}
             {timed && current.status === "IN_PROGRESS" && <div className="session-timed-activity">
               <p className="session-timer">残り時間: {remaining === null ? "取得中" : `${Math.floor(remaining / 60)}分${remaining % 60}秒`}</p>
               {current.stageType === "SELF_STUDY" && flow.session.studyGroup === "CONTROL" && isLearner && remaining === 0 && <p role="status">時間が終了しました。</p>}
@@ -494,9 +503,16 @@ function SessionDashboard({
               <>
                 <Stage1Video
                   url={flow.session.lessonVideoUrl}
+                  stageId={current.id}
                   confirmed={confirmedVideoViewed}
                   onConfirm={setConfirmedVideoViewed}
                   showHeading={!isLearner}
+                  onEvent={(event) => {
+                    if (!isLearner) return;
+                    void sendObservedLearningEvent(sessionId, event).then((saved) => {
+                      if (!saved) noteActivityLogFailure();
+                    });
+                  }}
                 />
                 <button
                   className={isLearner ? "session-primary-button" : "session-secondary-button"}
@@ -537,7 +553,9 @@ function SessionDashboard({
             <p>{current ? `現在は「${label(current)}」です。先に完了してください。` : "セッションを開始して、順番に進めてください。"}</p>
           </div>
         )}
+        {isLearner?<LearnerDeliveryStatus sessionId={sessionId}/>:<ResearchDeliveryStatus sessionId={sessionId}/>}
         {error && <p className="session-error" role="alert">{error}</p>}
+        {activityLogWarning && <p className="session-error" role="status">一部の操作記録の保存を確認できていません。送信状態を確認してください。</p>}
 
         {!isLearner && <section className="session-stage-list" aria-label="活動一覧">
           <h2>活動一覧</h2>
@@ -595,15 +613,21 @@ function SessionDashboard({
 
 function Stage1Video({
   url,
+  stageId,
   confirmed,
   onConfirm,
   showHeading,
+  onEvent,
 }: {
   url: string | null;
+  stageId: string;
   confirmed: boolean;
   onConfirm: (value: boolean) => void;
   showHeading: boolean;
+  onEvent: (event: Extract<ObservedLearningEvent, { targetType: "VIDEO" }>) => void;
 }) {
+  const lastPosition = useRef(0);
+  const seekFrom = useRef<number | null>(null);
   if (!url) return <p role="alert">授業動画が設定されていません。</p>;
   const youtube = url.match(
     /^(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})(?:[&#?].*)?$/,
@@ -616,7 +640,35 @@ function Stage1Video({
       {youtube ? (
         <iframe title="授業動画" className="stage1-video-player" src={`https://www.youtube-nocookie.com/embed/${youtube[1]}`} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
       ) : isMediaFile ? (
-        <video className="stage1-video-player" controls preload="metadata" src={url} />
+        <video
+          className="stage1-video-player"
+          controls
+          preload="metadata"
+          src={url}
+          onPlay={() => onEvent({ eventType: "VIDEO_PLAY", targetType: "VIDEO", stageId })}
+          onPause={(event) => {
+            if (!event.currentTarget.ended) onEvent({ eventType: "VIDEO_PAUSE", targetType: "VIDEO", stageId });
+          }}
+          onTimeUpdate={(event) => {
+            if (seekFrom.current === null) lastPosition.current = event.currentTarget.currentTime;
+          }}
+          onSeeking={() => {
+            if (seekFrom.current === null) seekFrom.current = lastPosition.current;
+          }}
+          onSeeked={(event) => {
+            const fromSeconds = seekFrom.current;
+            const toSeconds = event.currentTarget.currentTime;
+            seekFrom.current = null;
+            lastPosition.current = toSeconds;
+            if (fromSeconds !== null && Math.abs(toSeconds - fromSeconds) >= 0.25) {
+              onEvent({ eventType: "VIDEO_SEEK", targetType: "VIDEO", stageId, details: { fromSeconds, toSeconds } });
+            }
+          }}
+          onEnded={(event) => {
+            lastPosition.current = event.currentTarget.currentTime;
+            onEvent({ eventType: "VIDEO_COMPLETE", targetType: "VIDEO", stageId });
+          }}
+        />
       ) : (
         <a href={url} target="_blank" rel="noopener noreferrer">授業動画を開く（別タブ）</a>
       )}

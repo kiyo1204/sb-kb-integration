@@ -1,10 +1,14 @@
+import {verifyMockTestUrl} from "./mock-db.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { createLearnerToken, storeLearnerToken } from "../access-control.js";
 import { getSession } from "../sessions.js";
+import { insertResearchEvent } from "../research-events.js";
+import type { MapHistorySnapshot } from "../map-history.js";
 
 const apiBase=process.env.API_BASE_URL ?? "http://127.0.0.1:3000";
+await verifyMockTestUrl(process.env.DATABASE_URL ?? "");
 const pool=new Pool({connectionString:process.env.DATABASE_URL});
 const researcherToken=process.env.RESEARCHER_API_TOKEN ?? "";
 assert.ok(researcherToken && researcherToken.length>=32);
@@ -96,6 +100,12 @@ function canonicalHistory(state:ReplayState){
 }
 
 async function verifyMapHistory(sessionId:string,mapId:string){
+  const currentEvents = await pool.query<{eventType:string}>(`SELECT event_type AS "eventType" FROM research_events WHERE map_id=$1::uuid AND schema_version IN (2,5) ORDER BY sequence_number`,[mapId]);
+  if (currentEvents.rowCount) {
+    const mixed = await api<{status:string;reason?:string}>(`/research/sessions/${sessionId}/maps/${mapId}/mixed-history`,200);
+    assert.equal(mixed.status,"REPLAYABLE",mixed.reason);
+    return currentEvents.rows.map(event=>event.eventType);
+  }
   const first=await api<ReplayResponse>(
     `/research/stage1/sessions/${sessionId}/maps/${mapId}/history?sequenceNumber=0`,200);
   assert.equal(first.status,"REPLAYABLE");
@@ -224,8 +234,8 @@ async function runUndoRedo(mapId:string,action:"UNDO"|"REDO",idempotencyKey=rand
   const target=action==="UNDO"?state.undoOperation:state.redoOperation;
   assert.ok(target);
   const originalBefore=await pool.query<{id:string;operationType:string;before:unknown;after:unknown}>(
-    `SELECT id,operation_type AS "operationType",before,after
-     FROM map_operation_logs WHERE id=$1::uuid`,[target.id]);
+    `SELECT id,operation_type AS "operationType",before,after FROM map_operation_logs WHERE id=$1::uuid
+     UNION ALL SELECT event_id AS id,event_type AS "operationType",before_state AS before,after_state AS after FROM research_events WHERE event_id=$1::uuid`,[target.id]);
   assert.equal(originalBefore.rowCount,1);
   const result=await api<UndoRedoResponse>(`/maps/${mapId}/undo-redo`,200,"POST",{
     action,expectedSequenceNumber:state.sequenceNumber,idempotencyKey,
@@ -235,8 +245,8 @@ async function runUndoRedo(mapId:string,action:"UNDO"|"REDO",idempotencyKey=rand
   assert.equal(result.state.sequenceNumber,state.sequenceNumber+1);
   assert.equal(result.duplicate,false);
   const originalAfter=await pool.query<{id:string;operationType:string;before:unknown;after:unknown}>(
-    `SELECT id,operation_type AS "operationType",before,after
-     FROM map_operation_logs WHERE id=$1::uuid`,[target.id]);
+    `SELECT id,operation_type AS "operationType",before,after FROM map_operation_logs WHERE id=$1::uuid
+     UNION ALL SELECT event_id AS id,event_type AS "operationType",before_state AS before,after_state AS after FROM research_events WHERE event_id=$1::uuid`,[target.id]);
   assert.deepEqual(originalAfter.rows,originalBefore.rows,
     "Undo/Redo must leave the original event immutable.");
   return result;
@@ -387,6 +397,147 @@ async function run(){
     assert.equal(prior.sessionProtocolKey,"STAGE1_4");
     assert.deepEqual(prior.concepts.map(x=>x.label),["注意"]);
     assert.equal(prior.links.length,0);
+    const beforeLinkCancellation=prior;
+    const beforeCancelProgress=await pool.query<{sessionStatus:string;stageStatus:string;mapStatus:string}>(
+      `SELECT s.status AS "sessionStatus",st.status AS "stageStatus",m.status AS "mapStatus"
+       FROM maps m JOIN session_stages st ON st.id=m.session_stage_id
+       JOIN sessions s ON s.id=st.session_id WHERE m.id=$1::uuid`,[learner.id]);
+    await pool.query(`CREATE FUNCTION reject_test_cancel_event() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'private cancellation trigger detail'; END; $$ LANGUAGE plpgsql`);
+    await pool.query("CREATE TRIGGER reject_test_cancel_event BEFORE INSERT ON research_events FOR EACH ROW EXECUTE FUNCTION reject_test_cancel_event()");
+    try {
+      const failedCancellation=await fetch(`${apiBase}/api/maps/${learner.id}/operation-cancellations/ADD_LINK`,{
+        method:"POST",headers:{Authorization:`Bearer ${created.learnerAccessToken}`,"Idempotency-Key":randomUUID()},
+      });
+      assert.equal(failedCancellation.status,500);
+      const failedCancellationBody=await failedCancellation.json() as {operationOutcome:string;logSaved:boolean};
+      assert.equal(failedCancellationBody.operationOutcome,"CANCELLED");assert.equal(failedCancellationBody.logSaved,false);
+      assert.ok(!JSON.stringify(failedCancellationBody).includes("private cancellation trigger detail"));
+      assert.equal((await pool.query("SELECT 1 FROM map_history_boundaries WHERE map_id=$1::uuid",[learner.id])).rowCount,0);
+      assert.equal((await pool.query("SELECT 1 FROM research_events WHERE map_id=$1::uuid AND outcome='CANCELLED'",[learner.id])).rowCount,0);
+      const afterFailedCancellation=await api<MapData>(`/maps/${learner.id}`,200);
+      assert.deepEqual(afterFailedCancellation.concepts,beforeLinkCancellation.concepts);
+      assert.deepEqual(afterFailedCancellation.links,beforeLinkCancellation.links);
+      assert.deepEqual(await pool.query(
+        `SELECT s.status AS "sessionStatus",st.status AS "stageStatus",m.status AS "mapStatus"
+         FROM maps m JOIN session_stages st ON st.id=m.session_stage_id
+         JOIN sessions s ON s.id=st.session_id WHERE m.id=$1::uuid`,[learner.id]),beforeCancelProgress);
+    } finally {
+      await pool.query("DROP TRIGGER reject_test_cancel_event ON research_events");
+      await pool.query("DROP FUNCTION reject_test_cancel_event()");
+    }
+    const cancellationKey=randomUUID();
+    const cancelledResponse=await fetch(`${apiBase}/api/maps/${learner.id}/operation-cancellations/ADD_LINK`,{
+      method:"POST",headers:{Authorization:`Bearer ${created.learnerAccessToken}`,"Idempotency-Key":cancellationKey},
+    });
+    assert.equal(cancelledResponse.status,201);
+    const cancelled=await cancelledResponse.json() as {eventId:string;operationOutcome:string;logSaved:boolean};
+    assert.equal(cancelled.operationOutcome,"CANCELLED");assert.equal(cancelled.logSaved,true);
+    const duplicateCancelResponse=await fetch(`${apiBase}/api/maps/${learner.id}/operation-cancellations/ADD_LINK`,{
+      method:"POST",headers:{Authorization:`Bearer ${created.learnerAccessToken}`,"Idempotency-Key":cancellationKey},
+    });
+    assert.equal(duplicateCancelResponse.status,200);
+    const duplicateCancel=await duplicateCancelResponse.json() as {eventId:string};
+    assert.equal(duplicateCancel.eventId,cancelled.eventId);
+    const afterLinkCancellation=await api<MapData>(`/maps/${learner.id}`,200);
+    assert.deepEqual(afterLinkCancellation.concepts,beforeLinkCancellation.concepts);
+    assert.deepEqual(afterLinkCancellation.links,beforeLinkCancellation.links);
+    async function cancelStage1MapOperation(eventType:string,targetId?:string,targetMapId=learner.id,idempotencyKey=randomUUID()) {
+      const targetPath=targetId?`/${targetId}`:"";
+      const response=await fetch(`${apiBase}/api/maps/${targetMapId}/operation-cancellations/${eventType}${targetPath}`,{
+        method:"POST",headers:{Authorization:`Bearer ${created.learnerAccessToken}`,"Idempotency-Key":idempotencyKey},
+      });
+      return {response,body:await response.json() as {eventId?:string;operationOutcome?:string;logSaved?:boolean}};
+    }
+    for(const [eventType,targetId] of [
+      ["ADD_CONCEPT",undefined],
+      ["EDIT_CONCEPT",prior.concepts[0]!.id],
+      ["DELETE_CONCEPT",prior.concepts[0]!.id],
+      ["MAP_SUBMIT",undefined],
+    ] as const) {
+      const cancelledOperation=await cancelStage1MapOperation(eventType,targetId);
+      assert.equal(cancelledOperation.response.status,201,eventType);
+      assert.equal(cancelledOperation.body.operationOutcome,"CANCELLED");
+      assert.equal(cancelledOperation.body.logSaved,true);
+      const savedCancel=await pool.query<{eventType:string;outcome:string;reasonCode:string;targetId:string|null;beforeState:unknown;afterState:unknown}>(
+        `SELECT event_type AS "eventType",outcome,reason_code AS "reasonCode",target_id AS "targetId",
+           before_state AS "beforeState",after_state AS "afterState"
+         FROM research_events WHERE event_id=$1::uuid`,[cancelledOperation.body.eventId]);
+      assert.deepEqual(savedCancel.rows[0],{
+        eventType,outcome:"CANCELLED",reasonCode:"USER_CANCELLED",
+        targetId:targetId??(eventType==="MAP_SUBMIT"?learner.id:null),beforeState:null,afterState:null,
+      });
+    }
+    const submitCancelKey=randomUUID();
+    const firstSubmitCancel=await cancelStage1MapOperation("MAP_SUBMIT",undefined,learner.id,submitCancelKey);
+    const duplicateSubmitCancel=await cancelStage1MapOperation("MAP_SUBMIT",undefined,learner.id,submitCancelKey);
+    assert.equal(firstSubmitCancel.response.status,201);
+    assert.equal(duplicateSubmitCancel.response.status,200);
+    assert.equal(duplicateSubmitCancel.body.eventId,firstSubmitCancel.body.eventId);
+    const conflictingSubmitCancelKey=await fetch(`${apiBase}/api/maps/${learner.id}/operation-cancellations/EDIT_CONCEPT/${prior.concepts[0]!.id}`,{
+      method:"POST",headers:{Authorization:`Bearer ${created.learnerAccessToken}`,"Idempotency-Key":submitCancelKey},
+    });
+    assert.equal(conflictingSubmitCancelKey.status,409);
+    const afterOtherCancellations=await api<MapData>(`/maps/${learner.id}`,200);
+    assert.deepEqual(afterOtherCancellations.concepts,beforeLinkCancellation.concepts);
+    assert.deepEqual(afterOtherCancellations.links,beforeLinkCancellation.links);
+    assert.equal(afterOtherCancellations.status,"DRAFT");
+    assert.deepEqual(await pool.query(
+      `SELECT s.status AS "sessionStatus",st.status AS "stageStatus",m.status AS "mapStatus"
+       FROM maps m JOIN session_stages st ON st.id=m.session_stage_id
+       JOIN sessions s ON s.id=st.session_id WHERE m.id=$1::uuid`,[learner.id]),beforeCancelProgress);
+    const beforeRejectedMapOperation=await api<MapData>(`/maps/${learner.id}`,200);
+    const rejectedMapOperation=await api<{operationOutcome:string;logSaved:boolean}>(
+      `/maps/${learner.id}/concepts`,400,"POST",{label:"https://private.example",positionX:20,positionY:20});
+    assert.equal(rejectedMapOperation.operationOutcome,"REJECTED");assert.equal(rejectedMapOperation.logSaved,true);
+    const afterRejectedMapOperation=await api<MapData>(`/maps/${learner.id}`,200);
+    assert.deepEqual(afterRejectedMapOperation.concepts,beforeRejectedMapOperation.concepts);
+    assert.deepEqual(afterRejectedMapOperation.links,beforeRejectedMapOperation.links);
+    await pool.query(`CREATE FUNCTION reject_stage1_concept_insert() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'private mutation failure detail'; END; $$ LANGUAGE plpgsql`);
+    await pool.query("CREATE TRIGGER reject_stage1_concept_insert BEFORE INSERT ON concepts FOR EACH ROW EXECUTE FUNCTION reject_stage1_concept_insert()");
+    try {
+      const failedMapOperation=await fetch(`${apiBase}/api/maps/${learner.id}/concepts`,{
+        method:"POST",headers:{Authorization:`Bearer ${created.learnerAccessToken}`,"Content-Type":"application/json"},
+        body:JSON.stringify({label:"private failed input",positionX:30,positionY:30}),
+      });
+      assert.equal(failedMapOperation.status,500);
+      const failedMapBody=await failedMapOperation.json() as {operationOutcome:string;logSaved:boolean};
+      assert.equal(failedMapBody.operationOutcome,"FAILURE");assert.equal(failedMapBody.logSaved,true);
+      assert.ok(!JSON.stringify(failedMapBody).includes("private mutation failure detail"));
+      assert.ok(!JSON.stringify(failedMapBody).includes("private failed input"));
+      const failureEvent=await pool.query<{reasonCode:string;beforeState:unknown;afterState:unknown;details:unknown}>(
+        `SELECT reason_code AS "reasonCode",before_state AS "beforeState",after_state AS "afterState",details
+         FROM research_events WHERE map_id=$1::uuid AND event_type='ADD_CONCEPT' AND outcome='FAILURE'`,[learner.id]);
+      assert.equal(failureEvent.rowCount,1);assert.equal(failureEvent.rows[0]!.reasonCode,"SERVER");
+      assert.equal(failureEvent.rows[0]!.beforeState,null);assert.equal(failureEvent.rows[0]!.afterState,null);
+      assert.deepEqual(failureEvent.rows[0]!.details,{});
+      const afterFailedMapOperation=await api<MapData>(`/maps/${learner.id}`,200);
+      assert.deepEqual(afterFailedMapOperation.concepts,beforeRejectedMapOperation.concepts);
+      assert.deepEqual(afterFailedMapOperation.links,beforeRejectedMapOperation.links);
+    } finally {
+      await pool.query("DROP TRIGGER reject_stage1_concept_insert ON concepts");
+      await pool.query("DROP FUNCTION reject_stage1_concept_insert()");
+    }
+    const invalidCancelType=await fetch(`${apiBase}/api/maps/${learner.id}/operation-cancellations/SESSION_CREATE`,{
+      method:"POST",headers:{Authorization:`Bearer ${created.learnerAccessToken}`},
+    });
+    assert.equal(invalidCancelType.status,400);
+    const invalidCancelTarget=await fetch(`${apiBase}/api/maps/${learner.id}/operation-cancellations/EDIT_CONCEPT/${randomUUID()}`,{
+      method:"POST",headers:{Authorization:`Bearer ${created.learnerAccessToken}`},
+    });
+    assert.equal(invalidCancelTarget.status,404);
+    const cancelEvent=await pool.query<{eventType:string;outcome:string;reasonCode:string;actorType:string;targetId:string|null;beforeState:unknown;afterState:unknown}>(
+      `SELECT event_type AS "eventType",outcome,reason_code AS "reasonCode",actor_type AS "actorType",
+         target_id AS "targetId",before_state AS "beforeState",after_state AS "afterState"
+       FROM research_events WHERE event_id=$1::uuid`,[cancelled.eventId]);
+    assert.deepEqual(cancelEvent.rows[0],{eventType:"ADD_LINK",outcome:"CANCELLED",reasonCode:"USER_CANCELLED",
+      actorType:"LEARNER",targetId:null,beforeState:null,afterState:null});
+    currentToken=researcherToken;
+    const cancelReplay=await api<{status:string;reason?:string}>(
+      `/research/sessions/${created.id}/maps/${learner.id}/mixed-history`,200);
+    assert.equal(cancelReplay.status,"REPLAYABLE",cancelReplay.reason);
+    currentToken=created.learnerAccessToken;
     const anchor=prior.concepts[0];
     const added=await api<{id:string}>(`/maps/${learner.id}/concepts`,201,"POST",
       {label:"学習者が作った概念",positionX:500,positionY:220});
@@ -525,12 +676,14 @@ async function run(){
     const cascadeLink=await api<{id:string}>(`/maps/${learner.id}/links`,201,"POST",
       {label:"削除される関係",sourceConceptId:added.id,targetConceptId:toDelete.id});
     await api(`/concepts/${toDelete.id}`,200,"DELETE",{});
-    const deleted=await pool.query<{id:string;before:{concept:{id:string};incidentLinks:Array<{id:string}>}}>(
-      `SELECT id,before FROM map_operation_logs
-       WHERE map_id=$1::uuid AND operation_type='DELETE_CONCEPT'
+    const deleted=await pool.query<{id:string;before:{concepts:Array<{id:string}>;links:Array<{id:string}>};after:{concepts:Array<{id:string}>;links:Array<{id:string}>}}>(
+      `SELECT event_id AS id,before_state AS before,after_state AS after FROM research_events
+       WHERE map_id=$1::uuid AND event_type='DELETE_CONCEPT'
        ORDER BY sequence_number DESC LIMIT 1`,[learner.id]);
-    assert.equal(deleted.rows[0]?.before.concept.id,toDelete.id);
-    assert.equal(deleted.rows[0]?.before.incidentLinks[0]?.id,cascadeLink.id);
+    assert.ok(deleted.rows[0]?.before.concepts.some(item=>item.id===toDelete.id));
+    assert.ok(deleted.rows[0]?.before.links.some(item=>item.id===cascadeLink.id));
+    assert.ok(!deleted.rows[0]?.after.concepts.some(item=>item.id===toDelete.id));
+    assert.ok(!deleted.rows[0]?.after.links.some(item=>item.id===cascadeLink.id));
     const cascadeConceptProvenance=await pool.query<{id:string}>(
       `SELECT id FROM concept_provenance WHERE target_concept_id=$1::uuid`,[toDelete.id]);
     await runUndoRedo(learner.id,"UNDO");
@@ -569,6 +722,21 @@ async function run(){
     const kbBefore=await api<MapData>(`/maps/${kb.id}`,200);
     assert.equal(kbBefore.links.length,0);
     assert.equal(kbBefore.concepts.length,0);
+    const kitLinkCancellation=await fetch(`${apiBase}/api/maps/${kb.id}/operation-cancellations/IMPORT_KIT_LINK`,{
+      method:"POST",headers:{Authorization:`Bearer ${created.learnerAccessToken}`,"Idempotency-Key":randomUUID()},
+    });
+    assert.equal(kitLinkCancellation.status,201);
+    const cancelledKitLink=await kitLinkCancellation.json() as {eventId:string;operationOutcome:string;logSaved:boolean};
+    assert.equal(cancelledKitLink.operationOutcome,"CANCELLED");assert.equal(cancelledKitLink.logSaved,true);
+    const kbAfterCancel=await api<MapData>(`/maps/${kb.id}`,200);
+    assert.deepEqual(kbAfterCancel.concepts,kbBefore.concepts);
+    assert.deepEqual(kbAfterCancel.links,kbBefore.links);
+    const kitCancelEvent=await pool.query<{eventType:string;outcome:string;reasonCode:string;targetId:string|null;beforeState:unknown;afterState:unknown}>(
+      `SELECT event_type AS "eventType",outcome,reason_code AS "reasonCode",target_id AS "targetId",
+         before_state AS "beforeState",after_state AS "afterState"
+       FROM research_events WHERE event_id=$1::uuid`,[cancelledKitLink.eventId]);
+    assert.deepEqual(kitCancelEvent.rows[0],{eventType:"IMPORT_KIT_LINK",outcome:"CANCELLED",
+      reasonCode:"USER_CANCELLED",targetId:null,beforeState:null,afterState:null});
     const logsBeforeKitFeedback=await pool.query<{count:number}>(
       `SELECT count(*)::int AS count FROM map_operation_logs WHERE map_id=$1::uuid`,[kb.id]);
     const emptyKitFeedback=await api<KitBuildFeedback>(`/maps/${kb.id}/kit-feedback`,200);
@@ -589,9 +757,9 @@ async function run(){
         {positionX:150+i*200,positionY:170}));
     }
     const kbImports=await pool.query<{targetId:string;afterId:string}>(
-      `SELECT target_id AS "targetId", after->>'id' AS "afterId"
-       FROM map_operation_logs
-       WHERE map_id=$1 AND operation_type='IMPORT_KIT_CONCEPT'
+      `SELECT target_id AS "targetId", (SELECT item->>'id' FROM jsonb_array_elements(after_state->'concepts') item WHERE item->>'id'=target_id::text) AS "afterId"
+       FROM research_events
+       WHERE map_id=$1 AND event_type='IMPORT_KIT_CONCEPT'
        ORDER BY sequence_number`,[kb.id]);
     assert.deepEqual(kbImports.rows.map(row=>row.targetId),materialized.map(item=>item.id));
     assert.ok(kbImports.rows.every(row=>row.targetId===row.afterId));
@@ -643,7 +811,19 @@ async function run(){
     await startStage(created,"INTEGRATION_MAP");
     const integration=await api<MapData>(`/session-stages/${stage(created,"INTEGRATION_MAP").id}/integration-map`,201,"POST");
     assert.equal(integration.basedOnMapId,null);
+    const integrationBeforeMergeCancel=await api<MapData>(`/maps/${integration.id}`,200);
+    const mergeCancelResponse=await fetch(`${apiBase}/api/maps/${integration.id}/operation-cancellations/MERGE_CONCEPT`,{
+      method:"POST",headers:{Authorization:`Bearer ${created.learnerAccessToken}`,"Idempotency-Key":randomUUID()},
+    });
+    assert.equal(mergeCancelResponse.status,201);
+    const mergeCancel=await mergeCancelResponse.json() as {eventId:string;operationOutcome:string;logSaved:boolean};
+    assert.equal(mergeCancel.operationOutcome,"CANCELLED");assert.equal(mergeCancel.logSaved,true);
+    const integrationAfterMergeCancel=await api<MapData>(`/maps/${integration.id}`,200);
+    assert.deepEqual(integrationAfterMergeCancel.concepts,integrationBeforeMergeCancel.concepts);
+    assert.deepEqual(integrationAfterMergeCancel.links,integrationBeforeMergeCancel.links);
+    assert.equal(integrationAfterMergeCancel.status,"DRAFT");
     await api(`/research/stage1/sessions/${created.id}/maps/${integration.id}/history?sequenceNumber=0`,403);
+    await api(`/research/sessions/${created.id}/maps/${integration.id}/mixed-history`,403);
     await api(`/maps/${integration.id}/kit-definition`,200,"PATCH",
       {kitDefinitionId:kitId});
     const current=await api<MapData>(`/maps/${integration.id}`,200);
@@ -657,6 +837,16 @@ async function run(){
       `/maps/${integration.id}/links`,201,"POST",{
         label:"一時的な関係",sourceConceptId:temporary.id,targetConceptId:current.concepts[0].id,
       });
+    const beforeLinkEditCancellations=await api<MapData>(`/maps/${integration.id}`,200);
+    for(const eventType of ["EDIT_LINK","RECONNECT_LINK","DELETE_LINK"] as const) {
+      const cancelledOperation=await cancelStage1MapOperation(eventType,movableLink.id,integration.id);
+      assert.equal(cancelledOperation.response.status,201,eventType);
+      assert.equal(cancelledOperation.body.operationOutcome,"CANCELLED");
+      assert.equal(cancelledOperation.body.logSaved,true);
+    }
+    const afterLinkEditCancellations=await api<MapData>(`/maps/${integration.id}`,200);
+    assert.deepEqual(afterLinkEditCancellations.concepts,beforeLinkEditCancellations.concepts);
+    assert.deepEqual(afterLinkEditCancellations.links,beforeLinkEditCancellations.links);
     await api(`/links/${movableLink.id}/label`,200,"PATCH",{label:"編集した一時関係"});
     await api(`/concepts/${temporary.id}/position`,200,"PATCH",{
       positionX:1110,positionY:420,
@@ -782,12 +972,60 @@ async function run(){
     assert.equal(flow.session.status,"COMPLETED");
     assert.equal(flow.currentStage,null);
     currentToken=researcherToken;
+    for (const item of [learner, kb, integration]) {
+      const verified = await api<{status:string;reason?:string;state:ReplayState;newApplied:number}>(`/research/sessions/${created.id}/maps/${item.id}/mixed-history`,200);
+      assert.equal(verified.status,"REPLAYABLE",verified.reason);
+      assert.ok(verified.newApplied > 0);
+      assert.equal(verified.state.mapId,item.id);
+      const saved = await pool.query<{count:number}>("SELECT count(*)::int AS count FROM map_operation_logs WHERE map_id=$1::uuid",[item.id]);
+      assert.equal(saved.rows[0]?.count,0);
+    }
     const priorReplayTypes=await verifyMapHistory(created.id,learner.id);
     const kbReplayTypes=await verifyMapHistory(created.id,kb.id);
     const integrationReplayTypes=await verifyMapHistory(created.id,integration.id);
+    for (const item of [learner, kb, integration]) {
+      const mixed = await api<{status:string;reason?:string;state:ReplayState}>(`/research/sessions/${created.id}/maps/${item.id}/mixed-history`, 200);
+      assert.equal(mixed.status,"REPLAYABLE",mixed.reason);
+      assert.equal(mixed.state.mapId,item.id);
+    }
+    const beforeBoundary = await api<{status:string;state:MapHistorySnapshot}>(`/research/sessions/${created.id}/maps/${learner.id}/mixed-history`,200);
+    assert.equal(beforeBoundary.status,"REPLAYABLE");
+    const setupBoundary = await pool.connect();
+    try {
+      await setupBoundary.query("BEGIN");
+      await setupBoundary.query("SELECT id FROM maps WHERE id=$1::uuid FOR UPDATE",[learner.id]);
+      const old = await setupBoundary.query<{id:string}>("SELECT id FROM map_operation_logs WHERE map_id=$1::uuid ORDER BY sequence_number",[learner.id]);
+      const existingBoundary = await setupBoundary.query("SELECT 1 FROM map_history_boundaries WHERE map_id=$1::uuid",[learner.id]);
+      if (!existingBoundary.rowCount) {
+        await setupBoundary.query("INSERT INTO map_history_boundaries(map_id,legacy_count,legacy_last_id,boundary_snapshot) VALUES($1::uuid,$2,$3::uuid,$4::jsonb)",[learner.id,old.rows.length,old.rows.at(-1)?.id ?? null,JSON.stringify(beforeBoundary.state)]);
+        assert.ok(await insertResearchEvent(setupBoundary,created.id,"SYSTEM",{schemaVersion:2,eventType:"MAP_SAVE",targetType:"MAP",mapId:learner.id,outcome:"SUCCESS",clientTimeQuality:"NOT_APPLICABLE",before:beforeBoundary.state,after:beforeBoundary.state}));
+      }
+      await setupBoundary.query("COMMIT");
+    } catch (error) { await setupBoundary.query("ROLLBACK"); throw error; }
+    finally { setupBoundary.release(); }
+    const afterBoundary = await api<{status:string;newApplied:number;state:MapHistorySnapshot}>(`/research/sessions/${created.id}/maps/${learner.id}/mixed-history`,200);
+    assert.equal(afterBoundary.status,"REPLAYABLE");
+    assert.ok(afterBoundary.newApplied>=1);
+    const boundaryUndo = await api<{status:string;canUndo:boolean;canRedo:boolean}>(`/maps/${learner.id}/undo-redo`,200);
+    assert.equal(boundaryUndo.status,"AVAILABLE");
+    assert.equal(boundaryUndo.canUndo,false);
+    assert.equal(boundaryUndo.canRedo,false);
+    const corrupted = structuredClone(afterBoundary.state);
+    assert.ok(corrupted.concepts[0]);
+    corrupted.concepts[0].positionX += 10;
+    const mismatchClient = await pool.connect();
+    try {
+      await mismatchClient.query("BEGIN");
+      assert.ok(await insertResearchEvent(mismatchClient,created.id,"SYSTEM",{schemaVersion:2,eventType:"MOVE_CONCEPT",targetType:"CONCEPT",targetId:corrupted.concepts[0].id,mapId:learner.id,outcome:"SUCCESS",clientTimeQuality:"NOT_APPLICABLE",before:afterBoundary.state,after:corrupted}));
+      await mismatchClient.query("COMMIT");
+    } catch (error) { await mismatchClient.query("ROLLBACK"); throw error; }
+    finally { mismatchClient.release(); }
+    const mismatch = await api<{status:string;reason:string;state:null}>(`/research/sessions/${created.id}/maps/${learner.id}/mixed-history`,200);
+    assert.equal(mismatch.status,"PARTIAL");
+    assert.equal(mismatch.state,null);
     const moveEvents=await pool.query<{count:number}>(
-      `SELECT count(*)::int AS count FROM map_operation_logs
-       WHERE map_id=$1::uuid AND operation_type='MOVE_CONCEPT' AND target_id=$2::uuid`,
+      `SELECT count(*)::int AS count FROM research_events
+       WHERE map_id=$1::uuid AND event_type='MOVE_CONCEPT' AND target_id=$2::uuid`,
       [integration.id,temporary.id]);
     assert.equal(moveEvents.rows[0]?.count,1,
       "A completed Concept move should create one MOVE_CONCEPT event.");
@@ -803,6 +1041,9 @@ async function run(){
       session:{protocolKey:string};
       maps:Array<{type:string;researchRole:string;operationLogs:Array<{
         id:string;operationType:string;relatedOperationLogId:string|null;
+        historySource?:string;schemaVersion?:number;eventType?:string;sequenceNumber:string;
+        relatedEventId?:string|null;relatedLegacyOperationLogId?:string|null;
+        outcome?:string;
       }>;
         historySnapshotVersion:number|null;initialSnapshot:ReplayState|null}>;
       stages:unknown[];
@@ -817,11 +1058,46 @@ async function run(){
     const undoRedoExports=exportedOperations.filter(operation=>
       operation.operationType==="UNDO"||operation.operationType==="REDO");
     assert.ok(undoRedoExports.length>0);
+    assert.ok(exportedOperations.some(op=>op.historySource==="EVENT"&&[2,5].includes(op.schemaVersion??0)));
+    assert.ok(exportedOperations.some(op=>op.eventType==="ADD_LINK"&&op.outcome==="CANCELLED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="IMPORT_KIT_LINK"&&op.outcome==="CANCELLED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="ADD_CONCEPT"&&op.outcome==="CANCELLED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="EDIT_CONCEPT"&&op.outcome==="CANCELLED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="DELETE_CONCEPT"&&op.outcome==="CANCELLED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="EDIT_LINK"&&op.outcome==="CANCELLED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="RECONNECT_LINK"&&op.outcome==="CANCELLED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="DELETE_LINK"&&op.outcome==="CANCELLED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="MERGE_CONCEPT"&&op.outcome==="CANCELLED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="MAP_SUBMIT"&&op.outcome==="CANCELLED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="ADD_CONCEPT"&&op.outcome==="REJECTED"));
+    assert.ok(exportedOperations.some(op=>op.eventType==="ADD_CONCEPT"&&op.outcome==="FAILURE"));
+    assert.ok(exportedOperations.some(op=>op.operationType==="MAP_SUBMIT"));
+    assert.ok(exportData.maps.every(m=>m.operationLogs.every((op,index)=>Number(op.sequenceNumber)===index+1)));
+    const integratedHistory=exportData.maps.find(m=>m.researchRole==="integration_map")!;
+    const finalHistory=await api<{status:string;afterState:{mapId:string}}>(
+      `/research/stage1/sessions/${created.id}/maps/${integration.id}/history?sequenceNumber=${integratedHistory.operationLogs.length}`,200);
+    assert.equal(finalHistory.status,"REPLAYABLE");
+    assert.equal(finalHistory.afterState.mapId,integration.id);
+    const mergeCancellationSequence=integratedHistory.operationLogs.findIndex(operation=>
+      operation.eventType==="MERGE_CONCEPT"&&operation.outcome==="CANCELLED")+1;
+    assert.ok(mergeCancellationSequence>0);
+    const cancelledOperationHistory=await api<{
+      status:string;operation:{outcome?:string}|null;beforeState:ReplayState;afterState:ReplayState;
+    }>(`/research/stage1/sessions/${created.id}/maps/${integration.id}/history?sequenceNumber=${mergeCancellationSequence}`,200);
+    assert.equal(cancelledOperationHistory.status,"REPLAYABLE");
+    assert.equal(cancelledOperationHistory.operation?.outcome,"CANCELLED");
+    assert.deepEqual(cancelledOperationHistory.beforeState,cancelledOperationHistory.afterState);
     for(const operation of undoRedoExports){
-      assert.ok(operation.relatedOperationLogId);
-      assert.ok(exportedById.has(operation.relatedOperationLogId));
-      assert.notEqual(exportedById.get(operation.relatedOperationLogId)?.operationType,"UNDO");
-      assert.notEqual(exportedById.get(operation.relatedOperationLogId)?.operationType,"REDO");
+      if(operation.historySource==="EVENT"&&operation.outcome!=="SUCCESS") {
+        assert.equal(operation.relatedEventId??operation.relatedLegacyOperationLogId??null,null);
+        continue;
+      }
+      const related=operation.historySource==="EVENT"?
+        operation.relatedEventId??operation.relatedLegacyOperationLogId:operation.relatedOperationLogId;
+      assert.ok(related);
+      assert.ok(exportedById.has(related));
+      assert.notEqual(exportedById.get(related)?.operationType,"UNDO");
+      assert.notEqual(exportedById.get(related)?.operationType,"REDO");
     }
 
     const analysis=await api<{
@@ -871,9 +1147,13 @@ async function run(){
       snapshotSide:"CURRENT",category:"P",rationale:"要検討のため暫定分類",
     });
     await api(`/research/stage1/sessions/${created.id}/evaluations`,201,"POST",{
-      mapId:learner.id,linkId:cascadeLink.id,operationLogId:deleted.rows[0].id,
+      mapId:learner.id,linkId:cascadeLink.id,eventId:deleted.rows[0].id,
       evaluatorCode:"R1",snapshotSide:"BEFORE",category:"U",
       rationale:"削除時に巻き込まれた命題の記録",
+    });
+    await api(`/research/stage1/sessions/${created.id}/evaluations`,404,"POST",{
+      mapId:integration.id,linkId:cascadeLink.id,eventId:deleted.rows[0].id,
+      evaluatorCode:"R1",snapshotSide:"BEFORE",category:"U",rationale:"別マップの参照",
     });
     await api(`/research/stage1/sessions/${created.id}/reflections`,201,"POST",{
       mapId:integration.id,reportedByCode:"R1",
@@ -883,12 +1163,16 @@ async function run(){
     const undoOperation=analysis.operations.find(operation=>operation.operationType==="UNDO");
     assert.ok(undoOperation);
     await api(`/research/stage1/sessions/${created.id}/reflections`,201,"POST",{
-      mapId:undoOperation.mapId,operationLogId:undoOperation.id,reportedByCode:"R1",
+      mapId:undoOperation.mapId,eventId:undoOperation.id,reportedByCode:"R1",
       noteText:"Undo時点のMap状態についての分析メモ",
+    });
+    await api(`/research/stage1/sessions/${created.id}/reflections`,404,"POST",{
+      mapId:undoOperation.mapId===learner.id?integration.id:learner.id,
+      eventId:undoOperation.id,reportedByCode:"R1",noteText:"別マップの参照",
     });
     const checked=await api<{
       propositionEvaluations:Array<{linkId:string;subjectSnapshot:{id:string};snapshotSide:string}>;
-      reflectionNotes:Array<{operationLogId:string|null;noteText:string}>;
+      reflectionNotes:Array<{operationLogId:string|null;eventId:string|null;noteText:string}>;
     }>(
       `/research/stage1/sessions/${created.id}/analysis`,200);
     assert.equal(checked.propositionEvaluations.length,2);
@@ -897,7 +1181,7 @@ async function run(){
       e.snapshotSide==="BEFORE"));
     assert.equal(checked.reflectionNotes.length,2);
     assert.ok(checked.reflectionNotes.some(note=>
-      note.operationLogId===undoOperation.id&&note.noteText.includes("Undo時点")));
+      note.eventId===undoOperation.id&&note.noteText.includes("Undo時点")));
     for (const [suffix,expected] of [
       ["evaluations.csv","P"],
       ["reflections.csv","操作していない関係"],
@@ -916,6 +1200,42 @@ async function run(){
     assert.ok(csv.includes("IMPORT_KIT_LINK"));
     assert.ok(csv.includes(created.id));
     assert.ok(csv.includes("sequenceNumber"));
+    const legacyFixture=await pool.query<{sessionId:string;mapId:string;linkId:string;logId:string}>(
+      `WITH s AS (INSERT INTO sessions(protocol_key,participant_code,lesson_video_url,research_kit_definition_id,status,started_at,completed_at)
+         VALUES('STAGE1_4',$1,'/test.mp4',$2::uuid,'COMPLETED',now(),now()) RETURNING id),
+       st AS (INSERT INTO session_stages(session_id,stage_type,order_index) SELECT id,'PRIOR_MAP',0 FROM s RETURNING id,session_id),
+       m AS (INSERT INTO maps(type,status,session_stage_id,submitted_at) SELECT 'PRIOR','SUBMITTED',id,now() FROM st RETURNING id),
+       a AS (INSERT INTO concepts(map_id,label,position_x,position_y) SELECT id,'A',0,0 FROM m RETURNING id,map_id),
+       b AS (INSERT INTO concepts(map_id,label,position_x,position_y) SELECT id,'B',1,0 FROM m RETURNING id,map_id),
+       l AS (INSERT INTO links(map_id,source_concept_id,target_concept_id,label) SELECT a.map_id,a.id,b.id,'旧関係' FROM a,b RETURNING id,map_id,source_concept_id,target_concept_id,label),
+       op AS (INSERT INTO map_operation_logs(map_id,operation_type,target_type,target_id,after,sequence_number)
+         SELECT map_id,'ADD_LINK','LINK',id,jsonb_build_object('id',id,'mapId',map_id,'sourceConceptId',source_concept_id,'targetConceptId',target_concept_id,'label',label),1 FROM l RETURNING id)
+       SELECT (SELECT id FROM s) AS "sessionId",(SELECT id FROM m) AS "mapId",(SELECT id FROM l) AS "linkId",(SELECT id FROM op) AS "logId"`,
+      [`legacy-annotation-${randomUUID()}`,kitId]);
+    const oldRef=legacyFixture.rows[0]!;
+    await api(`/research/stage1/sessions/${oldRef.sessionId}/evaluations`,201,"POST",{
+      mapId:oldRef.mapId,linkId:oldRef.linkId,operationLogId:oldRef.logId,
+      evaluatorCode:"R1",snapshotSide:"AFTER",category:"P",rationale:"旧履歴を参照",
+    });
+    await api(`/research/stage1/sessions/${oldRef.sessionId}/reflections`,201,"POST",{
+      mapId:oldRef.mapId,operationLogId:oldRef.logId,reportedByCode:"R1",noteText:"旧履歴のメモ",
+    });
+    const preserved=await pool.query<{operationLogId:string;eventId:string|null}>(
+      `SELECT operation_log_id AS "operationLogId",event_id AS "eventId"
+       FROM research_proposition_evaluations WHERE session_id=$1::uuid`,[oldRef.sessionId]);
+    assert.equal(preserved.rows[0]?.operationLogId,oldRef.logId);
+    assert.equal(preserved.rows[0]?.eventId,null);
+    const preservedNote=await pool.query<{operationLogId:string;eventId:string|null}>(
+      `SELECT operation_log_id AS "operationLogId",event_id AS "eventId"
+       FROM research_reflection_notes WHERE session_id=$1::uuid`,[oldRef.sessionId]);
+    assert.equal(preservedNote.rows[0]?.operationLogId,oldRef.logId);
+    assert.equal(preservedNote.rows[0]?.eventId,null);
+    const learnerExport=await fetch(`${apiBase}/api/research/sessions/${created.id}/export`,
+      {headers:{Authorization:`Bearer ${created.learnerAccessToken}`}});
+    assert.equal(learnerExport.status,403);
+    const learnerAnalysis=await fetch(`${apiBase}/api/research/stage1/sessions/${created.id}/analysis`,
+      {headers:{Authorization:`Bearer ${created.learnerAccessToken}`}});
+    assert.equal(learnerAnalysis.status,403);
     assert.ok(link.id);
     await pool.query("DELETE FROM map_initial_snapshots WHERE map_id=$1::uuid",[kb.id]);
     const unavailableHistory=await api<ReplayResponse & {reason:string}>(

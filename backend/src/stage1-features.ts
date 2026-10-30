@@ -24,7 +24,7 @@ export function deriveStage1Features(raw: SessionRawExport) {
   const undoEvents = maps.reduce((count,map)=>count+numberOf(map,"UNDO"),0);
   const redoEvents = maps.reduce((count,map)=>count+numberOf(map,"REDO"),0);
   const ordinaryEditEvents = maps.reduce((count,map)=>count+
-    (map.operationLogs?.filter(event=>event.operationType!=="UNDO"&&event.operationType!=="REDO").length??0),0);
+    (map.operationLogs?.filter(event=>!new Set(["UNDO","REDO","MAP_SAVE","MAP_KIT_ASSIGN","MAP_SUBMIT","MAP_AUTO_SUBMIT"]).has(event.operationType)).length??0),0);
   const kit = (raw.kitDefinitions as Kit[]).find(
     k => k.id === raw.session.researchKitDefinitionId,
   );

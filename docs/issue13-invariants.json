@@ -1,0 +1,153 @@
+{
+  "migrations": [
+    {
+      "name": "1790890000000_create_research_events"
+    },
+    {
+      "name": "1790900000000_allow_research_event_schema_v2"
+    },
+    {
+      "name": "1790910000000_create_map_history_boundaries"
+    },
+    {
+      "name": "1790920000000_add_event_legacy_reference"
+    },
+    {
+      "name": "1790930000000_add_research_annotation_event_refs"
+    },
+    {
+      "name": "1790950000000_add_assessment_events_v3"
+    },
+    {
+      "name": "1790960000000_add_server_audit_events"
+    },
+    {
+      "name": "1790970000000_add_delivery_reliability"
+    },
+    {
+      "name": "1790980000000_allow_unknown_delivery_storage"
+    },
+    {
+      "name": "1790990000000_allow_delivery_in_flight"
+    },
+    {
+      "name": "1791000000000_add_research_data_management"
+    },
+    {
+      "name": "1791010000000_allow_explicit_history_deletion"
+    }
+  ],
+  "versions": [
+    {
+      "version": 1,
+      "actor": "LEARNER",
+      "outcome": "REJECTED",
+      "count": 14
+    },
+    {
+      "version": 1,
+      "actor": "LEARNER",
+      "outcome": "SUCCESS",
+      "count": 6164
+    },
+    {
+      "version": 1,
+      "actor": "LEARNER",
+      "outcome": "UNKNOWN",
+      "count": 10
+    },
+    {
+      "version": 1,
+      "actor": "RESEARCHER",
+      "outcome": "SUCCESS",
+      "count": 8
+    },
+    {
+      "version": 2,
+      "actor": "LEARNER",
+      "outcome": "CANCELLED",
+      "count": 26
+    },
+    {
+      "version": 2,
+      "actor": "LEARNER",
+      "outcome": "FAILURE",
+      "count": 6
+    },
+    {
+      "version": 2,
+      "actor": "LEARNER",
+      "outcome": "REJECTED",
+      "count": 26
+    },
+    {
+      "version": 2,
+      "actor": "LEARNER",
+      "outcome": "SUCCESS",
+      "count": 236
+    },
+    {
+      "version": 2,
+      "actor": "RESEARCHER",
+      "outcome": "SUCCESS",
+      "count": 2
+    },
+    {
+      "version": 2,
+      "actor": "SYSTEM",
+      "outcome": "SUCCESS",
+      "count": 11
+    },
+    {
+      "version": 3,
+      "actor": "LEARNER",
+      "outcome": "FAILURE",
+      "count": 8
+    },
+    {
+      "version": 3,
+      "actor": "LEARNER",
+      "outcome": "REJECTED",
+      "count": 40
+    },
+    {
+      "version": 3,
+      "actor": "LEARNER",
+      "outcome": "SUCCESS",
+      "count": 74
+    },
+    {
+      "version": 4,
+      "actor": "RESEARCHER",
+      "outcome": "FAILURE",
+      "count": 4
+    },
+    {
+      "version": 4,
+      "actor": "RESEARCHER",
+      "outcome": "REJECTED",
+      "count": 20
+    },
+    {
+      "version": 4,
+      "actor": "RESEARCHER",
+      "outcome": "SUCCESS",
+      "count": 106
+    },
+    {
+      "version": 4,
+      "actor": "SYSTEM",
+      "outcome": "FAILURE",
+      "count": 4
+    },
+    {
+      "version": 4,
+      "actor": "SYSTEM",
+      "outcome": "SUCCESS",
+      "count": 11
+    }
+  ],
+  "duplicateSubmissions": [],
+  "unsafeAudit": 0,
+  "wrongQuestions": 0
+}

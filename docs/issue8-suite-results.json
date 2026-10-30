@@ -1,0 +1,70 @@
+[
+  {
+    "check": "test:stage1:integration",
+    "exitCode": 0
+  },
+  {
+    "check": "test:map-api-v2",
+    "exitCode": 0
+  },
+  {
+    "check": "test:map-auto-submit-v2",
+    "exitCode": 0
+  },
+  {
+    "check": "test:undo-redo:unit",
+    "exitCode": 0
+  },
+  {
+    "check": "test:map-mixed-history",
+    "exitCode": 0
+  },
+  {
+    "check": "test:learning-activity-events",
+    "exitCode": 0
+  },
+  {
+    "check": "test:assessment-events",
+    "exitCode": 0
+  },
+  {
+    "check": "test:server-audit",
+    "exitCode": 0
+  },
+  {
+    "check": "test:research-events",
+    "exitCode": 0
+  },
+  {
+    "check": "test:research-event-schema",
+    "exitCode": 0
+  },
+  {
+    "check": "test:audit-routing",
+    "exitCode": 0
+  },
+  {
+    "check": "test:integrated-streams",
+    "exitCode": 0
+  },
+  {
+    "check": "test:integration-invariants",
+    "exitCode": 0
+  },
+  {
+    "check": "test:safe-server-error",
+    "exitCode": 0
+  },
+  {
+    "check": "typecheck",
+    "exitCode": 0
+  },
+  {
+    "check": "lint",
+    "exitCode": 0
+  },
+  {
+    "check": "build",
+    "exitCode": 0
+  }
+]

@@ -1,3 +1,4 @@
+import {ResearchDeliveryStatus} from "./DeliveryStatus";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { apiFetch, downloadApiFile, uiText } from "./auth-client";
 import { ReadOnlyMapSnapshot, type HistoricalMapSnapshot } from "./MapPage";
@@ -6,6 +7,7 @@ type Operation = {
   id: string; mapId: string; mapType: string; researchRole: string | null;
   operationType: string; targetId: string; targetType: string; sequenceNumber: string;
   relatedOperationLogId: string | null;
+  historySource?: "LEGACY" | "EVENT"; eventId?: string;
   serverTimestamp: string; elapsedMs: number | null;
   before: unknown; after: unknown;
 };
@@ -25,8 +27,8 @@ type HistoryReplay = {
   beforeState: HistoricalMapSnapshot | null;
   afterState: HistoricalMapSnapshot | null;
 };
-type Rating = { id: string; mapId: string; linkId: string; category: "U"|"I"|"P"|"V"; rationale: string; createdAt: string; evaluatorCode: string };
-type Reflection = { id: string; noteText: string; reportedByCode: string; operationLogId: string | null };
+type Rating = { id: string; mapId: string; linkId: string; category: "U"|"I"|"P"|"V"; rationale: string; createdAt: string; evaluatorCode: string; operationLogId?:string|null;eventId?:string|null };
+type Reflection = { id: string; noteText: string; reportedByCode: string; operationLogId: string | null; eventId?: string | null };
 type Analysis = {
   session: { id: string; participantCode: string | null; protocolKey: string };
   maps: MapData[];
@@ -44,7 +46,7 @@ const CATEGORIES = [
   { value:"V", label:"V — Valid：明確で妥当" },
 ] as const;
 
-const operationNames: Record<string, string> = { ADD_CONCEPT: "概念を追加", EDIT_CONCEPT: "概念を変更", MOVE_CONCEPT: "概念を移動", DELETE_CONCEPT: "概念を削除", ADD_LINK: "関係を追加", EDIT_LINK: "関係を変更", RECONNECT_LINK: "関係の接続を変更", DELETE_LINK: "関係を削除", IMPORT_KIT_CONCEPT: "キットの概念を追加", IMPORT_KIT_LINK: "キットの関係を追加", MERGE_CONCEPT: "概念を統合", UNDO: "操作を元に戻す", REDO: "操作をやり直す" };
+const operationNames: Record<string, string> = { ADD_CONCEPT: "概念を追加", EDIT_CONCEPT: "概念を変更", MOVE_LINK: "関係の位置を移動", MOVE_CONCEPT: "概念を移動", DELETE_CONCEPT: "概念を削除", ADD_LINK: "関係を追加", EDIT_LINK: "関係を変更", RECONNECT_LINK: "関係の接続を変更", DELETE_LINK: "関係を削除", IMPORT_KIT_CONCEPT: "キットの概念を追加", IMPORT_KIT_LINK: "キットの関係を追加", MERGE_CONCEPT: "概念を統合", UNDO: "操作を元に戻す", REDO: "操作をやり直す" };
 const operationName = (type: string) => operationNames[type] ?? `その他の操作（${type}）`;
 const mapName = (type: string) => ({ PRIOR: "Scratch-Build", KB: "Kit-Build", INTEGRATION: "統合マップ" } as Record<string,string>)[type] ?? type;
 const elapsed = (ms: number | null) => ms === null ? "不明" : `${Math.floor(ms / 60000)}分${Math.floor(ms / 1000) % 60}秒`;
@@ -57,10 +59,15 @@ const limitationText: Record<string, string> = {
 
 function targetLabel(op: Operation, map: MapData | undefined, replay: HistoryReplay | null) {
   const value = (op.after ?? op.before) as Record<string, unknown> | null;
-  const label = typeof value?.label === "string" ? value.label : undefined;
+  const stateItem = op.historySource === "EVENT" ?
+    op.targetType === "CONCEPT" ?
+      [...(replay?.afterState?.concepts ?? []), ...(replay?.beforeState?.concepts ?? [])].find(item=>item.id===op.targetId) :
+      [...(replay?.afterState?.links ?? []), ...(replay?.beforeState?.links ?? [])].find(item=>item.id===op.targetId)
+    : null;
+  const label = typeof stateItem?.label === "string" ? stateItem.label : typeof value?.label === "string" ? value.label : undefined;
   if (op.targetType === "CONCEPT") return `概念：${label ?? map?.concepts.find(item => item.id === op.targetId)?.label ?? op.targetId}`;
   if (op.targetType === "LINK") {
-    const link = value && typeof value.sourceConceptId === "string" && typeof value.targetConceptId === "string" ? value : map?.links.find(item => item.id === op.targetId);
+    const link = stateItem && "sourceConceptId" in stateItem ? stateItem : value && typeof value.sourceConceptId === "string" && typeof value.targetConceptId === "string" ? value : map?.links.find(item => item.id === op.targetId);
     if (link && typeof link.sourceConceptId === "string" && typeof link.targetConceptId === "string") {
       const concepts = [...(replay?.beforeState?.concepts ?? []), ...(replay?.afterState?.concepts ?? []), ...(map?.concepts ?? [])];
       const name = (id: string) => concepts.find(item => item.id === id)?.label ?? id;
@@ -80,8 +87,15 @@ function compareSnapshots(before: HistoricalMapSnapshot, after: HistoricalMapSna
   };
   return {
     concepts: difference(before.concepts, after.concepts, item => [item.label, item.positionX, item.positionY, item.mergedIntoConceptId]),
-    links: difference(before.links, after.links, item => [item.label, item.sourceConceptId, item.targetConceptId]),
+    links: difference(before.links, after.links, item => [item.label, item.sourceConceptId, item.targetConceptId, item.labelPositionX??null, item.labelPositionY??null]),
   };
+}
+
+function historicalLink(op:Operation,side:"BEFORE"|"AFTER") {
+  const value=side==="BEFORE"?op.before:op.after;
+  if(op.historySource!=="EVENT") return value;
+  if(!value||typeof value!=="object"||!("links" in value)||!Array.isArray(value.links)) return null;
+  return value.links.find((item:unknown)=>item!==null&&typeof item==="object"&&"id" in item&&item.id===op.targetId)??null;
 }
 
 export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
@@ -145,7 +159,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
   const labels=new Map(map?.concepts.map(c=>[c.id,c.label])??[]);
   const historicalOperations=(data?.operations??[]).filter(op=>
     op.mapId===selectedMapId && op.targetType==="LINK" &&
-    (ratingSide==="BEFORE" ? op.before!==null : op.after!==null));
+    historicalLink(op,ratingSide==="BEFORE"?"BEFORE":"AFTER")!==null);
   const ratedOperation=historicalOperations.find(op=>op.id===ratingOperationId);
   const ratingLinkId=ratingSide==="CURRENT"?link?.id:ratedOperation?.targetId;
 
@@ -169,13 +183,14 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
       mapId:map.id,linkId:ratingLinkId,evaluatorCode,category,
       rationale:reason,snapshotSide:ratingSide,
       ...(ratingSide!=="CURRENT" && ratedOperation
-        ? {operationLogId:ratedOperation.id} : {}),
+        ? ratedOperation.historySource==="EVENT" ? {eventId:ratedOperation.id} : {operationLogId:ratedOperation.id} : {}),
     });
   }
   function saveReflection(e:FormEvent){
     e.preventDefault();
     void post(`/api/research/stage1/sessions/${sessionId}/reflections`,{
-      mapId:operation?.mapId??null,operationLogId:operation?.id??null,
+      mapId:operation?.mapId??null,
+      ...(operation?.historySource==="EVENT" ? {eventId:operation.id} : {operationLogId:operation?.id??null}),
       linkId:operation?.targetType==="LINK"?operation.targetId:link?.id??null,
       reportedByCode:evaluatorCode,noteText:memo,
     });
@@ -200,11 +215,13 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
           <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/operations.csv`).catch(() => setError("CSVを取得できませんでした。"))}>操作イベントCSV</button>
           {data?.session.protocolKey === "STAGE1_4" && <><button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/evaluations.csv`).catch(() => setError("CSVを取得できませんでした。"))}>命題評価CSV</button>
           <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/reflections.csv`).catch(() => setError("CSVを取得できませんでした。"))}>振り返りCSV</button></>}
+          <a href={`/research/event-exports?sessionId=${sessionId}`}>研究イベントの絞り込み出力</a>
           <a href={`/sessions/${sessionId}`}>セッションへ戻る</a>
         </div>
         {error&&<p className="session-error" role="alert">{error}</p>}
         {status&&<p role="status">{status}</p>}
       </section>
+      <ResearchDeliveryStatus sessionId={sessionId}/>
       {!data?<p role="status">分析データを読み込んでいます…</p>:(
         <>
           <section className="session-card">
@@ -349,7 +366,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
                   </select>
                   {ratedOperation && (
                     <pre className="stage1-evaluation-snapshot">
-                      {JSON.stringify(ratingSide==="BEFORE"?ratedOperation.before:ratedOperation.after,null,2)}
+                      {JSON.stringify(historicalLink(ratedOperation,ratingSide==="BEFORE"?"BEFORE":"AFTER"),null,2)}
                     </pre>
                   )}
                 </label>
@@ -365,7 +382,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
             </form>
             <h3>保存済み評価：{data.propositionEvaluations.length}件</h3>
             <ul>{data.propositionEvaluations.map(v=>
-              <li key={v.id}>{v.category} / {v.evaluatorCode} / {v.linkId}：{v.rationale}</li>)}</ul>
+              <li key={v.id}>{v.category} / {v.evaluatorCode} / {v.linkId} / {v.eventId?`新イベント：${v.eventId}`:v.operationLogId?`旧操作：${v.operationLogId}`:"現在のマップ"}：{v.rationale}</li>)}</ul>
           </section>
           <section className="session-card">
             <h2>振り返りメモ</h2>
@@ -375,7 +392,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
               <label>振り返りの記録<textarea value={memo} required onChange={e=>setMemo(e.target.value)}/></label>
               <button disabled={busy} className="session-primary-button">メモを保存</button>
             </form>
-            <ul>{data.reflectionNotes.map(n=><li key={n.id}>{n.reportedByCode} / {n.operationLogId??"操作未指定"}：{n.noteText}</li>)}</ul>
+            <ul>{data.reflectionNotes.map(n=><li key={n.id}>{n.reportedByCode} / {n.eventId?`新イベント：${n.eventId}`:n.operationLogId?`旧操作：${n.operationLogId}`:"操作未指定"}：{n.noteText}</li>)}</ul>
           </section>
           </>}
           <section className="session-card"><h2>解釈上の注意</h2>

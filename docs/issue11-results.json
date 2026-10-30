@@ -1,0 +1,78 @@
+{
+  "branch": "codex/integrate-research-event-streams",
+  "existingDatabaseConnected": false,
+  "committed": false,
+  "schemaChanges": [
+    "179100 additive identity/retention/revocation tables, session assignment trigger",
+    "179101 transaction-scoped boundary deletion permission"
+  ],
+  "changedExistingFiles": [
+    "backend\\package.json",
+    "backend\\src\\access-control.ts",
+    "backend\\src\\assessments.ts",
+    "backend\\src\\event-export-contract.ts",
+    "backend\\src\\event-export-dictionary.ts",
+    "backend\\src\\event-export-query.ts",
+    "backend\\src\\event-export-service.ts",
+    "backend\\src\\index.ts",
+    "backend\\src\\research-events.ts",
+    "backend\\src\\research-export.ts",
+    "backend\\src\\stage1-analysis.ts",
+    "backend\\src\\scripts\\verify-event-export.ts",
+    "backend\\src\\scripts\\verify-research-events.ts",
+    "frontend\\tsconfig.tsbuildinfo",
+    "frontend\\scripts\\verify-delivery-browser.ts",
+    "frontend\\src\\App.tsx",
+    "frontend\\src\\auth-client.ts",
+    "frontend\\src\\EventExportPage.tsx",
+    "frontend\\src\\HomePage.tsx",
+    "frontend\\src\\observation-outbox.ts",
+    "docs\\samples\\event-export\\data-dictionary.md",
+    "docs\\samples\\event-export\\manifest.json"
+  ],
+  "removedExistingFiles": [],
+  "newImplementationFiles": [
+    "backend/src/data-management.ts",
+    "backend/src/research-output-safety.ts",
+    "frontend/src/DataManagementPage.tsx",
+    "backend/src/scripts/verify-data-management.ts",
+    "frontend/scripts/verify-data-management-browser.ts",
+    "docs/research-data-management.md"
+  ],
+  "checksPassed": [
+    "Fresh isolated DB migrations through 179101 + dummy seed",
+    "Management HTTP: random identity, explicit multi-session membership, reissue stable associations, retention expiry without auto delete, restricted projection",
+    "Deletion HTTP: confirmation, stale content/preview rejection, duplicate request rejection, transactional failure rollback, old log/boundary/snapshot/note/answer/event consistency",
+    "Target export invalidation including orphan files after simulated restart; unrelated export retained",
+    "401/403 management and 410 deleted credentials, event re-registration denied, known device ACK + unknown pending state",
+    "Internal participant UUID, known token, Bearer pattern and exception text excluded; ordinary Japanese preserved",
+    "Real Edge management UI, confirmation gating, reissue cancellation, learner UI denial",
+    "Real Edge/IndexedDB old offline/retry/restart regression + target queue purge and unrelated queue preserved",
+    "Existing filtered export including 3000-row paging + JSON/CSV identities, v1-v4 filters/auth/secrets",
+    "Stage1 integration after final export redaction changes",
+    "Assessment event/save/submit/export regression",
+    "Researcher/system audit regression",
+    "Research event schema + auth/order/persistence regression",
+    "Undo/Redo unit and mixed history",
+    "Export sample generation + compatibility validation",
+    "Backend and frontend typecheck/lint/build",
+    "git diff --check"
+  ],
+  "preservation": {
+    "originalMigrationsUnchanged": true,
+    "issue4to10UncommittedChangesRetained": true,
+    "otherWorktreesEdited": false,
+    "removedFiles": []
+  },
+  "limits": [
+    "Development/mock data only; not certified for real participant operation.",
+    "Same researcher code cannot identify individual researchers; private schema is logical separation, not protection from DB administrator.",
+    "Offline/unknown/old-client/old-rotated-token devices and lost ACK may remain pending. No assertion of erasure from all devices.",
+    "Downloaded files, already transmitted bytes, backups, WAL and storage residuals are outside immediate application erasure.",
+    "Single API process; other servers private caches require separate coordination.",
+    "Cross-session person linkage only by explicit researcher assignment. Resource UUIDs retained following user clarification.",
+    "Secret pattern detection is incomplete; do not enter credentials into research data.",
+    "No production-scale performance test. Full multi-party deletion stress and physical forensic erasure are not established."
+  ],
+  "state": "Uncommitted; no reset/stash/branch switch/PR/issue mutation. Existing DB never connected."
+}

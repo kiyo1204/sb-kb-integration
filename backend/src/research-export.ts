@@ -1,3 +1,5 @@
+import {redactResearchOutput} from "./research-output-safety.js";
+import {deliverySnapshot} from "./delivery-reports.js";
 import type { PoolClient } from "pg";
 import { assessmentSnapshot } from "./assessments.js";
 
@@ -42,6 +44,7 @@ export type SessionRawExport = {
   goalMaps: Array<Record<string, unknown>>;
   kitDefinitions: Array<Record<string, unknown>>;
   assessment?: Awaited<ReturnType<typeof assessmentSnapshot>>;
+  delivery?: Awaited<ReturnType<typeof deliverySnapshot>>;
 };
 
 export type SessionRawExportResult =
@@ -99,6 +102,8 @@ type ConceptRow = {
 };
 
 type LinkRow = {
+  labelPositionX?:number|null;
+  labelPositionY?:number|null;
   id: string;
   mapId: string;
   sourceConceptId: string;
@@ -312,7 +317,7 @@ export async function buildSessionRawExport(
     ? await client.query<LinkRow>(
         `SELECT id, map_id AS "mapId",
                 source_concept_id AS "sourceConceptId",
-                target_concept_id AS "targetConceptId", label,
+                target_concept_id AS "targetConceptId", label,label_position_x AS "labelPositionX",label_position_y AS "labelPositionY",
                 created_at AS "createdAt", updated_at AS "updatedAt"
          FROM links
          WHERE map_id = ANY($1::uuid[])
@@ -383,6 +388,38 @@ export async function buildSessionRawExport(
         [allMapIds],
       )
     : { rows: [] };
+  const eventTable = (await client.query<{ exists: string | null }>("SELECT to_regclass('research_events')::text AS exists")).rows[0]?.exists;
+  const eventResult = allMapIds.length && eventTable
+    ? await client.query<{
+        eventId: string; mapId: string; schemaVersion: number; eventType: string;
+        actorType: string; outcome: string; targetType: string; targetId: string | null;
+        sequenceNumber: string; relatedEventId: string | null; relatedLegacyOperationLogId: string | null;
+        before: unknown; after: unknown; clientTimestamp: Date | null; serverTimestamp: Date;
+      }>(`SELECT event_id AS "eventId", map_id AS "mapId", schema_version AS "schemaVersion",
+        event_type AS "eventType", actor_type AS "actorType", outcome,
+        target_type AS "targetType", target_id AS "targetId", sequence_number AS "sequenceNumber",
+        related_event_id AS "relatedEventId", related_legacy_operation_log_id AS "relatedLegacyOperationLogId",
+        before_state AS before, after_state AS after,
+        client_timestamp AS "clientTimestamp", server_timestamp AS "serverTimestamp"
+        FROM research_events WHERE session_id=$1::uuid AND map_id=ANY($2::uuid[]) AND schema_version IN (2,5)
+        ORDER BY map_id,sequence_number`, [sessionId, allMapIds])
+    : { rows: [] };
+  if (eventResult.rows.length) {
+    const boundaryResult=await client.query<{mapId:string;legacyCount:string;legacyLastId:string|null}>(
+      `SELECT map_id AS "mapId",legacy_count AS "legacyCount",legacy_last_id AS "legacyLastId"
+       FROM map_history_boundaries WHERE map_id=ANY($1::uuid[])`,[allMapIds]);
+    const boundaries=new Map(boundaryResult.rows.map(row=>[row.mapId,row]));
+    const legacyByMap=new Map<string,typeof operationLogResult.rows>();
+    for(const log of operationLogResult.rows) legacyByMap.set(log.mapId,[...(legacyByMap.get(log.mapId)??[]),log]);
+    for(const mapId of new Set(eventResult.rows.map(event=>event.mapId))) {
+      const old=legacyByMap.get(mapId)??[];
+      const boundary=boundaries.get(mapId);
+      if(!boundary||Number(boundary.legacyCount)!==old.length||
+        boundary.legacyLastId!==(old.at(-1)?.id??null)||
+        old.some((log,index)=>Number(log.sequenceNumber)!==index+1))
+        return {kind:"inconsistent",detail:`Map ${mapId} has an invalid legacy/event boundary.`};
+    }
+  }
 
   const conceptProvenanceByTarget = new Map<
     string,
@@ -419,6 +456,7 @@ export async function buildSessionRawExport(
     const entries = logsByMap.get(log.mapId) ?? [];
     entries.push({
       id: log.id,
+      historySource: "LEGACY",
       mapId: log.mapId,
       operationType: log.operationType,
       targetType: log.targetType,
@@ -431,6 +469,24 @@ export async function buildSessionRawExport(
       serverTimestamp: iso(log.serverTimestamp),
     });
     logsByMap.set(log.mapId, entries);
+  }
+  for (const event of eventResult.rows) {
+    const entries = logsByMap.get(event.mapId) ?? [];
+    entries.push({
+      id: event.eventId, eventId: event.eventId, historySource: "EVENT",
+      schemaVersion: event.schemaVersion, eventType: event.eventType,
+      actorType: event.actorType, outcome: event.outcome,
+      mapId: event.mapId, operationType: event.eventType,
+      targetType: event.targetType, targetId: event.targetId,
+      before: event.before, after: event.after,
+      sequenceNumber: String(entries.length + 1),
+      eventSequenceNumber: event.sequenceNumber,
+      relatedOperationLogId: event.relatedEventId ?? event.relatedLegacyOperationLogId,
+      relatedEventId: event.relatedEventId,
+      relatedLegacyOperationLogId: event.relatedLegacyOperationLogId,
+      clientTimestamp: iso(event.clientTimestamp), serverTimestamp: iso(event.serverTimestamp),
+    });
+    logsByMap.set(event.mapId, entries);
   }
 
   const conceptsByMap = new Map<string, Array<Record<string, unknown>>>();
@@ -458,6 +514,7 @@ export async function buildSessionRawExport(
       sourceConceptId: link.sourceConceptId,
       targetConceptId: link.targetConceptId,
       label: link.label,
+      ...(link.labelPositionX == null || link.labelPositionY == null ? {} : {labelPositionX:link.labelPositionX,labelPositionY:link.labelPositionY}),
       createdAt: iso(link.createdAt),
       updatedAt: iso(link.updatedAt),
       provenance: linkProvenanceByTarget.get(link.id) ?? [],
@@ -599,7 +656,7 @@ export async function buildSessionRawExport(
   const assessment = session.protocolKey === "STAGE1_6" ? await assessmentSnapshot(client, sessionId) : undefined;
   return {
     kind: "exported",
-    value: {
+    value: await redactResearchOutput({
       exportVersion: session.protocolKey === "STAGE1_6" ? 2 : 1,
       exportedAt: exportedAt.toISOString(),
       warnings,
@@ -610,7 +667,7 @@ export async function buildSessionRawExport(
         startedAt: iso(session.startedAt),
         completedAt: iso(session.completedAt),
         protocolKey: session.protocolKey,
-        participantCode: session.participantCode,
+        participantCode: (await client.query("SELECT pseudonym FROM research_session_ids WHERE session_id=$1",[sessionId])).rows[0]?.pseudonym ?? null,
         lessonVideoUrl: session.lessonVideoUrl,
         researchKitDefinitionId: session.researchKitDefinitionId,
         ...(session.protocolKey === "STAGE1_6" ? { studyGroup: session.studyGroup, groupActivitySeconds: session.groupActivitySeconds } : {}),
@@ -637,6 +694,7 @@ export async function buildSessionRawExport(
       goalMaps: mapsWithProvenance.filter((map) => map.type === "GOAL"),
       kitDefinitions: kits,
       ...(assessment ? { assessment } : {}),
-    },
+      delivery: await deliverySnapshot(client,sessionId),
+    },client),
   };
 }
