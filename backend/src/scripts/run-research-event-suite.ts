@@ -94,6 +94,9 @@ try {
   // Recovery tests own and restart their server; no background API may auto-submit the fixture.
   await stop();
   await run("test:server-recovery");
+  await start();
+  await run("test:autosubmit-deadlock");
+  await stop();
   await run("test:delivery-reliability");
   await run("test:event-scale");
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") {

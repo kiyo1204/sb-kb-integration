@@ -647,6 +647,8 @@ async function refreshKitDefinitionFlag(
   };
 }
 
+// Map IDs never change in these transactions. NO KEY UPDATE still serializes
+// editors/submission/Undo, without blocking event FK KEY SHARE after its counter.
 async function lockMapForConcept(
   client: PoolClient,
   conceptId: string,
@@ -684,7 +686,7 @@ async function lockMapForConcept(
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
           AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
         ))
-      FOR UPDATE OF map
+      FOR NO KEY UPDATE OF map
     `,
     [conceptId],
   );
@@ -730,7 +732,7 @@ async function lockMapForLink(
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
           AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
         ))
-      FOR UPDATE OF map
+      FOR NO KEY UPDATE OF map
     `,
     [linkId],
   );
@@ -775,7 +777,7 @@ async function lockMapById(
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
           AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
         ))
-      FOR UPDATE OF map
+      FOR NO KEY UPDATE OF map
     `,
     [mapId],
   );
@@ -1757,7 +1759,7 @@ app.use("/api", (request, response, next) => {
         if(owner.rows[0]!.expired){reasonCode="DEADLINE";}
         else if(owner.rows[0]!.mapStatus==="SUBMITTED") reasonCode="PERMISSION";
         else if(owner.rows[0]!.status==="COMPLETED"||owner.rows[0]!.stageStatus==="COMPLETED") reasonCode="PERMISSION";
-        await client.query("SELECT id FROM maps WHERE id=$1::uuid FOR UPDATE",[resolvedMapId]);
+        await client.query("SELECT id FROM maps WHERE id=$1::uuid FOR NO KEY UPDATE",[resolvedMapId]);
         const lockedOwner=await client.query<{status:string;mapStatus:string;stageStatus:string;expired:boolean}>(
           `SELECT s.status,m.status AS "mapStatus",st.status AS "stageStatus",
             (s.protocol_key='STAGE1_6' AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired

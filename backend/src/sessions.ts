@@ -111,6 +111,8 @@ export async function lockSessionStageForMap(
 
 // A lifecycle transition must serialize with other transitions for the same
 // Stage and observe the owning Session's status in the same transaction.
+// IDs are unchanged: NO KEY UPDATE excludes concurrent writers while letting
+// research_events FK checks finish without a Stage/Session -> counter cycle.
 export async function lockSessionStageProgress(
   client: PoolClient,
   stageId: string,
@@ -130,7 +132,7 @@ export async function lockSessionStageProgress(
       INNER JOIN sessions AS session ON session.id = stage.session_id
       WHERE stage.id = $1::uuid
         AND session.protocol_key IN ($2, 'STAGE1_6')
-      FOR UPDATE OF session, stage
+      FOR NO KEY UPDATE OF session, stage
     `,
     [stageId, STAGE1_PROTOCOL_KEY],
   );
