@@ -1,0 +1,34 @@
+{
+  "suitePassed": 30,
+  "staticChecks": [
+    "backend:typecheck",
+    "backend:lint",
+    "backend:build",
+    "frontend:typecheck",
+    "frontend:lint",
+    "frontend:build"
+  ],
+  "originalFilesUnchanged": 16,
+  "originalWorktreeUnchanged": true,
+  "branch": "codex/fix-autosubmit-deadlock",
+  "head": "b73e18c5c3cea16d5c8173d4851b0f50efa6b2a1",
+  "cleanup": [
+    {
+      "name": "stage1_mock_deadlock_20261031",
+      "containerId": "9bfd39149ee39bfa0a5063286cf5279f81206267dc6a386359b1e812665554b7",
+      "migrations": "38|1791050000000_allow_boundary_event_key_share",
+      "deadlocksInLifetime": 6,
+      "removed": true,
+      "removedAt": "2026-10-31T08:51:26.224Z"
+    },
+    {
+      "name": "stage1_mock_deadlock_regression",
+      "containerId": "afee81e14a88c146669f1b6498c22fc6a321e213e7ba5629ee55e673b04e4b72",
+      "migrations": "38|1791050000000_allow_boundary_event_key_share",
+      "deadlocksInLifetime": 0,
+      "removed": true,
+      "removedAt": "2026-10-31T08:51:28.063Z"
+    }
+  ],
+  "scope": "Only new synthetic DB containers; original LAN pending deletion ACK is unchanged"
+}

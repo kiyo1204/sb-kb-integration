@@ -1,0 +1,158 @@
+{
+  "description": "Synthetic API reproduction, not attribution of the original LAN request",
+  "baseline": {
+    "baseline": true,
+    "cases": [
+      {
+        "group": "CONTROL",
+        "mode": "deadline",
+        "eventPid": 116,
+        "counterWaiters": [
+          {
+            "pid": 120,
+            "waitEvent": "transactionid",
+            "waitingFor": [
+              116
+            ]
+          }
+        ],
+        "httpStatus": 500,
+        "rollbackReceiptAbsent": true,
+        "retryAcknowledged": true,
+        "receiptCount": 1,
+        "autoSubmitted": false,
+        "stageStillInProgress": true
+      },
+      {
+        "group": "EXPERIMENTAL",
+        "mode": "auto-submit",
+        "eventPid": 116,
+        "counterWaiters": [
+          {
+            "pid": 117,
+            "waitEvent": "transactionid",
+            "waitingFor": [
+              116
+            ]
+          }
+        ],
+        "httpStatus": 500,
+        "rollbackReceiptAbsent": true,
+        "retryAcknowledged": true,
+        "receiptCount": 1,
+        "autoSubmitted": true,
+        "stageStillInProgress": true
+      }
+    ]
+  },
+  "deadlocks": [
+    {
+      "timeUtc": "2026-10-31 08:38:05.919 UTC",
+      "victimPid": 104,
+      "sqlState": "40P01",
+      "waitEdges": [
+        {
+          "pid": 104,
+          "transactionId": 760,
+          "blockedByPid": 107
+        },
+        {
+          "pid": 107,
+          "transactionId": 758,
+          "blockedByPid": 104
+        }
+      ],
+      "fkRelation": "sessions"
+    },
+    {
+      "timeUtc": "2026-10-31 08:38:06.800 UTC",
+      "victimPid": 104,
+      "sqlState": "40P01",
+      "waitEdges": [
+        {
+          "pid": 104,
+          "transactionId": 769,
+          "blockedByPid": 103
+        },
+        {
+          "pid": 103,
+          "transactionId": 767,
+          "blockedByPid": 104
+        }
+      ],
+      "fkRelation": "sessions"
+    },
+    {
+      "timeUtc": "2026-10-31 08:38:06.945 UTC",
+      "victimPid": 104,
+      "sqlState": "40P01",
+      "waitEdges": [
+        {
+          "pid": 104,
+          "transactionId": 770,
+          "blockedByPid": 103
+        },
+        {
+          "pid": 103,
+          "transactionId": 771,
+          "blockedByPid": 104
+        }
+      ],
+      "fkRelation": "maps"
+    },
+    {
+      "timeUtc": "2026-10-31 08:38:57.368 UTC",
+      "victimPid": 116,
+      "sqlState": "40P01",
+      "waitEdges": [
+        {
+          "pid": 116,
+          "transactionId": 781,
+          "blockedByPid": 120
+        },
+        {
+          "pid": 120,
+          "transactionId": 779,
+          "blockedByPid": 116
+        }
+      ],
+      "fkRelation": "sessions"
+    },
+    {
+      "timeUtc": "2026-10-31 08:38:58.094 UTC",
+      "victimPid": 116,
+      "sqlState": "40P01",
+      "waitEdges": [
+        {
+          "pid": 116,
+          "transactionId": 790,
+          "blockedByPid": 117
+        },
+        {
+          "pid": 117,
+          "transactionId": 788,
+          "blockedByPid": 116
+        }
+      ],
+      "fkRelation": "sessions"
+    },
+    {
+      "timeUtc": "2026-10-31 08:40:39.669 UTC",
+      "victimPid": 140,
+      "sqlState": "40P01",
+      "waitEdges": [
+        {
+          "pid": 140,
+          "transactionId": 835,
+          "blockedByPid": 139
+        },
+        {
+          "pid": 139,
+          "transactionId": 836,
+          "blockedByPid": 140
+        }
+      ],
+      "fkRelation": "maps"
+    }
+  ]
+}

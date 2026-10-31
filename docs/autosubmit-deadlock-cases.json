@@ -1,0 +1,71 @@
+{
+  "baseline": false,
+  "cases": [
+    {
+      "group": "CONTROL",
+      "mode": "deadline",
+      "eventPid": 215,
+      "counterWaiters": [
+        {
+          "pid": 219,
+          "waitEvent": "transactionid",
+          "waitingFor": [
+            215
+          ]
+        }
+      ],
+      "httpStatus": 201,
+      "rollbackReceiptAbsent": false,
+      "retryAcknowledged": true,
+      "receiptCount": 1,
+      "autoSubmitted": false,
+      "stageStillInProgress": true
+    },
+    {
+      "group": "EXPERIMENTAL",
+      "mode": "auto-submit",
+      "eventPid": 216,
+      "counterWaiters": [
+        {
+          "pid": 221,
+          "waitEvent": "transactionid",
+          "waitingFor": [
+            216
+          ]
+        }
+      ],
+      "httpStatus": 201,
+      "rollbackReceiptAbsent": false,
+      "retryAcknowledged": true,
+      "receiptCount": 1,
+      "autoSubmitted": true,
+      "stageStillInProgress": true
+    },
+    {
+      "group": "CONTROL",
+      "mode": "complete",
+      "eventPid": 215,
+      "counterWaiters": [
+        {
+          "pid": 216,
+          "waitEvent": "transactionid",
+          "waitingFor": [
+            215
+          ]
+        }
+      ],
+      "httpStatus": 201,
+      "rollbackReceiptAbsent": false,
+      "retryAcknowledged": true,
+      "receiptCount": 1,
+      "autoSubmitted": false,
+      "stageStillInProgress": false
+    },
+    {
+      "case": "auto-submit-event-failure",
+      "rollbackMapAndBoundary": true,
+      "recoveredWithSingleSuccess": true,
+      "replay": "REPLAYABLE"
+    }
+  ]
+}

@@ -8,7 +8,9 @@ export async function observeExpiredStages(pool:Pool) {
   const client=await pool.connect();
   try {
    await client.query("BEGIN");
-   await client.query("SELECT id FROM sessions WHERE id=$1 FOR UPDATE",[item.sessionId]);
+   // Keep deadline writers serialized, but allow event FK checks (KEY SHARE).
+   // No Session key is changed; FOR UPDATE would invert Session/counter locks.
+   await client.query("SELECT id FROM sessions WHERE id=$1 FOR NO KEY UPDATE",[item.sessionId]);
    const current=await client.query("SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1 AND s.id=$2 AND s.status='IN_PROGRESS' AND st.status='IN_PROGRESS' AND st.id=(SELECT id FROM session_stages WHERE session_id=s.id AND status<>'COMPLETED' ORDER BY order_index LIMIT 1) AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second'",[item.stageId,item.sessionId]);
    if(current.rowCount)await insertAudit(client,{eventType:"STAGE_DEADLINE",sessionId:item.sessionId,stageId:item.stageId},"SYSTEM","SUCCESS","DEADLINE","stage-deadline:"+item.stageId);
    await client.query("COMMIT");

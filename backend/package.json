@@ -41,7 +41,8 @@
     "test:event-scale": "tsx src/scripts/verify-event-scale.ts",
     "test:test-target-guards": "tsx src/scripts/verify-test-target-guards.ts",
     "test:parent-followup": "tsx src/scripts/verify-parent-followup.ts",
-    "test:map-failure-retry": "tsx src/scripts/verify-map-failure-retry.ts"
+    "test:map-failure-retry": "tsx src/scripts/verify-map-failure-retry.ts",
+    "test:autosubmit-deadlock": "tsx src/scripts/verify-autosubmit-deadlock.ts"
   },
   "dependencies": {
     "express": "^5.1.0",
