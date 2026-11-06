@@ -29,6 +29,7 @@ try {
             participantCode: "P-MOCK",
             protocolKey: "STAGE1_4",
           },
+          stages: [],
           maps: [
             {
               id: map,
@@ -37,10 +38,17 @@ try {
               researchRole: "learner_map",
               concepts: [],
               links: [],
-              historyReplayStatus: "AVAILABLE",
+              historyReplayStatus: "UNAVAILABLE",
             },
           ],
-          operations: [],
+          operations: [{
+            id: "missing-state-operation", mapId: map, mapType: "PRIOR",
+            researchRole: "learner_map", operationType: "EDIT_CONCEPT",
+            targetId: "missing-concept", targetType: "CONCEPT", sequenceNumber: "1",
+            relatedOperationLogId: null, historySource: "EVENT", outcome: "REJECTED",
+            serverTimestamp: "2026-01-01T00:00:00.000Z", elapsedMs: null,
+            before: null, after: null,
+          }],
           operationCounts: {},
           features: {},
           propositionEvaluations: [],
@@ -55,7 +63,7 @@ try {
           reason: "模擬検証：初期スナップショットがありません。",
           mapId: map,
           mapType: "PRIOR",
-          sequenceNumber: 0,
+          sequenceNumber: Number(new URL(route.request().url()).searchParams.get("sequenceNumber")),
           operation: null,
           beforeState: null,
           afterState: null,
@@ -77,6 +85,12 @@ try {
   await page
     .getByText("模擬検証：初期スナップショットがありません。", { exact: false })
     .waitFor();
+  await page.locator(".operation-history > details > summary").click();
+  await page.getByText("状態記録なし：選択した操作の変更前後を復元できません。", { exact: true }).waitFor();
+  assert.equal(await page.locator(".map-history-compare").count(), 0);
+  assert.equal(await page.locator(".map-diff-list").count(), 0);
+  await page.getByText("変更前後の記録", { exact: true }).click();
+  assert.equal(await page.getByText("状態記録なし", { exact: true }).count(), 2);
   assert.equal(
     await page.getByText("選択操作の直前", { exact: true }).count(),
     0,

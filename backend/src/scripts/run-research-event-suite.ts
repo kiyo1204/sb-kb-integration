@@ -104,6 +104,7 @@ try {
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") {
     await start();
     await run("test:research-log-ui", true);
+    await run("test:stage1-analysis-layout-browser", true);
     await run("test:link-position-browser", true);
     await run("test:session-flow-survey-browser",true);
     await run("test:undo-role-browser", true);
