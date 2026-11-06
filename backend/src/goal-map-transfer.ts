@@ -106,18 +106,23 @@ function statusError(
   return response.status(status).json({ error, message });
 }
 
-async function hasLearnerCredential(client: PoolClient, textValues: string[]) {
-  const tokens = new Set<string>();
-  for (const value of textValues) {
-    tokens.add(value);
-    for (const part of value.split(/\s+/)) if (part) tokens.add(part);
-  }
-  const hashes = [...tokens].map(tokenHash);
-  const result = await client.query(
-    "SELECT 1 FROM sessions WHERE learner_access_token_hash=ANY($1::text[]) LIMIT 1",
-    [hashes],
+async function hasLearnerCredential(client: Pick<PoolClient, "query">, textValues: string[]) {
+  const result = await client.query<{ learner_access_token_hash: string }>(
+    "SELECT learner_access_token_hash FROM sessions WHERE learner_access_token_hash IS NOT NULL",
   );
-  return (result.rowCount ?? 0) > 0;
+  const hashes = new Set(result.rows.map(row => row.learner_access_token_hash));
+  const matches = (text: string) => hashes.has(tokenHash(text));
+  for (const value of textValues) {
+    if (matches(value) || value.split(/\s+/).some(matches)) return true;
+    for (const run of value.match(/[A-Za-z0-9_-]{32,}/g) ?? []) {
+      if (matches(run)) return true;
+      // Current learner codes are 32 random bytes encoded as 43 base64url
+      // characters. Also detect them inside old labels with no separator.
+      for (let i = 0; i + 43 <= run.length; i++)
+        if (matches(run.slice(i, i + 43))) return true;
+    }
+  }
+  return false;
 }
 
 export function registerGoalMapTransferRoutes(app: Express, pool: Pool) {
@@ -196,6 +201,10 @@ export function registerGoalMapTransferRoutes(app: Express, pool: Pool) {
             })),
           },
         };
+        const textValues = [document.goalMap.title, ...document.goalMap.concepts.map(item => item.label), ...document.goalMap.links.map(item => item.label)];
+        const researcher = process.env.RESEARCHER_API_TOKEN;
+        if ((researcher && textValues.some(text => text.includes(researcher))) || await hasLearnerCredential(pool, textValues))
+          return statusError(response, 409, "sensitive_text_rejected", "認証情報を含むためゴールマップを書き出せません。");
         if (!validateGoalMapJson(document))
           return statusError(
             response,

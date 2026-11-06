@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { verifyMockTestUrl } from "./mock-db.js";
 import type { GoalMapJson } from "../goal-map-transfer.js";
+import { registerGoalMapTransferRoutes } from "../goal-map-transfer.js";
+import { accessControl, tokenHash } from "../access-control.js";
+import express from "express";
 
 await verifyMockTestUrl(process.env.DATABASE_URL!);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -331,6 +334,56 @@ try {
   };
   const sessionOne = await makeSession("1");
   const sessionTwo = await makeSession("2");
+  // Exercise saved legacy values through the real route and authorization,
+  // while capturing this server's logs. SQL bypasses all current input checks.
+  const legacyCode = "legacy-code-" + "x".repeat(31);
+  assert.equal(legacyCode.length, 43, "fixture uses the generated learner-code length");
+  await pool.query("UPDATE sessions SET learner_access_token_hash=$2 WHERE id=$1", [sessionTwo.id, tokenHash(legacyCode)]);
+  const exportApp = express();
+  exportApp.use("/api", accessControl(pool));
+  registerGoalMapTransferRoutes(exportApp, pool);
+  const exportServer = exportApp.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => exportServer.once("listening", resolve));
+  const address = exportServer.address();
+  assert.ok(address && typeof address !== "string");
+  const captured: string[] = [];
+  const originalConsole = { log: console.log, warn: console.warn, error: console.error };
+  for (const method of ["log", "warn", "error"] as const)
+    console[method] = (...values: unknown[]) => { captured.push(values.map(String).join(" ")); };
+  try {
+    for (const field of ["title", "concept", "link"]) {
+      for (const secret of [researcher, legacyCode]) {
+        for (const value of [secret, `前置き ${secret} 後置き`, `prefix_${secret}_suffix`]) {
+          const query = field === "title" ? "UPDATE maps SET title=$2 WHERE id=$1" : field === "concept" ? "UPDATE concepts SET label=$2 WHERE id=$1" : "UPDATE links SET label=$2 WHERE id=$1";
+          const id = field === "title" ? source.id : field === "concept" ? conceptA : linkId;
+          await pool.query(query, [id, value]);
+          const response = await fetch(`http://127.0.0.1:${address.port}/api/research/goal-maps/${source.id}/export`, { headers: { Authorization: `Bearer ${researcher}` } });
+          const body = await response.text();
+          assert.ok(!body.includes(secret), "rejected export response must not disclose a configured credential");
+          assert.ok(response.status === 409, "saved configured credentials must refuse export");
+          assert.ok(!JSON.stringify([...response.headers]).includes(secret), "headers must not disclose a credential");
+          assert.ok(!captured.some(line => line.includes(secret)), "route logs/errors must not disclose a credential");
+          await pool.query(query, [id, field === "title" ? first.goalMap.title : field === "concept" ? "転送テストの原因" : "によって生じる"]);
+        }
+      }
+    }
+    await pool.query("UPDATE concepts SET label=$2 WHERE id=$1", [conceptA, "legacy-code-" + "z".repeat(31)]);
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/research/goal-maps/${source.id}/export`, { headers: { Authorization: `Bearer ${researcher}` } });
+    assert.equal(response.status, 200, "nonmatching legacy label remains exportable");
+    assert.ok((await response.text()).includes("legacy-code-" + "z".repeat(31)));
+    for (const [credential, status] of [["", 401], [sessionOne.learnerAccessToken, 403]] as const) {
+      const denied: globalThis.Response = await fetch(`http://127.0.0.1:${address.port}/api/research/goal-maps/${source.id}/export`, { headers: credential ? { Authorization: `Bearer ${credential}` } : {} });
+      assert.equal(denied.status, status, "export authorization remains enforced");
+      const body = await denied.text();
+      assert.ok(![researcher, legacyCode, sessionOne.learnerAccessToken].some(secret => body.includes(secret)), "authorization errors must not disclose credentials");
+    }
+    await pool.query("UPDATE concepts SET label=$2 WHERE id=$1", [conceptA, "転送テストの原因"]);
+  } finally {
+    Object.assign(console, originalConsole);
+    await new Promise<void>((resolve, reject) => exportServer.close(error => error ? reject(error) : resolve()));
+    await pool.query("UPDATE sessions SET learner_access_token_hash=$2 WHERE id=$1", [sessionTwo.id, tokenHash(sessionTwo.learnerAccessToken)]);
+  }
+  checkNames.push("saved legacy title/concept/link configured credentials refused without response/header/log disclosure; nonmatch exported");
   const sessionSeeds = await pool.query<{ mapId: string }>(
     `SELECT c.map_id AS "mapId" FROM session_seed_concepts seed
      JOIN kit_concept_items item ON item.id=seed.kit_concept_item_id
