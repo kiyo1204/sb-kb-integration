@@ -3361,6 +3361,65 @@ button.link-connector-label:active {
   display: grid;
   gap: 20px;
 }
+.activity-overview > p {
+  color: #59675f;
+}
+.activity-timeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr));
+  gap: 12px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: activity;
+}
+.activity-timeline > li {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #d6e0d9;
+  border-radius: 10px;
+  background: #f8fbf8;
+  counter-increment: activity;
+}
+.activity-timeline-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.activity-timeline-heading strong::before {
+  content: counter(activity) ". ";
+  color: #66816d;
+}
+.activity-state {
+  padding: 3px 8px;
+  border: 1px solid #c8d8cc;
+  border-radius: 999px;
+  background: #edf5ee;
+  color: #345d41;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.activity-timeline dl {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.activity-timeline dl > div {
+  display: grid;
+  grid-template-columns: minmax(105px, auto) minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+.activity-timeline dt,
+.survey-format {
+  color: #63716a;
+  font-size: 12px;
+}
+.activity-timeline dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .stage1-analysis-stats {
   display: flex;
   flex-wrap: wrap;
@@ -3389,6 +3448,88 @@ button.link-connector-label:active {
 .stage1-analysis-log button.is-selected {
   background: #e6edf3;
   border-color: #566776;
+}
+.operation-history {
+  gap: 8px;
+}
+.operation-history > details {
+  border: 1px solid #d3ddd6;
+  border-radius: 8px;
+  background: #fff;
+}
+.operation-history > details.is-selected {
+  border-color: #74917c;
+  background: #f4f8f4;
+}
+.operation-history > details > summary {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) minmax(180px, 1fr) minmax(100px, auto) minmax(180px, 1.4fr);
+  gap: 8px 14px;
+  padding: 11px 13px;
+  cursor: pointer;
+  list-style-position: inside;
+}
+.operation-history > details > summary > span {
+  overflow-wrap: anywhere;
+  color: #4f5d55;
+}
+.operation-details {
+  padding: 0 14px 14px;
+  border-top: 1px solid #e0e7e1;
+}
+.operation-details > p {
+  overflow-wrap: anywhere;
+}
+.operation-details pre {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border-radius: 6px;
+  background: #f4f6f4;
+}
+.map-diff-list {
+  margin: 16px 0;
+  padding: 12px 16px;
+  border-left: 3px solid #9bae9d;
+  background: #f6f9f6;
+}
+.map-diff-list h3,
+.map-diff-list p {
+  margin: 5px 0;
+}
+.map-diff-list p {
+  overflow-wrap: anywhere;
+}
+.snapshot-unavailable,
+.empty-history {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f3f5f3;
+  color: #526057;
+}
+.survey-answer-list {
+  display: grid;
+  gap: 12px;
+}
+.survey-answer-list article {
+  padding: 14px 16px;
+  border: 1px solid #d8e1da;
+  border-radius: 9px;
+  background: #f9fbf9;
+}
+.survey-answer-list h3 {
+  margin: 0 0 6px;
+  line-height: 1.5;
+}
+.survey-format {
+  margin: 0 0 10px;
+}
+.survey-answer {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .stage1-analysis-compare {
   display: grid;
@@ -3457,6 +3598,49 @@ button.link-connector-label:active {
 .map-history-preview .concept-node {
   cursor: default;
 }
+.history-change-tag {
+  align-self: flex-start;
+  margin: 3px 0 0;
+  padding: 2px 6px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: #fff;
+  color: #315c3e;
+  font-size: 11px;
+  font-weight: 750;
+}
+.concept-node.is-history-added {
+  border: 3px solid #368355;
+}
+.concept-node.is-history-removed {
+  border: 3px dashed #a94f4f;
+}
+.concept-node.is-history-changed {
+  border: 3px double #6571a2;
+}
+.map-history-preview .history-change-marker {
+  fill: #315c3e;
+  font-size: 12px;
+  font-weight: 750;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-linejoin: round;
+  stroke-width: 4px;
+}
+.map-history-preview .is-history-added .concept-edge-path {
+  stroke: #368355;
+  stroke-width: 3;
+}
+.map-history-preview .is-history-removed .concept-edge-path {
+  stroke: #a94f4f;
+  stroke-dasharray: 6 4;
+  stroke-width: 3;
+}
+.map-history-preview .is-history-changed .concept-edge-path {
+  stroke: #6571a2;
+  stroke-dasharray: 2 3;
+  stroke-width: 3;
+}
 .map-history-operation {
   margin-top: 16px;
 }
@@ -3475,5 +3659,8 @@ button.link-connector-label:active {
   }
   .map-history-controls label {
     grid-template-columns: 1fr;
+  }
+  .operation-history > details > summary {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

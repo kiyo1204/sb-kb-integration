@@ -7,10 +7,18 @@ type Operation = {
   id: string; mapId: string; mapType: string; researchRole: string | null;
   operationType: string; targetId: string; targetType: string; sequenceNumber: string;
   relatedOperationLogId: string | null;
+  relatedLegacyOperationLogId?: string | null;
+  eventSequenceNumber?: string;
+  schemaVersion?: number;
   historySource?: "LEGACY" | "EVENT"; eventId?: string;
   serverTimestamp: string; elapsedMs: number | null;
   before: unknown; after: unknown;
+  outcome?: string | null; reasonCode?: string | null; eventType?: string;
+  relatedEventId?: string | null; actorType?: string; targetLabel?: string | null;
 };
+type Stage = { id: string; stageType: string; orderIndex: number; status: string; startedAt: string | null; completedAt: string | null };
+type SurveyQuestion = { id: string; kind: "TEXT" | "CHOICE" | "RATING"; prompt: string; required: boolean; displayOrder: number; config: { options?: string[]; min?: number; max?: number; minLabel?: string; maxLabel?: string } };
+type SurveyAnswer = { stageId: string; questionId: string; answer: unknown; updatedAt: string };
 type Link = {
   id: string; sourceConceptId: string; targetConceptId: string; label: string;
 };
@@ -30,7 +38,9 @@ type HistoryReplay = {
 type Rating = { id: string; mapId: string; linkId: string; category: "U"|"I"|"P"|"V"; rationale: string; createdAt: string; evaluatorCode: string; operationLogId?:string|null;eventId?:string|null };
 type Reflection = { id: string; noteText: string; reportedByCode: string; operationLogId: string | null; eventId?: string | null };
 type Analysis = {
-  session: { id: string; participantCode: string | null; protocolKey: string };
+  session: { id: string; participantCode: string | null; protocolKey: string; studyGroup?: string | null; groupActivitySeconds?: number | null; startedAt?: string | null; completedAt?: string | null };
+  stages: Stage[];
+  survey?: { questions: SurveyQuestion[]; answers: SurveyAnswer[]; events: Array<Record<string, unknown>> };
   maps: MapData[];
   operations: Operation[];
   operationCounts: Record<string,number>;
@@ -50,6 +60,16 @@ const operationNames: Record<string, string> = { ADD_CONCEPT: "概念を追加",
 const operationName = (type: string) => operationNames[type] ?? `その他の操作（${type}）`;
 const mapName = (type: string) => ({ PRIOR: "Scratch-Build", KB: "Kit-Build", INTEGRATION: "統合マップ" } as Record<string,string>)[type] ?? type;
 const elapsed = (ms: number | null) => ms === null ? "不明" : `${Math.floor(ms / 60000)}分${Math.floor(ms / 1000) % 60}秒`;
+const activityNames: Record<string,string> = { LESSON:"授業動画", PRIOR_MAP:"Scratch-Build", KB_MAP:"Kit-Build", INTEGRATION_MAP:"統合マップ", PRE_ASSESSMENT:"事前評価", POST_ASSESSMENT:"事後評価", SELF_STUDY:"個人学習", SURVEY:"アンケート" };
+const statusNames: Record<string,string> = { COMPLETED:"完了", IN_PROGRESS:"進行中", NOT_STARTED:"未開始", PENDING:"未開始", SKIPPED:"スキップ" };
+const outcomeNames: Record<string,string> = { SUCCESS:"成功", FAILURE:"失敗", REJECTED:"拒否", CANCELLED:"取消", UNKNOWN:"不明" };
+const timestamp = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : "記録なし";
+function surveyAnswer(value: unknown): string {
+  if (value === null || value === undefined) return "未回答";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (typeof value === "object" && !Array.isArray(value) && "value" in value) return surveyAnswer((value as {value: unknown}).value);
+  return JSON.stringify(value);
+}
 const limitationText: Record<string, string> = {
   "Counts indicate operations, not learning quality.": "操作件数は学習の質を示すものではありません。",
   "Kit usage in other non-import events requires provenance-specific analysis.": "インポート以外の操作におけるキットの使用には、由来に基づく分析が必要です。",
@@ -59,21 +79,27 @@ const limitationText: Record<string, string> = {
 
 function targetLabel(op: Operation, map: MapData | undefined, replay: HistoryReplay | null) {
   const value = (op.after ?? op.before) as Record<string, unknown> | null;
+  const recordedSnapshots = [op.after, op.before].filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
+  const recordedConcepts = recordedSnapshots.flatMap(snapshot => Array.isArray(snapshot.concepts) ? snapshot.concepts.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item)) : []);
+  const recordedLinks = recordedSnapshots.flatMap(snapshot => Array.isArray(snapshot.links) ? snapshot.links.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item)) : []);
   const stateItem = op.historySource === "EVENT" ?
     op.targetType === "CONCEPT" ?
-      [...(replay?.afterState?.concepts ?? []), ...(replay?.beforeState?.concepts ?? [])].find(item=>item.id===op.targetId) :
-      [...(replay?.afterState?.links ?? []), ...(replay?.beforeState?.links ?? [])].find(item=>item.id===op.targetId)
+      [...(replay?.afterState?.concepts ?? []), ...(replay?.beforeState?.concepts ?? []), ...recordedConcepts].find(item=>item.id===op.targetId) :
+      [...(replay?.afterState?.links ?? []), ...(replay?.beforeState?.links ?? []), ...recordedLinks].find(item=>item.id===op.targetId)
     : null;
   const label = typeof stateItem?.label === "string" ? stateItem.label : typeof value?.label === "string" ? value.label : undefined;
-  if (op.targetType === "CONCEPT") return `概念：${label ?? map?.concepts.find(item => item.id === op.targetId)?.label ?? op.targetId}`;
+  if (op.targetType === "CONCEPT") {
+    const conceptLabel=label ?? map?.concepts.find(item => item.id === op.targetId)?.label;
+    return conceptLabel ? `概念：${conceptLabel}` : `概念名記録なし（ID：${op.targetId}）`;
+  }
   if (op.targetType === "LINK") {
     const link = stateItem && "sourceConceptId" in stateItem ? stateItem : value && typeof value.sourceConceptId === "string" && typeof value.targetConceptId === "string" ? value : map?.links.find(item => item.id === op.targetId);
     if (link && typeof link.sourceConceptId === "string" && typeof link.targetConceptId === "string") {
-      const concepts = [...(replay?.beforeState?.concepts ?? []), ...(replay?.afterState?.concepts ?? []), ...(map?.concepts ?? [])];
+      const concepts = [...(replay?.beforeState?.concepts ?? []), ...(replay?.afterState?.concepts ?? []), ...recordedConcepts, ...(map?.concepts ?? [])];
       const name = (id: string) => concepts.find(item => item.id === id)?.label ?? id;
       return `関係：${name(link.sourceConceptId)} → ${label ?? link.label ?? ""} → ${name(link.targetConceptId)}`;
     }
-    return `関係：${label ?? op.targetId}`;
+    return label ? `関係：${label}` : `関係名記録なし（ID：${op.targetId}）`;
   }
   return `${op.targetType}：${op.targetId}`;
 }
@@ -89,6 +115,21 @@ function compareSnapshots(before: HistoricalMapSnapshot, after: HistoricalMapSna
     concepts: difference(before.concepts, after.concepts, item => [item.label, item.positionX, item.positionY, item.mergedIntoConceptId]),
     links: difference(before.links, after.links, item => [item.label, item.sourceConceptId, item.targetConceptId, item.labelPositionX??null, item.labelPositionY??null]),
   };
+}
+
+function differenceItems<T extends {id:string}>(before:T[], after:T[], ids: Set<string>, label:(item:T)=>string) {
+  const oldMap=new Map(before.map(item=>[item.id,item]));const newMap=new Map(after.map(item=>[item.id,item]));
+  return [...ids].map(id=>({id,kind:!oldMap.has(id)?"ADDED" as const:!newMap.has(id)?"REMOVED" as const:"CHANGED" as const,before:oldMap.get(id),after:newMap.get(id)})).map(item=>({...item,label:label(item.after??item.before!)}));
+}
+const changeMark = (kind:"ADDED"|"REMOVED"|"CHANGED") => kind==="ADDED"?"＋ 追加":kind==="REMOVED"?"− 削除":"↔ 変更";
+function changeKindsFor<T extends {id:string}>(before:T[],after:T[],ids:Set<string>,side:"BEFORE"|"AFTER") {
+  const beforeIds=new Set(before.map(item=>item.id));const afterIds=new Set(after.map(item=>item.id));const present=side==="BEFORE"?beforeIds:afterIds;
+  return new Map([...ids].filter(id=>present.has(id)).map(id=>[id,!beforeIds.has(id)?"ADDED" as const:!afterIds.has(id)?"REMOVED" as const:"CHANGED" as const]));
+}
+function linkDescription(item: HistoricalMapSnapshot["links"][number], snapshot: HistoricalMapSnapshot) {
+  const names=new Map(snapshot.concepts.map(concept=>[concept.id,concept.label]));
+  const endpoint=(id:string)=>`${names.get(id)??id}（${id}）`;
+  return `${endpoint(item.sourceConceptId)} → ${item.label} → ${endpoint(item.targetConceptId)}${item.labelPositionX!=null?` · ラベル位置 (${item.labelPositionX}, ${item.labelPositionY})`:""}`;
 }
 
 function historicalLink(op:Operation,side:"BEFORE"|"AFTER") {
@@ -155,6 +196,12 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
   const map=data?.maps.find(m=>m.id===selectedMapId);
   const displayedReplay = historyReplay?.mapId === selectedMapId && historyReplay.sequenceNumber === historySequence ? historyReplay : null;
   const changes = displayedReplay?.beforeState && displayedReplay.afterState ? compareSnapshots(displayedReplay.beforeState, displayedReplay.afterState) : null;
+  const conceptDiffs = changes && displayedReplay?.beforeState && displayedReplay.afterState ? differenceItems(displayedReplay.beforeState.concepts,displayedReplay.afterState.concepts,changes.concepts.ids,item=>item.label) : [];
+  const linkDiffs = changes && displayedReplay?.beforeState && displayedReplay.afterState ? differenceItems(displayedReplay.beforeState.links,displayedReplay.afterState.links,changes.links.ids,item=>item.label) : [];
+  const beforeConceptKinds=changes&&displayedReplay?.beforeState&&displayedReplay.afterState?changeKindsFor(displayedReplay.beforeState.concepts,displayedReplay.afterState.concepts,changes.concepts.ids,"BEFORE"):undefined;
+  const afterConceptKinds=changes&&displayedReplay?.beforeState&&displayedReplay.afterState?changeKindsFor(displayedReplay.beforeState.concepts,displayedReplay.afterState.concepts,changes.concepts.ids,"AFTER"):undefined;
+  const beforeLinkKinds=changes&&displayedReplay?.beforeState&&displayedReplay.afterState?changeKindsFor(displayedReplay.beforeState.links,displayedReplay.afterState.links,changes.links.ids,"BEFORE"):undefined;
+  const afterLinkKinds=changes&&displayedReplay?.beforeState&&displayedReplay.afterState?changeKindsFor(displayedReplay.beforeState.links,displayedReplay.afterState.links,changes.links.ids,"AFTER"):undefined;
   const link=map?.links.find(l=>l.id===selectedLinkId);
   const labels=new Map(map?.concepts.map(c=>[c.id,c.label])??[]);
   const historicalOperations=(data?.operations??[]).filter(op=>
@@ -225,6 +272,16 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
       <ResearchDeliveryStatus sessionId={sessionId}/>
       {!data?<p role="status">分析データを読み込んでいます…</p>:(
         <>
+          <section className="session-card activity-overview">
+            <h2>活動概要</h2>
+            <p>記録された活動の時系列です。時刻や経過時間は記録上の観測値で、実際の学習時間を示すものではありません。</p>
+            {data.session.studyGroup && <p>群：{data.session.studyGroup}{data.session.groupActivitySeconds != null ? ` · 群活動記録：${data.session.groupActivitySeconds}秒` : ""}</p>}
+            {data.stages.length===0 ? <p>活動記録はありません。</p> : <ol className="activity-timeline">{[...data.stages].sort((a,b)=>a.orderIndex-b.orderIndex).map(stage=><li key={stage.id}>
+              <div className="activity-timeline-heading"><strong>{activityNames[stage.stageType]??stage.stageType}</strong><span className={`activity-state state-${stage.status.toLowerCase()}`}>{statusNames[stage.status]??stage.status}</span></div>
+              <dl><div><dt>記録された開始時刻</dt><dd>{timestamp(stage.startedAt)}</dd></div><div><dt>記録された完了時刻</dt><dd>{timestamp(stage.completedAt)}</dd></div>
+              {stage.startedAt&&stage.completedAt&&Number.isFinite(Date.parse(stage.startedAt))&&Number.isFinite(Date.parse(stage.completedAt))&&<div><dt>記録時刻の差</dt><dd>{elapsed(Math.max(0,Date.parse(stage.completedAt)-Date.parse(stage.startedAt)))}</dd></div>}</dl>
+            </li>)}</ol>}
+          </section>
           <section className="session-card">
             <h2>保存されたマップ</h2>
             <p>既存のマップ Editorを提出後read-onlyとして再利用します。完成形と操作履歴は別の情報です。</p>
@@ -239,8 +296,8 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
             </div>
           </section>
           <section className="session-card map-history-section">
-            <h2>マップ履歴再生</h2>
-            <p>操作を選ぶと、その直前と直後のマップを読み取り専用で比較できます。</p>
+            <h2>マップ操作履歴</h2>
+            <p>活動概要とは別に、記録されたマップ操作を時系列で確認できます。行を展開すると記録済みの詳細を表示します。</p>
             <label>対象マップ
               <select value={selectedMapId} onChange={e=>{
                 setHistoryLoading(true);setSelectedMapId(e.target.value);setHistorySequence(0);setSelectedOperationId("");
@@ -255,16 +312,20 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
               <p role="status">履歴を再生できません：{uiText(displayedReplay.reason ?? "理由を確認できません。")}</p>
             )}
             {historyLoading&&<p role="status">履歴状態を復元しています…</p>}
+            {replayOperations.length===0&&<p className="empty-history" role="status">このマップの操作履歴はありません。</p>}
             {replayOperations.length>0&&(
               <>
                 <h3>操作時系列</h3>
-                <div className="stage1-analysis-log">
+                <div className="stage1-analysis-log operation-history">
                   {replayOperations.map(op=>(
-                    <button className={op.sequenceNumber===String(historySequence)?"is-selected":""}
-                      type="button" key={op.id}
-                      onClick={()=>selectReplaySequence(Number(op.sequenceNumber))}>
-                      <strong>#{op.sequenceNumber} {operationName(op.operationType)}</strong><span>{mapName(op.mapType)} · {targetLabel(op, map, op.id === selectedOperationId ? displayedReplay : null)}</span><span>{new Date(op.serverTimestamp).toLocaleString()} · 作業開始から {elapsed(op.elapsedMs)}</span>
-                    </button>
+                    <details key={op.id} className={op.sequenceNumber===String(historySequence)?"is-selected":""} onToggle={event=>{if(event.currentTarget.open){setSelectedOperationId(op.id);selectReplaySequence(Number(op.sequenceNumber));}}}>
+                      <summary><strong>#{op.sequenceNumber} {operationName(op.operationType)}</strong><span>{timestamp(op.serverTimestamp)}</span><span>結果：{op.outcome ? outcomeNames[op.outcome]??op.outcome : "記録なし"}</span><span>対象：{op.targetLabel||targetLabel(op,map,op.id===selectedOperationId?displayedReplay:null)}</span></summary>
+                      <div className="operation-details">
+                        <p>{mapName(op.mapType)} · {op.historySource==="EVENT"?"新イベント":"旧操作ログ"} · 記録された経過時間：{elapsed(op.elapsedMs)}</p>
+                        {op.reasonCode&&<p>理由コード：{op.reasonCode}</p>}{op.historySource==="EVENT"&&op.relatedEventId&&<p>関連イベントID：{op.relatedEventId}</p>}{op.historySource==="EVENT"&&op.relatedLegacyOperationLogId&&<p>関連旧操作ログID：{op.relatedLegacyOperationLogId}</p>}{op.historySource!=="EVENT"&&op.relatedOperationLogId&&<p>関連操作ログID：{op.relatedOperationLogId}</p>}{op.eventId&&<p>イベントID：{op.eventId}</p>}{op.schemaVersion!=null&&<p>イベント形式：schema {op.schemaVersion}</p>}{op.eventSequenceNumber&&<p>イベント通番：{op.eventSequenceNumber}</p>}{op.actorType&&<p>記録された実行者種別：{op.actorType}</p>}
+                        <details><summary>変更前後の記録</summary><div className="stage1-analysis-compare"><div><h4>変更前</h4><pre>{op.before==null?"状態記録なし":JSON.stringify(op.before,null,2)}</pre></div><div><h4>変更後</h4><pre>{op.after==null?"状態記録なし":JSON.stringify(op.after,null,2)}</pre></div></div></details>
+                      </div>
+                    </details>
                   ))}
                 </div>
               </>
@@ -281,28 +342,23 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
               <button type="button" disabled={historySequence>=replayOperations.length||historyLoading}
                 onClick={()=>selectReplaySequence(historySequence+1)}>次へ</button>
             </div>
-            {operation&&(
-              <div className="map-history-operation">
-                <h3>選択中の操作：#{operation.sequenceNumber} {operationName(operation.operationType)}</h3>
-                <p>{mapName(operation.mapType)} / {targetLabel(operation, map, displayedReplay)}<br/>時刻：{new Date(operation.serverTimestamp).toLocaleString()} / 作業開始から：{elapsed(operation.elapsedMs)}</p>
-                {operation.relatedOperationLogId&&(
-                  <p>対象となった元操作ID：{operation.relatedOperationLogId}
-                    {" / "}{operationName(data.operations.find(op=>op.id===operation.relatedOperationLogId)?.operationType??"不明")}
-                  </p>
-                )}
-                <details><summary>変更前後の記録（JSON）</summary><div className="stage1-analysis-compare">
-                  <div><h4>変更前の記録</h4><pre>{JSON.stringify(operation.before,null,2)}</pre></div>
-                  <div><h4>変更後の記録</h4><pre>{JSON.stringify(operation.after,null,2)}</pre></div>
-                </div></details>
-              </div>
-            )}
             {displayedReplay?.status==="REPLAYABLE"&&displayedReplay.beforeState&&displayedReplay.afterState&&changes&&(
-              <><p>色枠で変化を表示。概念：追加 {changes.concepts.added}・削除 {changes.concepts.removed}・変更 {changes.concepts.changed}、関係：追加 {changes.links.added}・削除 {changes.links.removed}・変更 {changes.links.changed}</p><div className="map-history-compare">
-                <ReadOnlyMapSnapshot snapshot={displayedReplay.beforeState} title="選択操作の直前" highlightedConceptIds={changes.concepts.ids} highlightedLinkIds={changes.links.ids}/>
-                <ReadOnlyMapSnapshot snapshot={displayedReplay.afterState} title="選択操作の直後" highlightedConceptIds={changes.concepts.ids} highlightedLinkIds={changes.links.ids}/>
+              <><p>＋追加・−削除・↔変更を、色と記号で表示します。概念：追加 {changes.concepts.added}・削除 {changes.concepts.removed}・変更 {changes.concepts.changed}、関係：追加 {changes.links.added}・削除 {changes.links.removed}・変更 {changes.links.changed}</p>
+              <div className="map-diff-list"><h3>変更点</h3>{conceptDiffs.map(item=><p key={`concept-${item.id}`}><b>{changeMark(item.kind)} 概念</b>：{item.before&&item.after&&item.before.label!==item.after.label?`${item.before.label} → ${item.after.label}`:item.label}{item.before&&item.after&&<span> · 位置 ({item.before.positionX}, {item.before.positionY}) → ({item.after.positionX}, {item.after.positionY})</span>}</p>)}{linkDiffs.map(item=><p key={`link-${item.id}`}><b>{changeMark(item.kind)} 関係</b>：{item.before&&linkDescription(item.before,displayedReplay.beforeState!)} {item.before&&item.after&&" → "}{item.after&&linkDescription(item.after,displayedReplay.afterState!)}</p>)}{conceptDiffs.length+linkDiffs.length===0&&<p>比較可能な変更はありません。</p>}</div>
+              <div className="map-history-compare">
+                <ReadOnlyMapSnapshot snapshot={displayedReplay.beforeState} title="選択操作の直前" allowZoom highlightedConceptIds={changes.concepts.ids} highlightedLinkIds={changes.links.ids} historyConceptChangeKinds={beforeConceptKinds} historyLinkChangeKinds={beforeLinkKinds}/>
+                <ReadOnlyMapSnapshot snapshot={displayedReplay.afterState} title="選択操作の直後" allowZoom highlightedConceptIds={changes.concepts.ids} highlightedLinkIds={changes.links.ids} historyConceptChangeKinds={afterConceptKinds} historyLinkChangeKinds={afterLinkKinds}/>
               </div></>
             )}
+            {operation&&displayedReplay&&displayedReplay.status!=="REPLAYABLE"&&<p className="snapshot-unavailable" role="status">状態記録なし：選択した操作の変更前後を復元できません。</p>}
           </section>
+          {data.session.protocolKey==="STAGE1_5"&&<section className="session-card survey-analysis"><h2>アンケート回答</h2>
+            {!data.survey||data.survey.questions.length===0?<p>アンケートの設問・回答記録はありません。</p>:<div className="survey-answer-list">{[...data.survey.questions].sort((a,b)=>a.displayOrder-b.displayOrder).map((question,index)=>{
+              const answers=data.survey!.answers.filter(answer=>answer.questionId===question.id);
+              return <article key={question.id}><h3>{index+1}. {question.prompt}</h3><p className="survey-format">{question.kind==="TEXT"?"自由記述":question.kind==="CHOICE"?"選択式（"+(question.config.options??[]).join("・")+"）":`段階評価（${question.config.min??"?"}〜${question.config.max??"?"}${question.config.minLabel?`：${question.config.minLabel}`:""}${question.config.maxLabel?` 〜 ${question.config.maxLabel}`:""}）`}</p>
+                {answers.length?answers.map((answer,i)=><p className="survey-answer" key={`${answer.stageId}-${i}`}>回答：{surveyAnswer(answer.answer)} · 記録時刻：{timestamp(answer.updatedAt)}</p>):<p className="survey-answer">回答記録なし</p>}</article>;
+            })}</div>}
+          </section>}
           {data.session.protocolKey === "STAGE1_4" && <section className="session-card">
             <h2>記述的特徴量（v2）</h2>
             <p>「引き継ぎ」はSTEP 2に外化された知識であり、授業前の既有知識を意味しません。

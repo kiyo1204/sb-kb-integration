@@ -3369,6 +3369,8 @@ export function ConceptCanvas({
   onCancelOperation,
   highlightedConceptIds,
   highlightedLinkIds,
+  historyConceptChangeKinds,
+  historyLinkChangeKinds,
 }: {
   mapId: string;
   mapType: MapResponse["type"];
@@ -3380,6 +3382,8 @@ export function ConceptCanvas({
   readOnly: boolean;
   highlightedConceptIds?: ReadonlySet<string>;
   highlightedLinkIds?: ReadonlySet<string>;
+  historyConceptChangeKinds?: ReadonlyMap<string, "ADDED" | "REMOVED" | "CHANGED">;
+  historyLinkChangeKinds?: ReadonlyMap<string, "ADDED" | "REMOVED" | "CHANGED">;
   canEditConceptStructure: boolean;
   canEditLinkLabel: boolean;
   positionSaving: boolean;
@@ -4993,7 +4997,7 @@ export function ConceptCanvas({
                 conceptsById.get(edge.target)?.label ?? edge.target;
 
               return (
-                <g key={edge.id} className={highlightedLinkIds?.has(edge.id) ? "is-history-changed" : undefined}>
+                <g key={edge.id} className={highlightedLinkIds?.has(edge.id) ? `is-history-changed${historyLinkChangeKinds?.has(edge.id) ? ` is-history-${historyLinkChangeKinds.get(edge.id)!.toLowerCase()}` : ""}` : undefined}>
                   <path
                     className="concept-edge-hit-target"
                     d={geometry.path}
@@ -5039,6 +5043,7 @@ export function ConceptCanvas({
                       aria-hidden="true"
                     />
                   )}
+                  {historyLinkChangeKinds?.has(edge.id) && <text className="history-change-marker" x={center.x} y={center.y - 18} textAnchor="middle">{historyLinkChangeKinds.get(edge.id)==="ADDED"?"＋ 追加":historyLinkChangeKinds.get(edge.id)==="REMOVED"?"− 削除":"↔ 変更"}</text>}
                 </g>
               );
             })}
@@ -5258,7 +5263,7 @@ export function ConceptCanvas({
 
             return (
               <article
-                className={`concept-node${isDragging ? " is-dragging" : ""}${editingConceptId === concept.id ? " is-editing" : ""}${positionSaving ? " is-position-saving" : ""}${highlightedConceptIds?.has(concept.id) ? " is-history-changed" : ""}`}
+                className={`concept-node${isDragging ? " is-dragging" : ""}${editingConceptId === concept.id ? " is-editing" : ""}${positionSaving ? " is-position-saving" : ""}${highlightedConceptIds?.has(concept.id) ? ` is-history-changed${historyConceptChangeKinds?.has(concept.id) ? ` is-history-${historyConceptChangeKinds.get(concept.id)!.toLowerCase()}` : ""}` : ""}`}
                 key={concept.id}
                 role="listitem"
                 tabIndex={canOpenConceptDrawer ? 0 : undefined}
@@ -5296,6 +5301,7 @@ export function ConceptCanvas({
                 {!usesMapEditorDrawers && (
                   <span className="concept-node-label">Concept</span>
                 )}
+                {historyConceptChangeKinds?.has(concept.id) && <span className="history-change-tag">{historyConceptChangeKinds.get(concept.id)==="ADDED"?"＋ 追加":historyConceptChangeKinds.get(concept.id)==="REMOVED"?"− 削除":"↔ 変更"}</span>}
                 {usesMapEditorDrawers ? (
                   <h3>{concept.label}</h3>
                 ) : readOnly || !canEditConceptStructure || concept.isSeed ? (
@@ -5723,12 +5729,16 @@ export function ReadOnlyMapSnapshot({
   allowZoom = false,
   highlightedConceptIds,
   highlightedLinkIds,
+  historyConceptChangeKinds,
+  historyLinkChangeKinds,
 }: {
   snapshot: HistoricalMapSnapshot;
   title: string;
   allowZoom?: boolean;
   highlightedConceptIds?: ReadonlySet<string>;
   highlightedLinkIds?: ReadonlySet<string>;
+  historyConceptChangeKinds?: ReadonlyMap<string, "ADDED" | "REMOVED" | "CHANGED">;
+  historyLinkChangeKinds?: ReadonlyMap<string, "ADDED" | "REMOVED" | "CHANGED">;
 }) {
   const [zoom, setZoom] = useState(1);
   const concepts: Concept[] = snapshot.concepts.map((item) => ({
@@ -5753,6 +5763,8 @@ export function ReadOnlyMapSnapshot({
         links={links}
         highlightedConceptIds={highlightedConceptIds}
         highlightedLinkIds={highlightedLinkIds}
+        historyConceptChangeKinds={historyConceptChangeKinds}
+        historyLinkChangeKinds={historyLinkChangeKinds}
         kitDefinitionName={null}
         kitConcepts={[]}
         kitLinks={[]}
