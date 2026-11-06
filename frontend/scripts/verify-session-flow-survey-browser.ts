@@ -205,11 +205,15 @@ try {
     "Mock API real browser: learner current-only SURVEY, required focus/input retention, typed save, seeded Concept rename/delete disabled: PASS",
   );
   await ctx.close();
-  const research=await browser.newContext();const createPage=await research.newPage();let creation:Record<string,unknown>|null=null;
+  const research=await browser.newContext();const createPage=await research.newPage();let creation:Record<string,unknown>|null=null;let settingsUpdate:{questions:Record<string,unknown>[]} | null=null;
   await createPage.addInitScript(()=>sessionStorage.setItem("stage1-access-token","mock-ui-only-long-enough-1234567890"));
   await createPage.route("**/api/**",async route=>{const req=route.request(),path=new URL(req.url()).pathname;
     if(path==="/api/me")return route.fulfill({json:{role:"researcher"}});
     if(path==="/api/research/stage1/settings")return route.fulfill({json:{minutes:1}});
+    if(path.endsWith("/delivery-status"))return route.fulfill({json:{clientReported:[],serverVerified:[],missingIsUnknown:true}});
+    if(path===`/api/sessions/${sid}/flow`)return route.fulfill({json:{session:{id:sid,status:"NOT_STARTED",protocolKey:"STAGE1_5",studyGroup:null,groupActivitySeconds:60},stages:[],currentStage:null,nextStage:null,serverNow:new Date().toISOString()}});
+    if(path===`/api/research/stage1/sessions/${sid}/survey`)return route.fulfill({json:{questions:(creation!.surveyQuestions as Record<string,unknown>[]).map((q,i)=>({...q,id:questions[i].id,displayOrder:i})),answers:[],events:[]}});
+    if(path===`/api/research/stage1/sessions/${sid}/survey/questions`){settingsUpdate=req.postDataJSON();const valid=settingsUpdate!.questions.every(q=>Object.keys(q).every(k=>["id","kind","prompt","required","config"].includes(k)));return route.fulfill({status:valid?200:400,json:valid?{saved:true}:{error:"invalid_questions",message:"設問の保存項目が不正です。"}});}
     if(path==="/api/kits")return route.fulfill({json:{kits:[{id:cid,name:"模擬Kit"}]}});
     if(path===`/api/kits/${cid}`)return route.fulfill({json:{concepts:[{kitConceptItemId:cid,label:"模擬初期概念"}],links:[]}});
     if(path==="/api/research/stage1/sessions"&&req.method()==="POST"){creation=req.postDataJSON();return route.fulfill({status:201,json:{id:sid,learnerAccessToken:"mock-not-a-server-credential"}});}
@@ -220,7 +224,9 @@ try {
   let fields=createPage.locator("fieldset").filter({has:createPage.locator("textarea")});
   await fields.nth(0).locator("textarea").first().fill("模擬選択の設問");await fields.nth(0).getByRole("combobox").selectOption("CHOICE");await fields.nth(0).getByLabel("選択肢（1行に1項目）").fill("部品A\n部品B");await createPage.getByRole("button",{name:"設問を追加",exact:true}).click();
   fields=createPage.locator("fieldset").filter({has:createPage.locator("textarea")});await fields.nth(1).locator("textarea").first().fill("模擬尺度の設問");await fields.nth(1).getByRole("combobox").selectOption("RATING");await fields.nth(1).getByLabel("回答必須").uncheck();await fields.nth(1).getByRole("button",{name:"上へ",exact:true}).click();await createPage.getByRole("button",{name:"設問を追加",exact:true}).click();await fields.nth(2).getByRole("button",{name:"設問を削除",exact:true}).click();assert.equal(await fields.count(),2);
-  await createPage.getByLabel("模擬初期概念",{exact:true}).check();await createPage.getByRole("button",{name:"活動 1 セッションを作成",exact:true}).click();await createPage.getByText("セッションを作成しました。学習者用コードを安全な方法で本人に渡してください。",{exact:true}).waitFor();assert.ok(creation);assert.equal(Object.hasOwn(creation!,"studyGroup"),false);const sent=creation as {seedConceptIds:string[];surveyQuestions:{kind:string;required:boolean}[]};assert.deepEqual(sent.seedConceptIds,[cid]);assert.deepEqual(sent.surveyQuestions.map(q=>q.kind),["RATING","CHOICE"]);assert.equal(sent.surveyQuestions[0].required,false);await research.close();
+  await createPage.getByLabel("模擬初期概念",{exact:true}).check();await createPage.getByRole("button",{name:"活動 1 セッションを作成",exact:true}).click();await createPage.getByText("セッションを作成しました。学習者用コードを安全な方法で本人に渡してください。",{exact:true}).waitFor();assert.ok(creation);assert.equal(Object.hasOwn(creation!,"studyGroup"),false);const sent=creation as {seedConceptIds:string[];surveyQuestions:{kind:string;required:boolean}[]};assert.deepEqual(sent.seedConceptIds,[cid]);assert.deepEqual(sent.surveyQuestions.map(q=>q.kind),["RATING","CHOICE"]);assert.equal(sent.surveyQuestions[0].required,false);
+  await createPage.goto(url+"sessions/"+sid);const editor=createPage.locator("fieldset").filter({has:createPage.locator("textarea")});await editor.nth(0).locator("textarea").first().fill("更新後の模擬尺度");
+  const updateResponse=createPage.waitForResponse(r=>r.url().endsWith("/survey/questions")&&r.request().method()==="PUT");await createPage.getByRole("button",{name:"アンケート設定を保存",exact:true}).click();assert.equal((await updateResponse).status(),200,"GET metadata must not be echoed into strict PUT question input");await createPage.getByText("保存しました。",{exact:true}).waitFor();assert.ok(settingsUpdate);assert.equal(Object.hasOwn(settingsUpdate!.questions[0],"displayOrder"),false);assert.equal(settingsUpdate!.questions[0].id,questions[0].id);await research.close();
   console.log("Mock API real browser: researcher 5-stage creation, Kit seed selection, survey types/reorder/delete/optional without group fields: PASS");
 
 } finally {

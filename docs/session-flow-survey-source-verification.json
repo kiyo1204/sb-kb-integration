@@ -471,7 +471,7 @@
     },
     {
       "path": "frontend/scripts/verify-session-flow-survey-browser.ts",
-      "sha256CanonicalLf": "8308d2e8a489ed84d94dec5a90ce8e912e325461e398a1df1a877045d75e9559"
+      "sha256CanonicalLf": "5bfff1dce35e7775536cc2cddb85abc693440d808133a3ca80ca42f4c5d3b38b"
     },
     {
       "path": "frontend/scripts/verify-undo-role-browser.ts",
@@ -527,7 +527,7 @@
     },
     {
       "path": "frontend/src/Survey.tsx",
-      "sha256CanonicalLf": "261576c73e09d4c54374bce562bb7f4abe493d4bf26f1ce725950f4518a8d64d"
+      "sha256CanonicalLf": "ea112d254345174af616cd0a4786727df1a018b7313bba26f1c2ddb0983e302e"
     },
     {
       "path": "frontend/src/TutorialPage.tsx",
@@ -567,5 +567,16 @@
     }
   ],
   "initialBase": "3284a408f21e6ba28ca71135efe2da0dd969c731",
-  "integratedMain": "bc6c07b8a84f3fa7f7ecf1c3f65eee0743c95f4e"
+  "integratedMain": "bc6c07b8a84f3fa7f7ecf1c3f65eee0743c95f4e",
+  "fullLocalSuiteCommit": "ef25286f47e04323738d6250dc976ac0cf039d38",
+  "frontendFollowup": {
+    "reason": "Project survey GET metadata to strict question input; preserve IDs for pre-start edit",
+    "passed": [
+      "frontend typecheck",
+      "frontend lint",
+      "frontend build",
+      "test:session-flow-survey-browser GET/edit/PUT roundtrip"
+    ],
+    "databaseAccess": false
+  }
 }

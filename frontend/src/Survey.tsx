@@ -386,7 +386,9 @@ export function ResearchSurvey({
         return r.json();
       })
       .then((d) => {
-        if (active) setQuestions(d.questions);
+        if (active) setQuestions(d.questions.map((q:SurveyQuestion)=>({
+          id:q.id,kind:q.kind,prompt:q.prompt,required:q.required,config:q.config,
+        })));
       })
       .catch(() => {
         if (active) setStatus("アンケートを取得できませんでした。");

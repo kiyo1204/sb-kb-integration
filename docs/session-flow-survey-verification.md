@@ -53,3 +53,12 @@ npm run db:mock --prefix backend -- check --name stage1_mock_survey_release
 ## 後片付け・限界
 
 初回準備、再試行、main取り込み後を含む5コンテナーはID・名前・purpose/nonceを照合して削除済み（session-flow-survey-cleanup.json）。元のACK待ち1件には触れていない。既存環境へのマイグレーション適用、実機LAN、複数実端末、本番運用、バックアップ復元訓練は未確認。活動時間の研究上の扱いは決めない。所属不明の旧下書きの隔離保持を維持する。GitHub CIはPR作成後に実走行を別途確認する。
+
+
+## PR作成後の再編集回帰（frontendのみ）
+
+初期PR HEAD ef25286のCI成功は、この追加回帰を含む証拠とは区別する。追加点検で、ResearchSurveyがGETのdisplayOrderを保存用設問へ残し、厳密なPUT検証に拒否される不整合を確認した。取得データをid/kind/prompt/required/configへ明示投影する修正を行った。API・DB契約・バックエンドは変更していない。
+
+作成→セッションを開く→既存設問を編集→PUTのブラウザー回帰を追加。最初の試行は送信状態APIの模擬応答が未実装で準備失敗し、正しい応答を補った後、修正前の400応答を再現。修正後は200・同じ設問ID・displayOrder非送信を確認して成功した。`npm run typecheck --prefix frontend`、`npm run lint --prefix frontend`、`npm run build --prefix frontend`、`npm run test:session-flow-survey-browser --prefix frontend`を再実行して全て成功。
+
+ローカルの33件集計はfrontend再編集修正前、追加UI検証は修正後である。最終HEADの全体実行はGitHub CIの実走行と併せて確認する。追加のDB接続・マイグレーション・データ変更は行っていない。
