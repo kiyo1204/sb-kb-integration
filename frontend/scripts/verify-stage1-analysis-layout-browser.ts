@@ -37,6 +37,7 @@ const after = {
 let protocol = "STAGE1_5";
 let emptyHistory = false;
 let noSnapshot = false;
+let replayUnavailable = false;
 
 try {
   const context = await browser.newContext({ viewport: { width: 1500, height: 1100 } });
@@ -52,7 +53,7 @@ try {
         session: { id: sid, participantCode: "MOCK-01", protocolKey: protocol, studyGroup: five ? null : "EXPERIMENTAL", groupActivitySeconds: five ? null : 3600 },
         stages: stages(five ? ["LESSON", "PRIOR_MAP", "KB_MAP", "INTEGRATION_MAP", "SURVEY"] : ["LESSON", "PRIOR_MAP", "KB_MAP", "INTEGRATION_MAP"]),
         maps: [{ id: mapId, type: "PRIOR", status: "SUBMITTED", researchRole: "learner_map", concepts: before.concepts.map(({id,label})=>({id,label})), links: before.links.map(({id,sourceConceptId,targetConceptId,label})=>({id,sourceConceptId,targetConceptId,label})), historyReplayStatus: "AVAILABLE" }],
-        operations: emptyHistory ? [] : [{ id: operationId, mapId, mapType: "PRIOR", researchRole: "learner_map", operationType: "EDIT_LINK", targetId: "l1", targetType: "LINK", sequenceNumber: "1", relatedOperationLogId: null, relatedEventId: "event-related", historySource: "EVENT", eventId: operationId, eventType: "EDIT_LINK", actorType: "LEARNER", outcome: "SUCCESS", serverTimestamp: start, elapsedMs: 5000, before: { links: [before.links[0]] }, after: { links: [after.links[0]] } }],
+        operations: emptyHistory ? [] : [{ id: operationId, mapId, mapType: "PRIOR", researchRole: "learner_map", operationType: "EDIT_LINK", targetId: "l1", targetType: "LINK", sequenceNumber: "1", relatedOperationLogId: null, relatedEventId: "event-related", historySource: "EVENT", eventId: operationId, eventType: "EDIT_LINK", actorType: "LEARNER", outcome: noSnapshot ? "REJECTED" : "SUCCESS", serverTimestamp: start, elapsedMs: 5000, before: noSnapshot ? null : { links: [before.links[0]] }, after: noSnapshot ? null : { links: [after.links[0]] } }],
         operationCounts: emptyHistory ? {} : { EDIT_LINK: 1 }, features: {}, propositionEvaluations: [], reflectionNotes: [], limitations: [],
         ...(five ? { survey: { questions: [
           { id: "q1", kind: "TEXT", prompt: "自由記述の設問", required: true, displayOrder: 0, config: {} },
@@ -67,7 +68,8 @@ try {
     }
     if (path === `/api/research/stage1/sessions/${sid}/maps/${mapId}/history`) {
       const sequence = new URL(route.request().url()).searchParams.get("sequenceNumber");
-      if (sequence === "1" && noSnapshot) return route.fulfill({ json: { status: "PARTIAL", reason: null, mapId, mapType: "PRIOR", sequenceNumber: 1, operation: null, beforeState: null, afterState: null } });
+      if (sequence === "1" && replayUnavailable) return route.fulfill({ json: { status: "PARTIAL", reason: null, mapId, mapType: "PRIOR", sequenceNumber: 1, operation: null, beforeState: null, afterState: null } });
+      if (sequence === "1" && noSnapshot) return route.fulfill({ json: { status: "REPLAYABLE", reason: null, mapId, mapType: "PRIOR", sequenceNumber: 1, operation: { id: operationId, before: null, after: null }, beforeState: before, afterState: before } });
       if (sequence === "1" && !emptyHistory) return route.fulfill({ json: { status: "REPLAYABLE", reason: null, mapId, mapType: "PRIOR", sequenceNumber: 1, operation: null, beforeState: before, afterState: after } });
       if (sequence === "0") return route.fulfill({ json: { status: "REPLAYABLE", reason: null, mapId, mapType: "PRIOR", sequenceNumber: 0, operation: null, beforeState: before, afterState: before } });
       return route.fulfill({ json: { status: "PARTIAL", reason: "mock snapshot unavailable", mapId, mapType: "PRIOR", sequenceNumber: 1, operation: null, beforeState: null, afterState: null } });
@@ -99,6 +101,12 @@ try {
   await page.locator(".operation-history summary").first().click();
   await page.getByText("状態記録なし：選択した操作の変更前後を復元できません。", { exact: true }).waitFor();
   assert.equal(await page.locator(".map-history-compare").count(), 0, "missing snapshots must not render fabricated map differences");
+  assert.equal(await page.locator(".map-diff-list").count(), 0, "reconstructed history is not evidence of event snapshots");
+  replayUnavailable = true;
+  await page.goto(`${url}research/stage1/${sid}/analysis`);
+  await page.locator(".operation-history summary").first().click();
+  await page.getByText("状態記録なし：選択した操作の変更前後を復元できません。", { exact: true }).waitFor();
+  assert.equal(await page.locator(".map-history-compare").count(), 0);
 
   emptyHistory = true;
   protocol = "STAGE1_6";

@@ -193,9 +193,10 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
   },[sessionId,selectedMapId,historySequence]);
 
   const operation=data?.operations.find(o=>o.id===selectedOperationId);
+  const operationHasNoState=!!operation&&operation.before==null&&operation.after==null;
   const map=data?.maps.find(m=>m.id===selectedMapId);
   const displayedReplay = historyReplay?.mapId === selectedMapId && historyReplay.sequenceNumber === historySequence ? historyReplay : null;
-  const changes = displayedReplay?.beforeState && displayedReplay.afterState ? compareSnapshots(displayedReplay.beforeState, displayedReplay.afterState) : null;
+  const changes = !operationHasNoState && displayedReplay?.beforeState && displayedReplay.afterState ? compareSnapshots(displayedReplay.beforeState, displayedReplay.afterState) : null;
   const conceptDiffs = changes && displayedReplay?.beforeState && displayedReplay.afterState ? differenceItems(displayedReplay.beforeState.concepts,displayedReplay.afterState.concepts,changes.concepts.ids,item=>item.label) : [];
   const linkDiffs = changes && displayedReplay?.beforeState && displayedReplay.afterState ? differenceItems(displayedReplay.beforeState.links,displayedReplay.afterState.links,changes.links.ids,item=>item.label) : [];
   const beforeConceptKinds=changes&&displayedReplay?.beforeState&&displayedReplay.afterState?changeKindsFor(displayedReplay.beforeState.concepts,displayedReplay.afterState.concepts,changes.concepts.ids,"BEFORE"):undefined;
@@ -350,7 +351,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
                 <ReadOnlyMapSnapshot snapshot={displayedReplay.afterState} title="選択操作の直後" allowZoom highlightedConceptIds={changes.concepts.ids} highlightedLinkIds={changes.links.ids} historyConceptChangeKinds={afterConceptKinds} historyLinkChangeKinds={afterLinkKinds}/>
               </div></>
             )}
-            {operation&&displayedReplay&&displayedReplay.status!=="REPLAYABLE"&&<p className="snapshot-unavailable" role="status">状態記録なし：選択した操作の変更前後を復元できません。</p>}
+            {operation&&displayedReplay&&(operationHasNoState||displayedReplay.status!=="REPLAYABLE")&&<p className="snapshot-unavailable" role="status">状態記録なし：選択した操作の変更前後を復元できません。</p>}
           </section>
           {data.session.protocolKey==="STAGE1_5"&&<section className="session-card survey-analysis"><h2>アンケート回答</h2>
             {!data.survey||data.survey.questions.length===0?<p>アンケートの設問・回答記録はありません。</p>:<div className="survey-answer-list">{[...data.survey.questions].sort((a,b)=>a.displayOrder-b.displayOrder).map((question,index)=>{
