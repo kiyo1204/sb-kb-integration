@@ -1,0 +1,18 @@
+{
+  "syntheticOnly": true,
+  "checks": [
+    "five stages/null group; SB seed restrictions, ordinary edits, provenance and replay",
+    "KB matched/display, stale structural result rejected by submit, corrected state rechecked and submitted",
+    "single/nested Merge release; source denial; original Link labels/positions restored; unrelated edits retained; failure and receipt rollback; same-key retry; missing history refused; Undo/Redo and immutable prior events",
+    "integration initial SB provenance/Kit assignment; direct feedback denied; edit/move/reconnect/import/delete/cascade Undo/Redo; injected failure rolls back; same-key retry commits once",
+    "initial/final DB and all map-event replay prefixes; raw JSON/common CSV/map detail IDs/count/order/outcome/time/before/after and provenance exact",
+    "legacy 4/6 export versions/group/assessment shape and data unchanged across new five-flow run"
+  ],
+  "mapEventCount": 63,
+  "integrationEventCount": 47,
+  "knownUnresolved": [
+    "Merge release restricted to new-five-flow integration; ambiguous history refused",
+    "new-five-flow features undefined",
+    "SB link-label coordinate inheritance not asserted as a requirement"
+  ]
+}

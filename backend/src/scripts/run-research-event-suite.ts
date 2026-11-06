@@ -68,6 +68,7 @@ try {
     "test:event-catalog",
     "test:research-event-schema",
     "test:undo-redo:unit",
+    "test:merge-release",
     "test:map-mixed-history",
     "test:research-events",
     "test:event-export-samples",
