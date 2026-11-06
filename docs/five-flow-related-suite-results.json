@@ -1,0 +1,42 @@
+[
+  {
+    "test": "test:stage1:integration",
+    "exitCode": 0,
+    "elapsedMs": 24846
+  },
+  {
+    "test": "test:session-flow-survey",
+    "exitCode": 0,
+    "elapsedMs": 8477
+  },
+  {
+    "test": "test:five-flow-composite",
+    "exitCode": 0,
+    "elapsedMs": 14035
+  },
+  {
+    "test": "test:map-api-v2",
+    "exitCode": 0,
+    "elapsedMs": 7134
+  },
+  {
+    "test": "test:map-failure-retry",
+    "exitCode": 0,
+    "elapsedMs": 6914
+  },
+  {
+    "test": "test:map-auto-submit-v2",
+    "exitCode": 0,
+    "elapsedMs": 3359
+  },
+  {
+    "test": "test:delivery-reliability",
+    "exitCode": 0,
+    "elapsedMs": 10066
+  },
+  {
+    "test": "test:five-flow-feedback-browser",
+    "exitCode": 0,
+    "elapsedMs": 10888
+  }
+]
