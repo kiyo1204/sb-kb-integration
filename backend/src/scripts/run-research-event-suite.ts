@@ -103,6 +103,7 @@ try {
     await start();
     await run("test:research-log-ui", true);
     await run("test:link-position-browser", true);
+    await run("test:undo-role-browser", true);
     await run("test:delivery-browser", true);
     await run("test:event-export-browser", true);
     await run("test:data-management-browser", true);

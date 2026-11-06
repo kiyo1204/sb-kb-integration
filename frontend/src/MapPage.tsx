@@ -621,6 +621,7 @@ export default function MapPage({
     const candidate =
       action === "UNDO" ? undoRedoState?.undoOperation : undoRedoState?.redoOperation;
     if (
+      !isLearner ||
       !currentMap ||
       ! ["STAGE1_4", "STAGE1_6"].includes(currentMap.sessionProtocolKey ?? "") ||
       (currentMap.type !== "PRIOR" &&
@@ -2062,7 +2063,7 @@ export default function MapPage({
         supplementalContent={integrationEditorSupplement}
         additionalBusy={mergingConcepts || undoRedoBusy}
         undoRedoState={
-          ["STAGE1_4", "STAGE1_6"].includes(state.map.sessionProtocolKey ?? "") ? undoRedoState : null
+          isLearner && ["STAGE1_4", "STAGE1_6"].includes(state.map.sessionProtocolKey ?? "") ? undoRedoState : null
         }
         undoRedoFeedback={undoRedoFeedback}
         onUndoRedo={performUndoRedo}
@@ -2830,7 +2831,7 @@ function MapEditorShell({
                   ? "提出済み"
                   : "保存済み"}
           </p>
-          {undoRedoState && (
+          {isLearner && undoRedoState && (
             <div className="map-editor-history-actions" aria-label="編集履歴">
               <button
                 type="button"
