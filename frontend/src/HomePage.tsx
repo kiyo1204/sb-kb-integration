@@ -246,6 +246,8 @@ function ResearchSessions() {
   const [sessions, setSessions] = useState<ResearchSession[] | null>(null);
   const [error, setError] = useState(false);
   const [reload, setReload] = useState(0);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     apiFetch("/api/research/stage1/sessions", { signal: controller.signal }).then(async response => {
@@ -255,10 +257,30 @@ function ResearchSessions() {
       .catch(() => { if (!controller.signal.aborted) setError(true); });
     return () => controller.abort();
   }, [reload]);
+  async function deleteEmptySession(session: ResearchSession) {
+    const label = session.participantCode || "参加者コードなし";
+    if (!window.confirm(`${label} の未開始Sessionを削除します。削除後は元に戻せません。\n\n学習者の記録がある場合は削除されず、確認付き削除へ案内されます。続けますか？`)) return;
+    setDeletingId(session.id);
+    setDeleteError(null);
+    try {
+      const response = await apiFetch(`/api/research/stage1/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+      const result = await response.json().catch(() => ({})) as { message?: string; error?: string };
+      if (!response.ok) {
+        setDeleteError(result.message ?? "Sessionを削除できませんでした。更新して状態を確認してください。");
+        return;
+      }
+      setReload(value => value + 1);
+    } catch {
+      setDeleteError("Sessionを削除できませんでした。接続を確認して更新してください。");
+    } finally {
+      setDeletingId(null);
+    }
+  }
   return <section className="home-card research-session-list" aria-labelledby="research-sessions-heading">
     <div className="home-card-heading-row"><div><h2 id="research-sessions-heading">セッション一覧</h2><p>新しいセッションから表示します。</p></div>
       <button type="button" className="home-refresh-button" onClick={() => setReload(value => value + 1)}>更新</button></div>
     {error && <p className="home-action-error" role="alert">一覧を取得できませんでした。接続を確認して更新してください。</p>}
+    {deleteError && <p className="home-action-error" role="alert">{deleteError} <a href="/research/data-management">確認付き削除へ</a></p>}
     {!sessions && !error && <p role="status">セッションを読み込んでいます…</p>}
     {sessions?.length === 0 && <p>セッションはまだありません。</p>}
     {sessions && sessions.length > 0 && <div className="research-session-table-wrap"><table className="research-session-table">
@@ -268,7 +290,7 @@ function ResearchSessions() {
         <td>{session.status === "NOT_STARTED" ? "未開始" : session.status === "IN_PROGRESS" ? "進行中" : "完了"}</td>
         <td>{session.status === "IN_PROGRESS" && session.currentStageType ? `STEP ${(session.currentStageOrder ?? 0) + 1}：${stageNames[session.currentStageType] ?? session.currentStageType}` : "—"}</td>
         <td>{session.startedAt ? formatDate(session.startedAt) : "—"}</td><td>{session.completedAt ? formatDate(session.completedAt) : "—"}</td>
-        <td><a className="home-secondary-button" href={`/sessions/${session.id}`} aria-label={`${session.participantCode || "参加者コードなし"}のセッションを開く`}>開く</a></td>
+        <td><a className="home-secondary-button" href={`/sessions/${session.id}`} aria-label={`${session.participantCode || "参加者コードなし"}のセッションを開く`}>開く</a>{session.status === "NOT_STARTED" && <button type="button" className="home-secondary-button" disabled={deletingId !== null} onClick={() => void deleteEmptySession(session)} aria-label={`${session.participantCode || "参加者コードなし"}の未開始Sessionを削除`}>{deletingId === session.id ? "削除中…" : "削除"}</button>}</td>
       </tr>)}</tbody>
     </table></div>}
   </section>;

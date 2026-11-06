@@ -66,6 +66,103 @@ async function summary(c: PoolClient, ids: string[]) {
   }
   return { counts, signature: fingerprints.join(":") };
 }
+async function deleteSessionsInTransaction(
+  c: PoolClient,
+  ids: string[],
+  exports: EventExportService,
+) {
+  const receipt = (
+    await c.query(
+      "INSERT INTO research_deletion_receipts(session_count) VALUES($1) RETURNING id",
+      [ids.length],
+    )
+  ).rows[0]!.id;
+  for (const id of ids) {
+    const hash = (
+      await c.query(
+        "SELECT learner_access_token_hash FROM sessions WHERE id=$1",
+        [id],
+      )
+    ).rows[0]?.learner_access_token_hash;
+    if (hash) {
+      await c.query(
+        "INSERT INTO research_identity.revocations VALUES($1,$2,$3)",
+        [hash, tokenHash(id), receipt],
+      );
+      const devices = (
+        await c.query(
+          "SELECT client_id FROM client_delivery_reports WHERE session_id=$1 UNION SELECT client_id FROM client_event_receipts WHERE session_id=$1",
+          [id],
+        )
+      ).rows;
+      for (const device of devices)
+        await c.query(
+          "INSERT INTO research_identity.device_deletions(token_hash,client_hash) VALUES($1,$2)",
+          [hash, tokenHash(device.client_id)],
+        );
+      if (!devices.length)
+        await c.query(
+          "INSERT INTO research_identity.device_deletions VALUES($1,'UNKNOWN',false)",
+          [hash],
+        );
+    }
+  }
+  const refs = [
+    ...ids,
+    ...(
+      await c.query(
+        `SELECT id FROM maps WHERE id IN(${mapIds}) UNION SELECT id FROM session_stages WHERE session_id=ANY($1::uuid[]) UNION SELECT id FROM concepts WHERE map_id IN(${mapIds}) UNION SELECT id FROM links WHERE map_id IN(${mapIds})`,
+        [ids],
+      )
+    ).rows.map((row) => row.id),
+  ];
+  await c.query(
+    "DELETE FROM operation_receipts o WHERE EXISTS(SELECT 1 FROM unnest($1::text[]) scope WHERE o.principal_scope=scope OR left(o.principal_scope,length(scope)+1)=scope||':') OR EXISTS(SELECT 1 FROM unnest($2::text[]) id WHERE strpos(o.result::text,id)>0)",
+    [ids.map((id) => "LEARNER:" + id), refs],
+  );
+  await c.query(
+    `INSERT INTO research_identity.deletion_authorizations SELECT txid_current(),id FROM maps WHERE id IN(${mapIds})`,
+    [ids],
+  );
+  for (const table of [
+    "research_proposition_evaluations",
+    "research_reflection_notes",
+    "client_event_receipts",
+    "client_delivery_reports",
+    "survey_answers",
+    "survey_questions",
+    "seeded_map_concepts",
+    "session_seed_concepts",
+    "assessment_answers",
+    "assessment_questions",
+    "research_events",
+    "research_event_counters",
+    "map_history_boundaries",
+    "map_operation_logs",
+    "concept_provenance",
+    "link_provenance",
+    "maps",
+    "explanation_responses",
+    "session_stages",
+  ])
+    await c.query(`DELETE FROM ${table} WHERE ${scopes[table]}`, [ids]);
+  const participants = (
+    await c.query(
+      "DELETE FROM research_identity.membership WHERE session_id=ANY($1::uuid[]) RETURNING participant_id",
+      [ids],
+    )
+  ).rows.map((row) => row.participant_id);
+  await c.query("DELETE FROM sessions WHERE id=ANY($1::uuid[])", [ids]);
+  await c.query(
+    "DELETE FROM research_identity.participants p WHERE id=ANY($1::uuid[]) AND NOT EXISTS(SELECT 1 FROM research_identity.membership m WHERE m.participant_id=p.id)",
+    [participants],
+  );
+  await c.query(
+    "DELETE FROM research_identity.deletion_authorizations WHERE transaction_id=txid_current()",
+  );
+  await exports.invalidateSessions(ids);
+  return receipt as string;
+}
 const validPublic = (x: unknown): x is string =>
   typeof x === "string" && /^P-[a-f0-9-]{36}$/.test(x);
 export function registerDataManagement(
@@ -233,6 +330,96 @@ export function registerDataManagement(
       c.release();
     }
   });
+
+  // A convenience path for Sessions that are still empty. The Session row is
+  // locked before eligibility is checked, which serializes this operation with
+  // Session start and the learner write paths that lock the Session/Stage.
+  app.delete("/api/research/stage1/sessions/:sessionId", async (q, r) => {
+    if (principalOf(r).role !== "researcher")
+      return r.status(403).json({ error: "forbidden" });
+    if (!isUuid(q.params.sessionId) || Object.keys(q.body ?? {}).length)
+      return r.status(400).json({ error: "invalid_target" });
+    const id = q.params.sessionId;
+    const c = await pool.connect().catch(() => null);
+    if (!c) return r.status(503).json({ error: "management_unavailable" });
+    try {
+      await c.query("BEGIN");
+      await c.query("SET LOCAL lock_timeout='5s'");
+      await c.query("SELECT pg_advisory_xact_lock(111011)");
+      const session = await c.query<{ tokenHash: string | null }>(
+        `SELECT learner_access_token_hash AS "tokenHash" FROM sessions
+         WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')
+         AND status='NOT_STARTED' AND started_at IS NULL AND completed_at IS NULL
+         FOR UPDATE`,
+        [id],
+      );
+      if (!session.rowCount) {
+        const exists = await c.query(
+          "SELECT 1 FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')",
+          [id],
+        );
+        await c.query("ROLLBACK");
+        return exists.rowCount
+          ? r.status(409).json({
+              error: "session_has_learner_data",
+              message:
+                "開始済み、または学習記録があるSessionは簡易削除できません。研究データ・保存期限・明示削除から確認付き削除を行ってください。",
+              confirmationRequired: true,
+              href: "/research/data-management",
+            })
+          : r.status(404).json({ error: "not_found" });
+      }
+
+      // Schema v4 rows are researcher/server audit records created by setup
+      // and administration. They are handled by the same deletion receipt as
+      // explicit data removal. Learner events and any system lifecycle event
+      // make a Session ineligible, even if a status field was later changed.
+      const learnerData = await c.query(
+        `SELECT
+          EXISTS(SELECT 1 FROM research_events WHERE session_id=$1::uuid
+            AND NOT (schema_version=4 AND actor_type='RESEARCHER'
+              AND event_type IN ('SESSION_CREATE','SESSION_SETTINGS_CHANGE','RESEARCH_ANALYSIS_VIEW','RESEARCH_EXPORT','RESEARCH_ASSESSMENT_CHANGE'))) AS events,
+          EXISTS(SELECT 1 FROM session_stages WHERE session_id=$1::uuid
+            AND (status<>'PENDING' OR started_at IS NOT NULL OR completed_at IS NOT NULL)) AS progressed,
+          EXISTS(SELECT 1 FROM survey_answers WHERE session_id=$1::uuid) AS survey_answers,
+          EXISTS(SELECT 1 FROM assessment_answers WHERE session_id=$1::uuid) AS assessment_answers,
+          EXISTS(SELECT 1 FROM explanation_responses WHERE session_stage_id IN
+            (SELECT id FROM session_stages WHERE session_id=$1::uuid)) AS explanations,
+          EXISTS(SELECT 1 FROM client_event_receipts WHERE session_id=$1::uuid) AS event_receipts,
+          EXISTS(SELECT 1 FROM client_delivery_reports WHERE session_id=$1::uuid) AS delivery_reports,
+          EXISTS(SELECT 1 FROM map_operation_logs WHERE map_id IN
+            (SELECT m.id FROM maps m JOIN session_stages st ON st.id=m.session_stage_id
+             WHERE st.session_id=$1::uuid)) AS operation_logs,
+          EXISTS(SELECT 1 FROM maps m WHERE m.session_stage_id IN
+            (SELECT id FROM session_stages WHERE session_id=$1::uuid)
+            AND (m.status<>'DRAFT' OR m.submitted_at IS NOT NULL)) AS submitted_maps`,
+        [id],
+      );
+      if (Object.values(learnerData.rows[0] ?? {}).some(Boolean)) {
+        await c.query("ROLLBACK");
+        return r.status(409).json({
+          error: "session_has_learner_data",
+          message:
+            "学習者の開始・編集・提出・回答記録があるSessionは簡易削除できません。研究データ・保存期限・明示削除から確認付き削除を行ってください。",
+          confirmationRequired: true,
+          href: "/research/data-management",
+        });
+      }
+
+      const receipt = await deleteSessionsInTransaction(c, [id], exports);
+      await c.query("COMMIT");
+      return r.json({ deleted: true, receiptId: receipt });
+    } catch {
+      await c.query("ROLLBACK");
+      return r.status(409).json({
+        error: "deletion_not_committed",
+        message: "削除は確定していません。更新して状態を確認してください。",
+      });
+    } finally {
+      c.release();
+    }
+  });
+
   app.post("/api/research/data-management/delete", async (q, r) => {
     if (
       Object.keys(q.body ?? {}).length !== 2 ||
@@ -266,97 +453,7 @@ export function registerDataManagement(
       }
       if ((await summary(c, ids)).signature !== plan.signature)
         throw new Error();
-      const receipt = (
-        await c.query(
-          "INSERT INTO research_deletion_receipts(session_count) VALUES($1) RETURNING id",
-          [ids.length],
-        )
-      ).rows[0].id;
-      for (const id of ids) {
-        const hash = (
-          await c.query(
-            "SELECT learner_access_token_hash FROM sessions WHERE id=$1",
-            [id],
-          )
-        ).rows[0]?.learner_access_token_hash;
-        if (hash) {
-          await c.query(
-            "INSERT INTO research_identity.revocations VALUES($1,$2,$3)",
-            [hash, tokenHash(id), receipt],
-          );
-          const devices = (
-            await c.query(
-              "SELECT client_id FROM client_delivery_reports WHERE session_id=$1 UNION SELECT client_id FROM client_event_receipts WHERE session_id=$1",
-              [id],
-            )
-          ).rows;
-          for (const d of devices)
-            await c.query(
-              "INSERT INTO research_identity.device_deletions(token_hash,client_hash) VALUES($1,$2)",
-              [hash, tokenHash(d.client_id)],
-            );
-          if (!devices.length)
-            await c.query(
-              "INSERT INTO research_identity.device_deletions VALUES($1,'UNKNOWN',false)",
-              [hash],
-            );
-        }
-      }
-      // Only receipts in the selected learner scope or containing selected resource UUIDs.
-      const refs = [
-        ...ids,
-        ...(
-          await c.query(
-            `SELECT id FROM maps WHERE id IN(${mapIds}) UNION SELECT id FROM session_stages WHERE session_id=ANY($1::uuid[]) UNION SELECT id FROM concepts WHERE map_id IN(${mapIds}) UNION SELECT id FROM links WHERE map_id IN(${mapIds})`,
-            [ids],
-          )
-        ).rows.map((x) => x.id),
-      ];
-      await c.query(
-        "DELETE FROM operation_receipts o WHERE EXISTS(SELECT 1 FROM unnest($1::text[]) scope WHERE o.principal_scope=scope OR left(o.principal_scope,length(scope)+1)=scope||':') OR EXISTS(SELECT 1 FROM unnest($2::text[]) id WHERE strpos(o.result::text,id)>0)",
-        [ids.map((x) => "LEARNER:" + x), refs],
-      );
-      await c.query(
-        `INSERT INTO research_identity.deletion_authorizations SELECT txid_current(),id FROM maps WHERE id IN(${mapIds})`,
-        [ids],
-      );
-      for (const t of [
-        "research_proposition_evaluations",
-        "research_reflection_notes",
-        "client_event_receipts",
-        "client_delivery_reports",
-        "survey_answers",
-        "survey_questions",
-        "seeded_map_concepts",
-        "session_seed_concepts",
-        "assessment_answers",
-        "assessment_questions",
-        "research_events",
-        "research_event_counters",
-        "map_history_boundaries",
-        "map_operation_logs",
-        "concept_provenance",
-        "link_provenance",
-        "maps",
-        "explanation_responses",
-        "session_stages",
-      ])
-        await c.query(`DELETE FROM ${t} WHERE ${scopes[t]}`, [ids]);
-      const participants = (
-        await c.query(
-          "DELETE FROM research_identity.membership WHERE session_id=ANY($1::uuid[]) RETURNING participant_id",
-          [ids],
-        )
-      ).rows.map((x) => x.participant_id);
-      await c.query("DELETE FROM sessions WHERE id=ANY($1::uuid[])", [ids]);
-      await c.query(
-        "DELETE FROM research_identity.participants p WHERE id=ANY($1::uuid[]) AND NOT EXISTS(SELECT 1 FROM research_identity.membership m WHERE m.participant_id=p.id)",
-        [participants],
-      );
-      await c.query(
-        "DELETE FROM research_identity.deletion_authorizations WHERE transaction_id=txid_current()",
-      );
-      await exports.invalidateSessions(ids);
+      const receipt = await deleteSessionsInTransaction(c, ids, exports);
       await c.query("COMMIT");
       for(const [id,p]of plans)if(p.ids.some(x=>ids.includes(x)))plans.delete(id);
       return r.json({
