@@ -8,6 +8,7 @@ import { deriveStage1Features } from "./stage1-features.js";
 import { replayMapAt, type HistoryOperation, type MapHistorySnapshot } from "./map-history.js";
 import { replayMixedMapHistory, type MapHistoryEventV2 } from "./map-mixed-history.js";
 import { principalOf } from "./access-control.js";
+import { loadFiveFlowFeatures, fiveFlowFeaturesCsv } from "./five-flow-features.js";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (value: unknown): value is string => typeof value === "string" && uuid.test(value);
@@ -70,6 +71,22 @@ async function assertSessionCompleted(client: PoolClient, id: string) {
 }
 
 export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
+  for (const suffix of ["descriptive-features", "descriptive-features.csv"]) {
+    app.get(`/api/research/stage1/sessions/:sessionId/${suffix}`, async (req,res) => {
+      if (principalOf(res).role !== "researcher") return res.status(403).json({error:"forbidden"});
+      if (!isUuid(req.params.sessionId)) return res.status(400).json({error:"invalid_session_id"});
+      try {
+        const result=await loadFiveFlowFeatures(pool,req.params.sessionId);
+        if(result.kind!=="features")return res.status(result.kind==="not_found"?404:409).json({error:result.kind});
+        if(suffix.endsWith(".csv")) {
+          res.setHeader("Content-Type","text/csv; charset=utf-8");
+          res.setHeader("Content-Disposition",`attachment; filename="stage1-5-${req.params.sessionId}-descriptive-features.csv"`);
+          return res.send(fiveFlowFeaturesCsv(result.value));
+        }
+        return res.json(result.value);
+      } catch { return res.status(500).json({error:"descriptive_features_unavailable"}); }
+    });
+  }
   app.get("/api/research/stage1/sessions", async (_req, res) => {
     if (principalOf(res).role !== "researcher") return res.status(403).json({ error: "forbidden" });
     try {
@@ -121,6 +138,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       return res.json({
         session: raw.session, stages: raw.stages,
         features: raw.session.protocolKey === "STAGE1_4" ? deriveStage1Features(raw) : {},
+        ...(raw.session.protocolKey === "STAGE1_5" ? {descriptiveFeatures:(await loadFiveFlowFeatures(pool,req.params.sessionId)).value} : {}),
         maps: analysisMaps,
         operations, operationCounts: counts,
         propositionEvaluations: evals.rows,
