@@ -196,7 +196,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
   const operationHasNoState=!!operation&&operation.before==null&&operation.after==null;
   const map=data?.maps.find(m=>m.id===selectedMapId);
   const displayedReplay = historyReplay?.mapId === selectedMapId && historyReplay.sequenceNumber === historySequence ? historyReplay : null;
-  const changes = !operationHasNoState && displayedReplay?.beforeState && displayedReplay.afterState ? compareSnapshots(displayedReplay.beforeState, displayedReplay.afterState) : null;
+  const changes = selectedOperationId && historySequence > 0 && !operationHasNoState && displayedReplay?.beforeState && displayedReplay.afterState ? compareSnapshots(displayedReplay.beforeState, displayedReplay.afterState) : null;
   const conceptDiffs = changes && displayedReplay?.beforeState && displayedReplay.afterState ? differenceItems(displayedReplay.beforeState.concepts,displayedReplay.afterState.concepts,changes.concepts.ids,item=>item.label) : [];
   const linkDiffs = changes && displayedReplay?.beforeState && displayedReplay.afterState ? differenceItems(displayedReplay.beforeState.links,displayedReplay.afterState.links,changes.links.ids,item=>item.label) : [];
   const beforeConceptKinds=changes&&displayedReplay?.beforeState&&displayedReplay.afterState?changeKindsFor(displayedReplay.beforeState.concepts,displayedReplay.afterState.concepts,changes.concepts.ids,"BEFORE"):undefined;

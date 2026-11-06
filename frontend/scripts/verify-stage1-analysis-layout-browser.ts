@@ -85,8 +85,10 @@ try {
   assert.ok((await page.locator(".activity-overview").innerText()).includes("実際の学習時間を示すものではありません"));
   await page.getByRole("heading", { name: "アンケート回答" }).waitFor();
   for (const text of ["自由記述の設問", "自由記述の回答", "はい", "段階評価の設問", "4"]) assert.ok((await page.locator(".survey-analysis").innerText()).includes(text));
+  assert.equal(await page.locator(".map-history-compare, .map-diff-list").count(), 0, "sequence 0 without a selected operation must not show an empty comparison");
   await page.locator(".operation-history summary").first().click();
-  await page.getByText("変更点", { exact: true }).waitFor();
+  await page.locator(".map-diff-list").filter({ hasText: "＋ 追加" }).waitFor();
+  await page.locator(".map-history-compare").waitFor();
   const diff = await page.locator(".map-diff-list").innerText();
   assert.match(diff, /＋ 追加/); assert.match(diff, /− 削除/); assert.match(diff, /↔ 変更/);
   assert.match(diff, /加熱される/); assert.match(diff, /降る/); assert.match(diff, /移動/);
