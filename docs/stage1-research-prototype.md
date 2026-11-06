@@ -1,5 +1,7 @@
 # Stage 1 research prototype: audited reuse and provenance
 
+> 新規作成は群なし5活動（STAGE1_5）です。旧4・6活動の意味は保持します。[追加仕様・v7アンケート・出力schemaVersion 3](session-flow-survey.md)を参照してください。新しい4テーブルも確認付き削除・模擬DBリセットの対象です。
+
 ## Code bases and exact revisions
 - Existing base: [kiyo1204/kbcm-learning-system](https://github.com/kiyo1204/kbcm-learning-system), base commit `a5f46dc034ae4c311ef1a05e217050dcb3cb2035`.
 - Kit-Build reference: [elianiva/kitbuild-cf](https://github.com/elianiva/kitbuild-cf), pinned commit `42218960e9c8ea62a93273c341bd9abc72ab7057`, MIT license, Copyright (c) 2026 elianiva. See [the unchanged license text](third_party_licenses/kitbuild-cf-MIT.txt).

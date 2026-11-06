@@ -1,6 +1,6 @@
 import { eventTargets } from "./research-event-catalog.js";
 import { isUuid } from "./delivery-reliability.js";
-export const EXPORT_VERSION = 2;
+export const EXPORT_VERSION = 3;
 export const activities = [
   "LESSON",
   "PRIOR_MAP",
@@ -9,6 +9,7 @@ export const activities = [
   "INTEGRATION_MAP",
   "SELF_STUDY",
   "POST_ASSESSMENT",
+  "SURVEY",
   "UNASSIGNED",
 ] as const;
 export const groups = ["EXPERIMENTAL", "CONTROL", "UNASSIGNED"] as const;
@@ -139,8 +140,10 @@ export const commonColumns = [
   "legacy_boundary_count",
   "legacy_boundary_last_id",
   "feedback_match",
+  "protocol_key",
 ] as const;
 export type ExportEvent = {
+  protocol_key?: string | null;
   feedback_match?: boolean | null;
   event_id: string;
   source_format: "LEGACY" | "EVENT";
@@ -178,6 +181,7 @@ export type ExportEvent = {
   elapsed_quality: string;
 };
 export const detailColumns = {
+  "survey_events.csv": [...commonColumns,"question_id","before_value","after_value","before_json","after_json"],
   "map_operations.csv": [
     ...commonColumns,
     "before_json",
@@ -236,7 +240,11 @@ export function csvRows(
       from_seconds: e.details.fromSeconds ?? null,
       to_seconds: e.details.toSeconds ?? null,
     };
-  if (e.target_type === "ASSESSMENT") {
+  if (e.schema_version===7) {
+    const b=e.before as {questionId?:string;value?:string|number|null}|null,a=e.after as {questionId?:string;value?:string|number|null}|null;
+    rows["survey_events.csv"]={...e,question_id:a?.questionId??b?.questionId??null,before_value:b?.value??null,after_value:a?.value??null,before_json:e.before,after_json:e.after};
+  }
+  if (e.target_type === "ASSESSMENT" && e.schema_version!==7) {
     const before = e.before as {
         questionId?: string;
         answer?: string | null;

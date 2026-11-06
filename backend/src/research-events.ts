@@ -1,3 +1,4 @@
+import { validateSurveyEventV7, type SurveyStateV7 } from "./research-event-survey-v7.js";
 import { validateMapEventV5 } from "./research-event-map-v5.js";
 import { validateFeedbackEventV6, type FeedbackDetailsV6 } from "./research-event-feedback-v6.js";
 import { digest, isUuid } from "./delivery-reliability.js";
@@ -17,7 +18,7 @@ export type EventActor = "LEARNER" | "RESEARCHER" | "SYSTEM";
 type TimeQuality = "OBSERVED" | "ESTIMATED" | "MISSING" | "NOT_APPLICABLE" | "UNKNOWN";
 type NumericState = { positionX?: number; positionY?: number };
 type EventCommon = { eventType: EventType; targetType: typeof eventTargets[EventType]; stageId?: string; mapId?: string; targetId?: string; relatedEventId?: string; relatedLegacyOperationLogId?: string; idempotencyKey?: string; outcome: EventOutcome; reasonCode?: string; clientTimestamp?: string; clientTimeQuality: TimeQuality; beforeQuality?: TimeQuality; afterQuality?: TimeQuality; details?: FeedbackDetailsV6 | { durationMs?: number; positionSeconds?: number; fromSeconds?: number; toSeconds?: number } };
-export type EventInput = EventCommon & ({ schemaVersion?: 1; before?: NumericState; after?: NumericState } | { schemaVersion: 2; before?: MapStateV2; after?: MapStateV2 } | { schemaVersion: 3; before?: AssessmentStateV3; after?: AssessmentStateV3 } | { schemaVersion: 5; before?: MapStateV2; after?: MapStateV2 } | { schemaVersion: 6; before?: never; after?: never });
+export type EventInput = EventCommon & ({ schemaVersion?: 1; before?: NumericState; after?: NumericState } | { schemaVersion: 2; before?: MapStateV2; after?: MapStateV2 } | { schemaVersion: 3; before?: AssessmentStateV3; after?: AssessmentStateV3 } | { schemaVersion: 5; before?: MapStateV2; after?: MapStateV2 } | { schemaVersion: 6; before?: never; after?: never } | { schemaVersion:7; before?:SurveyStateV7; after?:SurveyStateV7 });
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const reasons = ["NOT_APPLICABLE", "UNKNOWN", "VALIDATION", "PERMISSION", "DEADLINE", "CONFLICT", "NETWORK", "SERVER", "USER_CANCELLED", "OTHER"];
 const qualities = ["OBSERVED", "ESTIMATED", "MISSING", "NOT_APPLICABLE", "UNKNOWN"];
@@ -29,7 +30,7 @@ function numericState(value: unknown) {
   return object(value) && Object.keys(value).length > 0 && Object.entries(value).every(([key, item]) => ["positionX", "positionY"].includes(key) && typeof item === "number" && Number.isFinite(item));
 }
 export function validateEvent(value: unknown): value is EventInput {
-  if (!object(value) || Object.keys(value).some(key => !keys.includes(key)) || ![1, 2, 3, 5, 6].includes(value.schemaVersion as number)) return false;
+  if (!object(value) || Object.keys(value).some(key => !keys.includes(key)) || ![1, 2, 3, 5, 6, 7].includes(value.schemaVersion as number)) return false;
   if (typeof value.eventType !== "string" || !Object.hasOwn(eventTargets, value.eventType) || value.targetType !== eventTargets[value.eventType as EventType]) return false;
   if (typeof value.outcome !== "string" || !outcomes.includes(value.outcome) || typeof value.clientTimeQuality !== "string" || !qualities.includes(value.clientTimeQuality)) return false;
   if (value.reasonCode !== undefined && (typeof value.reasonCode !== "string" || !reasons.includes(value.reasonCode))) return false;
@@ -42,9 +43,10 @@ export function validateEvent(value: unknown): value is EventInput {
     if (typeof value.clientTimestamp !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?(?:Z|[+-]\d\d:\d\d)$/.test(value.clientTimestamp) || !Number.isFinite(Date.parse(value.clientTimestamp))) return false;
   } else if (value.clientTimestamp !== undefined) return false;
   if (value.eventType === "MOVE_LINK" && value.schemaVersion !== 5) return false;
+  if (["SURVEY_EDIT","SURVEY_SUBMIT"].includes(String(value.eventType)) && value.schemaVersion!==7) return false;
   if (value.schemaVersion === 1) {
     if (value.before !== undefined && !numericState(value.before) || value.after !== undefined && !numericState(value.after)) return false;
-  } else if (value.schemaVersion === 2 ? !validateMapEventV2(value) : value.schemaVersion === 5 ? !validateMapEventV5(value) : value.schemaVersion === 6 ? !validateFeedbackEventV6(value) : !validateAssessmentEventV3(value)) return false;
+  } else if (value.schemaVersion === 7 ? !validateSurveyEventV7(value) : value.schemaVersion === 2 ? !validateMapEventV2(value) : value.schemaVersion === 5 ? !validateMapEventV5(value) : value.schemaVersion === 6 ? !validateFeedbackEventV6(value) : !validateAssessmentEventV3(value)) return false;
   for (const field of ["before", "after"] as const) {
     const quality = value[`${field}Quality`] ?? (value[field] === undefined ? "MISSING" : "OBSERVED");
     if (typeof quality !== "string" || !qualities.includes(quality) || (value[field] !== undefined) !== ["OBSERVED", "ESTIMATED"].includes(quality)) return false;
@@ -55,12 +57,12 @@ export function validateEvent(value: unknown): value is EventInput {
 
 export async function insertResearchEvent(client: PoolClient, sessionId: string, actor: EventActor, event: EventInput) {
   if (!uuid.test(sessionId) || !["LEARNER", "RESEARCHER", "SYSTEM"].includes(actor) || !validateEvent({ ...event, schemaVersion: event.schemaVersion ?? 1 })) throw new InvalidEventError("Invalid event");
-  const session = await client.query<{ participantCode: string; studyGroup: string | null }>(`SELECT participant_code AS "participantCode", study_group AS "studyGroup" FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6')`, [sessionId]);
+  const session = await client.query<{ participantCode: string; studyGroup: string | null }>(`SELECT participant_code AS "participantCode", study_group AS "studyGroup" FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')`, [sessionId]);
   if (!session.rowCount) return null;
   const participantCode = session.rows[0]!.participantCode;
   if (participantCode === process.env.RESEARCHER_API_TOKEN || (await client.query("SELECT 1 FROM sessions WHERE learner_access_token_hash=$1 LIMIT 1", [tokenHash(participantCode)])).rowCount) return null;
-  if (event.schemaVersion === 2 || event.schemaVersion === 5 || event.schemaVersion === 3) {
-    const labels = (event.schemaVersion === 2 || event.schemaVersion === 5) ? [event.before, event.after].flatMap(state => state ? mapStateLabels(state) : []) : [event.before?.answer, event.after?.answer].filter((text): text is string => typeof text === "string");
+  if (event.schemaVersion === 2 || event.schemaVersion === 5 || event.schemaVersion === 3 || event.schemaVersion===7) {
+    const labels = (event.schemaVersion === 2 || event.schemaVersion === 5) ? [event.before, event.after].flatMap(state => state ? mapStateLabels(state) : []) : [event.before && ("answer" in event.before ? event.before.answer : "value" in event.before ? event.before.value:null), event.after && ("answer" in event.after ? event.after.answer : "value" in event.after ? event.after.value:null)].filter((text): text is string => typeof text === "string");
     const researcherToken = process.env.RESEARCHER_API_TOKEN;
     if (researcherToken && labels.some(text => text.includes(researcherToken))) throw new InvalidEventError("Invalid event");
     const hashes = labels.flatMap(text => [text, ...text.split(/\s+/)]).map(tokenHash);
@@ -78,6 +80,13 @@ export async function insertResearchEvent(client: PoolClient, sessionId: string,
   if (event.schemaVersion === 3) {
     if (!stage || !["PRE_ASSESSMENT", "POST_ASSESSMENT"].includes(stage.rows[0]!.stageType)) return null;
     if (event.eventType === "ASSESSMENT_EDIT" && event.outcome === "SUCCESS" && !(await client.query("SELECT 1 FROM assessment_questions WHERE id=$1::uuid AND session_id=$2::uuid", [event.targetId, sessionId])).rowCount) return null;
+  }
+  if(event.schemaVersion===7){
+    if(!stage||stage.rows[0]!.stageType!=="SURVEY")return null;
+    if(event.eventType==="SURVEY_EDIT"&&event.outcome==="SUCCESS"){
+      const q=(await client.query("SELECT kind FROM survey_questions WHERE id=$1 AND session_id=$2",[event.targetId,sessionId])).rows[0];
+      if(!q||event.before?.kind!==q.kind||event.after?.kind!==q.kind)return null;
+    }
   }
   if (event.relatedEventId && !(await client.query(`SELECT 1 FROM research_events WHERE event_id=$1::uuid AND session_id=$2::uuid AND ($3::uuid IS NULL OR map_id=$3::uuid)`, [event.relatedEventId, sessionId, (event.schemaVersion === 2 || event.schemaVersion === 5) ? event.mapId ?? null : null])).rowCount) return null;
   if (event.relatedLegacyOperationLogId && !(await client.query(`SELECT 1 FROM map_operation_logs WHERE id=$1::uuid AND map_id=$2::uuid`, [event.relatedLegacyOperationLogId, event.mapId])).rowCount) return null;
@@ -122,7 +131,7 @@ export function registerResearchEventRoutes(app: Express, pool: Pool) {
     // Full Map snapshots used by the future replay stream must originate from
     // the transaction that changes the Map, never from an HTTP caller.
     if (event.schemaVersion === 2 || event.schemaVersion === 5 || event.schemaVersion === 6) return res.status(403).json({ error: "forbidden" });
-    if (event.schemaVersion === 3 || ["ASSESSMENT_EDIT", "ASSESSMENT_SUBMIT"].includes(event.eventType)) return res.status(403).json({ error: "forbidden" });
+    if (event.schemaVersion === 7 || event.schemaVersion === 3 || ["ASSESSMENT_EDIT", "ASSESSMENT_SUBMIT"].includes(event.eventType)) return res.status(403).json({ error: "forbidden" });
     if (["STAGE_DEADLINE","SESSION_CREATE","SESSION_SETTINGS_CHANGE","RESEARCH_ANALYSIS_VIEW","RESEARCH_EXPORT","RESEARCH_ASSESSMENT_CHANGE","MAP_AUTO_SUBMIT"].includes(event.eventType)) return res.status(403).json({error:"server_event_only"});
     const deliveryKey=req.header("Idempotency-Key"), stream=req.header("X-Client-Stream-Id"), order=req.header("X-Client-Sequence");
     if(deliveryKey && (!isUuid(deliveryKey)||!isUuid(stream)||!order||!(/^[1-9][0-9]{0,14}$/).test(order)))return res.status(400).json({error:"invalid_delivery"});
@@ -170,7 +179,7 @@ export function registerResearchEventRoutes(app: Express, pool: Pool) {
            LEFT JOIN LATERAL (
              SELECT id FROM session_stages WHERE session_id=s.id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1
            ) current_stage ON true
-           WHERE st.id=$1::uuid AND s.id=$2::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6')`,
+           WHERE st.id=$1::uuid AND s.id=$2::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')`,
           [event.stageId, sessionId],
         );
         const row = stage.rows[0];
@@ -233,7 +242,7 @@ export function registerResearchEventRoutes(app: Express, pool: Pool) {
     const after = typeof req.query.after === "string" ? req.query.after : "0";
     if (!/^(0|[1-9]\d{0,17})$/.test(after)) return res.status(400).json({ error: "invalid_cursor" });
     try {
-      if (!(await pool.query("SELECT 1 FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6')", [req.params.sessionId])).rowCount) return res.status(404).json({ error: "not_found" });
+      if (!(await pool.query("SELECT 1 FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')", [req.params.sessionId])).rowCount) return res.status(404).json({ error: "not_found" });
       const result = await pool.query(`SELECT event_id AS "eventId",schema_version AS "schemaVersion",session_id AS "sessionId",stage_id AS "stageId",map_id AS "mapId",(SELECT pseudonym FROM research_session_ids i WHERE i.session_id=research_events.session_id) AS "participantCode",study_group AS "studyGroup",activity,actor_type AS "actorType",event_type AS "eventType",target_type AS "targetType",target_id AS "targetId",outcome,reason_code AS "reasonCode",sequence_number AS "sequenceNumber",client_timestamp AS "clientTimestamp",client_time_quality AS "clientTimeQuality",server_timestamp AS "serverTimestamp",related_event_id AS "relatedEventId",related_legacy_operation_log_id AS "relatedLegacyOperationLogId",before_state AS "before",after_state AS "after",before_quality AS "beforeQuality",after_quality AS "afterQuality",details FROM research_events WHERE session_id=$1::uuid AND sequence_number>$2::bigint ORDER BY sequence_number LIMIT 200`, [req.params.sessionId, after]);
       return res.json({ events: result.rows });
     } catch { return res.status(500).json({ error: "event_fetch_failed" }); }

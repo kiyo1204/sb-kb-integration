@@ -8,7 +8,7 @@ export type SessionStageType =
   | "PRIOR_MAP"
   | "LESSON"
   | "KB_MAP"
-  | "INTEGRATION_MAP" | "PRE_ASSESSMENT" | "POST_ASSESSMENT" | "SELF_STUDY";
+  | "INTEGRATION_MAP" | "PRE_ASSESSMENT" | "POST_ASSESSMENT" | "SELF_STUDY" | "SURVEY";
 
 export type SessionMapType = "PRIOR" | "KB" | "INTEGRATION";
 
@@ -80,7 +80,7 @@ export async function lockSessionStageForMap(
         LIMIT 1
       ) AS current_stage ON true
       WHERE stage.id = $1::uuid
-        AND session.protocol_key IN ($2, 'STAGE1_6')
+        AND session.protocol_key IN ($2, 'STAGE1_6', 'STAGE1_5')
       FOR UPDATE OF session, stage
     `,
     [stageId, STAGE1_PROTOCOL_KEY],
@@ -131,7 +131,7 @@ export async function lockSessionStageProgress(
       FROM session_stages AS stage
       INNER JOIN sessions AS session ON session.id = stage.session_id
       WHERE stage.id = $1::uuid
-        AND session.protocol_key IN ($2, 'STAGE1_6')
+        AND session.protocol_key IN ($2, 'STAGE1_6', 'STAGE1_5')
       FOR NO KEY UPDATE OF session, stage
     `,
     [stageId, STAGE1_PROTOCOL_KEY],
@@ -221,7 +221,7 @@ export async function getSession(
       LEFT JOIN session_stages AS stage ON stage.session_id = session.id
       LEFT JOIN maps AS map ON map.session_stage_id = stage.id
       WHERE session.id = $1::uuid
-        AND session.protocol_key IN ($2, 'STAGE1_6')
+        AND session.protocol_key IN ($2, 'STAGE1_6', 'STAGE1_5')
       ORDER BY stage.order_index
     `,
     [sessionId, STAGE1_PROTOCOL_KEY],
@@ -327,7 +327,8 @@ export async function assertStageIsCurrent(
 
 /**
  * Stage 1 uses PRIOR_MAP as the post-lesson Scratch-Build map.
- * New sessions use the six-activity protocol; existing four-stage sessions stay unchanged.
+ * Legacy six-activity fixture factory. HTTP creation uses createFiveActivitySession.
+ * Existing sessions are read and continued without reconstructing their stages.
  */
 export async function createStage1Session(
   client: PoolClient,
@@ -358,4 +359,16 @@ export async function createStage1Session(
   const session = await getSession(client, id);
   if (!session) throw new Error("New Stage1 Session could not be retrieved");
   return session;
+}
+
+/** New creation contract; the legacy helper above is retained for old fixtures. */
+export async function createFiveActivitySession(client: PoolClient, input: {
+  participantCode: string; lessonVideoUrl: string; kitDefinitionId: string; groupActivitySeconds: number;
+}): Promise<Session> {
+  const {rows:[row]} = await client.query<{id:string}>(`INSERT INTO sessions
+    (protocol_key,participant_code,lesson_video_url,research_kit_definition_id,group_activity_seconds)
+    VALUES ('STAGE1_5',$1,$2,$3,$4) RETURNING id`,[input.participantCode,input.lessonVideoUrl,input.kitDefinitionId,input.groupActivitySeconds]);
+  for(const [index,type] of ["LESSON","PRIOR_MAP","KB_MAP","INTEGRATION_MAP","SURVEY"].entries())
+    await client.query("INSERT INTO session_stages(session_id,stage_type,order_index) VALUES($1,$2,$3)",[row!.id,type,index]);
+  return (await getSession(client,row!.id))!;
 }

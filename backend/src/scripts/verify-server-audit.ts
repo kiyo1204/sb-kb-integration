@@ -33,7 +33,7 @@ async function autoFixture(group: "CONTROL"|"EXPERIMENTAL" = "EXPERIMENTAL", wit
 try {
  await api("/research/stage1/settings",200,"PUT",{minutes:2});
  await api("/research/stage1/settings",400,"PUT",{minutes:-1});
- const created=(await api("/research/stage1/sessions",201,"POST",{participantCode:"audit-"+randomUUID(),videoUrl:"/dummy.mp4",kitDefinitionId:"66666666-6666-4666-8666-666666666662",studyGroup:"CONTROL"})).data;
+ const created=(await api("/research/stage1/sessions",201,"POST",{participantCode:"audit-"+randomUUID(),videoUrl:"/dummy.mp4",kitDefinitionId:"66666666-6666-4666-8666-666666666662",seedConceptIds:[],surveyQuestions:[{kind:"TEXT",prompt:"Mock survey",required:true,config:{}}]})).data;
  let events=(await api("/research/sessions/"+created.id+"/events",200)).data.events;
  assert.equal(events.filter((e:{eventType:string})=>e.eventType==="SESSION_CREATE").length,1);
  assert.equal(events[0].actorType,"RESEARCHER");
@@ -50,7 +50,7 @@ try {
  await pool.query("CREATE TRIGGER issue7_fail_audit BEFORE INSERT ON research_events FOR EACH ROW WHEN(NEW.schema_version IN(2,4,5) AND NEW.outcome='SUCCESS') EXECUTE FUNCTION issue7_fail_audit()");
  try {
   const rejectedCode="rollback-"+randomUUID();
-  const creationFailed=await api("/research/stage1/sessions",500,"POST",{participantCode:rejectedCode,videoUrl:"/dummy.mp4",kitDefinitionId:"66666666-6666-4666-8666-666666666662",studyGroup:"CONTROL"});
+  const creationFailed=await api("/research/stage1/sessions",500,"POST",{participantCode:rejectedCode,videoUrl:"/dummy.mp4",kitDefinitionId:"66666666-6666-4666-8666-666666666662",seedConceptIds:[],surveyQuestions:[{kind:"TEXT",prompt:"Mock survey",required:true,config:{}}]});
   assert.equal(creationFailed.logSaved,"true");
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM sessions WHERE participant_code=$1",[rejectedCode])).rows[0].n,0);
   const failed=await api("/research/stage1/sessions/"+created.id+"/learner-token",500,"POST",{});

@@ -1,3 +1,4 @@
+import {Survey,ResearchSurvey} from "./Survey";
 import {LearnerDeliveryStatus,ResearchDeliveryStatus} from "./DeliveryStatus";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, uiText } from "./auth-client";
@@ -5,7 +6,7 @@ import { sendObservedLearningEvent, useObservedLearningScreen, type ObservedLear
 import { LearnerAssessment, ResearchAssessment } from "./Assessment";
 import { ReadOnlyMapSnapshot, type HistoricalMapSnapshot } from "./MapPage";
 
-type StageType = "LESSON" | "PRIOR_MAP" | "KB_MAP" | "INTEGRATION_MAP" | "PRE_ASSESSMENT" | "POST_ASSESSMENT" | "SELF_STUDY";
+type StageType = "LESSON" | "PRIOR_MAP" | "KB_MAP" | "INTEGRATION_MAP" | "PRE_ASSESSMENT" | "POST_ASSESSMENT" | "SELF_STUDY" | "SURVEY";
 type StageStatus = "PENDING" | "IN_PROGRESS" | "COMPLETED";
 type SessionStatus = "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
 type StudyMap = { id: string; type: "PRIOR" | "KB" };
@@ -45,6 +46,7 @@ type SessionFlow = {
 };
 
 const stageLabels: Record<StageType, string> = {
+  SURVEY: "STEP 5：アンケート",
   LESSON: "STEP 1：授業動画",
   PRIOR_MAP: "STEP 2：Scratch-Build",
   KB_MAP: "STEP 3：Kit-Build",
@@ -55,6 +57,7 @@ const stageLabels: Record<StageType, string> = {
 };
 
 const stageSlugs: Record<StageType, string> = {
+  SURVEY: "survey",
   LESSON: "lesson",
   PRIOR_MAP: "prior",
   KB_MAP: "kb",
@@ -134,14 +137,14 @@ function SessionDashboard({
   const currentStageType = flow?.currentStage?.stageType;
   useObservedLearningScreen(sessionId, currentStageId, undefined, isLearner && currentStageStatus === "IN_PROGRESS", noteActivityLogFailure);
   const studyExpired = flow?.session.protocolKey === "STAGE1_6" && currentStageType === "SELF_STUDY" && !!flow.currentStage?.startedAt && flow.session.groupActivitySeconds !== null && clock + serverOffset >= Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000;
-  const integrationExpired = flow?.session.protocolKey === "STAGE1_6" && flow.session.studyGroup === "EXPERIMENTAL" && currentStageType === "INTEGRATION_MAP" && currentStageStatus === "IN_PROGRESS" && !!flow.currentStage?.startedAt && flow.session.groupActivitySeconds !== null && clock + serverOffset >= Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000;
+  const integrationExpired = !!flow && ["STAGE1_6","STAGE1_5"].includes(flow?.session.protocolKey??"") && (flow?.session.protocolKey==="STAGE1_5" || flow?.session.studyGroup === "EXPERIMENTAL") && currentStageType === "INTEGRATION_MAP" && currentStageStatus === "IN_PROGRESS" && !!flow.currentStage?.startedAt && flow.session.groupActivitySeconds !== null && clock + serverOffset >= Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000;
 
   const reload = useCallback(async () => {
     const requestedAt = performance.now();
     const nextFlow = await requestJson<SessionFlow>(
       `/api/sessions/${sessionId}/flow`,
     );
-    if (!["STAGE1_4", "STAGE1_6"].includes(nextFlow.session.protocolKey)) {
+    if (!["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(nextFlow.session.protocolKey)) {
       throw new Error("このセッションは活動 1の学習フローではありません。");
     }
     setServerOffset(Date.parse(nextFlow.serverNow) - requestedAt);
@@ -155,7 +158,7 @@ function SessionDashboard({
     requestJson<SessionFlow>(`/api/sessions/${sessionId}/flow`)
       .then((nextFlow) => {
         if (!active) return;
-        if (!["STAGE1_4", "STAGE1_6"].includes(nextFlow.session.protocolKey)) {
+        if (!["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(nextFlow.session.protocolKey)) {
           throw new Error("このセッションは活動 1の学習フローではありません。");
         }
         setServerOffset(Date.parse(nextFlow.serverNow) - requestedAt);
@@ -186,7 +189,7 @@ function SessionDashboard({
 
   useEffect(() => {
     const stage = flow?.currentStage;
-    if (flow?.session.protocolKey !== "STAGE1_6" || !stage?.startedAt || stage.status !== "IN_PROGRESS" || !["SELF_STUDY", "INTEGRATION_MAP"].includes(stage.stageType) || flow.session.groupActivitySeconds === null) return;
+    if (!flow || !["STAGE1_6","STAGE1_5"].includes(flow.session.protocolKey) || !stage?.startedAt || stage.status !== "IN_PROGRESS" || !["SELF_STUDY", "INTEGRATION_MAP"].includes(stage.stageType) || flow.session.groupActivitySeconds === null) return;
     const deadline = Date.parse(stage.startedAt) + flow.session.groupActivitySeconds * 1000 - serverOffset;
     const timer = window.setTimeout(() => {
       setClock(performance.now());
@@ -315,7 +318,7 @@ function SessionDashboard({
     try {
       const started = await requestJson<{ logSaved?: boolean }>(`/api/session-stages/${stage.id}/start`, "POST", {});
       if (started.logSaved === false) noteActivityLogFailure();
-      if (["LESSON", "SELF_STUDY", "PRE_ASSESSMENT", "POST_ASSESSMENT"].includes(stage.stageType)) {
+      if (["LESSON", "SELF_STUDY", "PRE_ASSESSMENT", "POST_ASSESSMENT", "SURVEY"].includes(stage.stageType)) {
         await reload();
         return;
       }
@@ -434,11 +437,12 @@ function SessionDashboard({
   const current = flow.currentStage;
   const label = (stage: SessionStage) => {
     if (isLearner && (stage.stageType === "PRE_ASSESSMENT" || stage.stageType === "POST_ASSESSMENT")) return "評価問題";
+    if(flow.session.protocolKey==="STAGE1_5" && stage.stageType==="PRIOR_MAP")return "STEP 2：学習者マップ（Scratch-Build）";
     return flow.session.protocolKey === "STAGE1_6"
       ? `STEP ${stage.orderIndex + 1}：${stage.stageType === "INTEGRATION_MAP" ? "統合マップ" : stageLabels[stage.stageType].replace(/^STEP \d+：/, "")}`
       : stageLabels[stage.stageType];
   };
-  const timed = flow.session.protocolKey === "STAGE1_6" && (current?.stageType === "SELF_STUDY" || current?.stageType === "INTEGRATION_MAP");
+  const timed = ["STAGE1_6","STAGE1_5"].includes(flow.session.protocolKey) && (current?.stageType === "SELF_STUDY" || current?.stageType === "INTEGRATION_MAP");
   const remaining = timed && current?.startedAt && flow.session.groupActivitySeconds !== null
     ? Math.max(0, Math.ceil((Date.parse(current.startedAt) + flow.session.groupActivitySeconds * 1000 - (clock + serverOffset)) / 1000)) : null;
 
@@ -465,13 +469,13 @@ function SessionDashboard({
           <div className="session-current-panel">
             <p className="session-current-label">現在の活動</p>
             <h2>{label(current)}</h2>
-            {isLearner && current.status === "PENDING" && <p>{current.stageType === "LESSON" ? "開始後に動画を視聴し、視聴したことを確認してください。" : current.stageType === "SELF_STUDY" ? "開始すると提出済みの2枚のマップを確認できます。" : current.stageType === "PRE_ASSESSMENT" || current.stageType === "POST_ASSESSMENT" ? "開始して、表示される問題に回答してください。" : "開始してマップを操作してください。"}</p>}
+            {isLearner && current.status === "PENDING" && <p>{current.stageType === "LESSON" ? "開始後に動画を視聴し、視聴したことを確認してください。" : current.stageType === "SELF_STUDY" ? "開始すると提出済みの2枚のマップを確認できます。" : current.stageType === "PRE_ASSESSMENT" || current.stageType === "POST_ASSESSMENT" || current.stageType === "SURVEY" ? "開始して、表示される問題に回答してください。" : "開始してマップを操作してください。"}</p>}
             {!isLearner && flow.nextStage && (
               <p className="session-next-label">
                 次の活動: {label(flow.nextStage)}
               </p>
             )}
-            {(!(current.stageType === "PRE_ASSESSMENT" || current.stageType === "POST_ASSESSMENT") || current.status === "PENDING") && !(isLearner && current.stageType === "INTEGRATION_MAP" && (integrationSubmitted || (timed && current.status === "IN_PROGRESS" && remaining === 0))) && !(isLearner && current.status === "IN_PROGRESS" && (current.stageType === "LESSON" || current.stageType === "SELF_STUDY")) && <button
+            {(!(current.stageType === "PRE_ASSESSMENT" || current.stageType === "POST_ASSESSMENT" || current.stageType === "SURVEY") || current.status === "PENDING") && !(isLearner && current.stageType === "INTEGRATION_MAP" && (integrationSubmitted || (timed && current.status === "IN_PROGRESS" && remaining === 0))) && !(isLearner && current.status === "IN_PROGRESS" && (current.stageType === "LESSON" || current.stageType === "SELF_STUDY")) && <button
               className="session-primary-button"
               type="button"
               disabled={busy}
@@ -484,6 +488,7 @@ function SessionDashboard({
                   : "開始する"}
             </button>}
             {(current.stageType === "PRE_ASSESSMENT" || current.stageType === "POST_ASSESSMENT") && current.status === "IN_PROGRESS" && <LearnerAssessment sessionId={sessionId} key={current.id} stageId={current.id} onSubmitted={async (logSaved) => { if (!logSaved) noteActivityLogFailure(); await reload(); }} />}
+            {current.stageType === "SURVEY" && current.status === "IN_PROGRESS" && <Survey key={current.id} sessionId={sessionId} stageId={current.id} onSubmitted={reload}/>}
             {timed && current.status === "IN_PROGRESS" && <div className="session-timed-activity">
               <p className="session-timer">残り時間: {remaining === null ? "取得中" : `${Math.floor(remaining / 60)}分${remaining % 60}秒`}</p>
               {current.stageType === "SELF_STUDY" && flow.session.studyGroup === "CONTROL" && isLearner && remaining === 0 && <p role="status">時間が終了しました。</p>}
@@ -530,7 +535,7 @@ function SessionDashboard({
         {flow.session.status === "IN_PROGRESS" && !current && (
           <div className="session-current-panel"><h2>全活動が完了しています</h2></div>
         )}
-        {!isLearner && ["STAGE1_4", "STAGE1_6"].includes(flow.session.protocolKey) && flow.session.status === "COMPLETED" && (
+        {!isLearner && ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(flow.session.protocolKey) && flow.session.status === "COMPLETED" && (
           <p>
             <a className="back-link" href={`/research/stage1/${flow.session.id}/analysis`}>
               研究者用分析画面を開く
@@ -600,6 +605,7 @@ function SessionDashboard({
             })}
           </ol>
         </section>}
+        {!isLearner && flow.session.protocolKey === "STAGE1_5" && <ResearchSurvey sessionId={sessionId} editable={flow.session.status==="NOT_STARTED"}/>}
         {!isLearner && flow.session.protocolKey === "STAGE1_6" && <ResearchAssessment sessionId={sessionId} />}
         {!isLearner && (
           <a className="back-link" href="/">

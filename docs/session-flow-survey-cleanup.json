@@ -1,0 +1,30 @@
+{
+  "onlyNewMockDatabases": true,
+  "removed": [
+    {
+      "name": "stage1_mock_survey_20261106",
+      "removed": true,
+      "identityAndPurposeVerified": true
+    },
+    {
+      "name": "stage1_mock_survey_final1",
+      "removed": true,
+      "identityAndPurposeVerified": true
+    },
+    {
+      "name": "stage1_mock_survey_pr",
+      "removed": true,
+      "identityAndPurposeVerified": true
+    },
+    {
+      "name": "stage1_mock_survey_merge",
+      "removed": true,
+      "identityAndPurposeVerified": true
+    },
+    {
+      "name": "stage1_mock_survey_release",
+      "removed": true,
+      "identityAndPurposeVerified": true
+    }
+  ]
+}

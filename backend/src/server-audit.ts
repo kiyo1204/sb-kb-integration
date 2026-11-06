@@ -18,7 +18,7 @@ export async function insertAudit(client: PoolClient, context: Audit, actor: "RE
   const item=map.rows[0]; if(!item || (sessionId && sessionId!==item.sessionId) || (stageId && stageId!==item.stageId)) throw new Error("invalid_audit_target");
   sessionId=item.sessionId??undefined;stageId=item.stageId??undefined;
  }
- const session=sessionId ? await client.query<{participantCode:string;studyGroup:string|null}>('SELECT participant_code AS "participantCode",study_group AS "studyGroup" FROM sessions WHERE id=$1 AND protocol_key IN (\'STAGE1_4\',\'STAGE1_6\')',[sessionId]) : null;
+ const session=sessionId ? await client.query<{participantCode:string;studyGroup:string|null}>('SELECT participant_code AS "participantCode",study_group AS "studyGroup" FROM sessions WHERE id=$1 AND protocol_key IN (\'STAGE1_4\',\'STAGE1_6\',\'STAGE1_5\')',[sessionId]) : null;
  if(sessionId && !session?.rowCount) throw new Error("invalid_audit_target");
  const participant=session?.rows[0]?.participantCode ?? null;
  if(participant && (participant===process.env.RESEARCHER_API_TOKEN || (await client.query("SELECT 1 FROM sessions WHERE learner_access_token_hash=$1",[tokenHash(participant)])).rowCount)) throw new Error("unsafe_participant");
@@ -67,7 +67,7 @@ export function registerAudit(app:Express,pool:Pool) {
    else if(req.method==="POST"&&/\/learner-token$/.test(req.path))eventType="SESSION_SETTINGS_CHANGE";
    else if((req.method==="POST"&&/\/(evaluations|reflections)$/.test(req.path))||(req.method==="PUT"&&/\/assessment\/questions$/.test(req.path)))eventType="RESEARCH_ASSESSMENT_CHANGE";
    if(eventType) {
-    try {if(!(await pool.query("SELECT 1 FROM sessions WHERE id=$1 AND protocol_key IN ('STAGE1_4','STAGE1_6')",[match[1]])).rowCount)return next();}
+    try {if(!(await pool.query("SELECT 1 FROM sessions WHERE id=$1 AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')",[match[1]])).rowCount)return next();}
     catch {return unavailable();}
     context={eventType,sessionId:match[1]};
    }
@@ -77,7 +77,7 @@ export function registerAudit(app:Express,pool:Pool) {
     if(!uuid.test(target[2]!))return next();
     const table=target[1]==="concepts"?"concepts":"links";
     try {const result=await pool.query<{mapId:string;protocol:string|null}>('SELECT item.map_id AS "mapId",s.protocol_key AS protocol FROM '+table+' item JOIN maps m ON m.id=item.map_id LEFT JOIN session_stages st ON st.id=m.session_stage_id LEFT JOIN sessions s ON s.id=st.session_id WHERE item.id=$1',[target[2]]);
-     if(result.rows[0]&&["STAGE1_4","STAGE1_6"].includes(result.rows[0].protocol??""))return next();
+     if(result.rows[0]&&["STAGE1_4","STAGE1_6","STAGE1_5"].includes(result.rows[0].protocol??""))return next();
      if(result.rows[0])context={eventType:table==="concepts"?"DELETE_CONCEPT":"DELETE_LINK",mapId:result.rows[0].mapId,targetId:target[2]};
     }catch{return unavailable();}
    }

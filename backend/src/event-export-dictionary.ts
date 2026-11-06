@@ -3,7 +3,8 @@ const descriptions: Record<string, string> = {
   event_id:
     "イベント結合キー。新形式は保存済みUUID、旧ログはlegacy:UUID。全CSVの参照先。",
   source_format: "EVENT / LEGACY。旧ログを新イベントと再解釈しない。",
-  schema_version: "保存済み1/2/3/4/5/6。旧形式は未設定（null）。",
+  protocol_key: "STAGE1_4=旧4活動、STAGE1_6=旧群別6活動、STAGE1_5=群なし5活動。Sessionなしの監査はnull。",
+  schema_version: "保存済み1/2/3/4/5/6/7。旧形式は未設定（null）。",
   session_id: "Session UUID。Session未所属監査はnull。",
   learner_id:
     "P-UUID。明示的に関連付けたSession間で共有する仮名。人物をコード一致で推測しない。再発行後は現在の仮名で投影する。",
@@ -69,7 +70,7 @@ function typeOf(key: string) {
 }
 export function dataDictionary(chronological = false) {
   let text =
-    `# 研究イベント出力データ辞書 v${EXPORT_VERSION}\n\nJSON: export_schema_version=${EXPORT_VERSION}。日時は全てUTCのISO 8601（Z）。新形式イベントのschema_version 1〜4は変更せず、5は保存Link位置を含む状態、6はKit確認結果。従来の共通CSV列は意味と順序を保ち末尾にfeedback_matchを追加。CSVはUTF-8 BOM、CRLF、RFC 4180引用符。nullは空セル。空文字とnullの解釈には品質とJSONを参照する。整数連番/IDは文字列として取り込む。\n\n`;
+    `# 研究イベント出力データ辞書 v${EXPORT_VERSION}\n\nJSON: export_schema_version=${EXPORT_VERSION}。日時は全てUTCのISO 8601（Z）。新形式イベントのschema_version 1〜4は変更せず、5は保存Link位置を含む状態、6はKit確認結果。7は新5活動のアンケートで、before/after={questionId,kind,value}。SURVEY_EDIT/SURVEY_SUBMITは旧評価と混同せずsurvey_events.csvへ分類。群はnull。自由記述・選択肢は文字列、段階評価は整数、未回答はnull。従来の共通CSV列は意味と順序を保ち末尾にfeedback_matchを追加。出力schemaVersion=3は既存列の意味・順序を保ち、共通列末尾にprotocol_keyを追加し、survey_events.csvを別ファイルとして追加。CSVはUTF-8 BOM、CRLF、RFC 4180引用符。nullは空セル。空文字とnullの解釈には品質とJSONを参照する。整数連番/IDは文字列として取り込む。\n\n`;
   text +=
     "## 共通抽出\n\n条件内の選択肢はOR、異なる条件はAND。空配列は無制限。Session/仮名IDフィルターは未所属監査を除く。群/活動のUNASSIGNEDはnullを選択する。期間はserver_timestampの開始以上・終了未満 [from,to)。入力はZまたは時差を必須としUTCへ正規化する。空結果も0件JSONとヘッダーのみCSVを作る。\n\n同じexport_idの全ファイルは1つのREPEATABLE READスナップショットから一度だけ生成する。後から同条件で再生成したexport_idとは同一集合を保証しない。期間外の関連イベントや未観測の終了は補完しない。\n\n";
   text +=

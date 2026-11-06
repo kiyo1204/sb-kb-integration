@@ -15,6 +15,7 @@
     "test:data-management-browser": "tsx scripts/verify-data-management-browser.ts",
     "test:research-log-ui": "tsx scripts/verify-research-log-ui.ts",
     "test:link-position-browser": "tsx scripts/verify-link-position-browser.ts",
+    "test:session-flow-survey-browser": "tsx scripts/verify-session-flow-survey-browser.ts",
     "test:undo-role-browser": "tsx scripts/verify-undo-role-browser.ts"
   },
   "dependencies": {

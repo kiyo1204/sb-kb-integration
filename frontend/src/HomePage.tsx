@@ -240,7 +240,7 @@ type ResearchSession = {
   startedAt: string | null; completedAt: string | null;
 };
 
-const stageNames: Record<string, string> = { LESSON: "授業動画", PRIOR_MAP: "Scratch-Build", KB_MAP: "Kit-Build", INTEGRATION_MAP: "統合マップ", PRE_ASSESSMENT: "事前評価", SELF_STUDY: "自主学習", POST_ASSESSMENT: "事後評価" };
+const stageNames: Record<string, string> = { SURVEY:"アンケート", LESSON: "授業動画", PRIOR_MAP: "Scratch-Build", KB_MAP: "Kit-Build", INTEGRATION_MAP: "統合マップ", PRE_ASSESSMENT: "事前評価", SELF_STUDY: "自主学習", POST_ASSESSMENT: "事後評価" };
 
 function ResearchSessions() {
   const [sessions, setSessions] = useState<ResearchSession[] | null>(null);
@@ -262,9 +262,9 @@ function ResearchSessions() {
     {!sessions && !error && <p role="status">セッションを読み込んでいます…</p>}
     {sessions?.length === 0 && <p>セッションはまだありません。</p>}
     {sessions && sessions.length > 0 && <div className="research-session-table-wrap"><table className="research-session-table">
-      <thead><tr><th scope="col">参加者コード</th><th scope="col">群</th><th scope="col">状態</th><th scope="col">現在の活動</th><th scope="col">開始日時</th><th scope="col">完了日時</th><th scope="col">操作</th></tr></thead>
+      <thead><tr><th scope="col">参加者コード</th><th scope="col">フロー</th><th scope="col">群</th><th scope="col">状態</th><th scope="col">現在の活動</th><th scope="col">開始日時</th><th scope="col">完了日時</th><th scope="col">操作</th></tr></thead>
       <tbody>{sessions.map(session => <tr key={session.id}>
-        <td>{session.participantCode || "—"}</td><td>{session.studyGroup === "EXPERIMENTAL" ? "実験群" : session.studyGroup === "CONTROL" ? "統制群" : "—"}</td>
+        <td>{session.participantCode || "—"}</td><td>{session.protocolKey==="STAGE1_5"?"5活動（群なし）":session.protocolKey==="STAGE1_6"?"6活動（群別）":"4活動（旧形式）"}</td><td>{session.studyGroup === "EXPERIMENTAL" ? "実験群" : session.studyGroup === "CONTROL" ? "統制群" : "—"}</td>
         <td>{session.status === "NOT_STARTED" ? "未開始" : session.status === "IN_PROGRESS" ? "進行中" : "完了"}</td>
         <td>{session.status === "IN_PROGRESS" && session.currentStageType ? `STEP ${(session.currentStageOrder ?? 0) + 1}：${stageNames[session.currentStageType] ?? session.currentStageType}` : "—"}</td>
         <td>{session.startedAt ? formatDate(session.startedAt) : "—"}</td><td>{session.completedAt ? formatDate(session.completedAt) : "—"}</td>

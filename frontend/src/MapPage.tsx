@@ -23,6 +23,7 @@ type Concept = {
   createdAt: string;
   updatedAt: string;
   isMergeResult?: boolean;
+  isSeed?: boolean;
 };
 
 type MergeConceptResponse = {
@@ -493,7 +494,7 @@ export default function MapPage({
       !isLearner ||
       state.status !== "success" ||
       !state.map.sessionId ||
-      !["STAGE1_4", "STAGE1_6"].includes(state.map.sessionProtocolKey ?? "")
+      !["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(state.map.sessionProtocolKey ?? "")
     ) return;
     const idempotencyKey = newClientId();
     try {
@@ -623,7 +624,7 @@ export default function MapPage({
     if (
       !isLearner ||
       !currentMap ||
-      ! ["STAGE1_4", "STAGE1_6"].includes(currentMap.sessionProtocolKey ?? "") ||
+      ! ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(currentMap.sessionProtocolKey ?? "") ||
       (currentMap.type !== "PRIOR" &&
         currentMap.type !== "KB" &&
         currentMap.type !== "INTEGRATION") ||
@@ -1779,7 +1780,7 @@ export default function MapPage({
           );
           if (!flowResponse.ok) throw new Error("Session flow refresh failed");
           const flow = (await flowResponse.json()) as SessionFlowResponse;
-          if (isLearner && map.type === "INTEGRATION" && flow.session.protocolKey === "STAGE1_6" && flow.currentStage?.id === map.sessionStageId && flow.currentStage.startedAt && flow.session.groupActivitySeconds !== null) {
+          if (isLearner && map.type === "INTEGRATION" && ["STAGE1_6","STAGE1_5"].includes(flow.session.protocolKey) && flow.currentStage?.id === map.sessionStageId && flow.currentStage.startedAt && flow.session.groupActivitySeconds !== null) {
             const deadline = flowRequestedAt + Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000 - Date.parse(flow.serverNow);
             if (deadline <= performance.now()) {
               window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId ?? map.sessionId)}`);
@@ -2057,13 +2058,13 @@ export default function MapPage({
         onShowKitFeedback={() => setKitFeedbackDialog({ status: "result", fromSubmission: false })}
         onCloseKitFeedback={() => setKitFeedbackDialog(null)}
         canSubmit={
-          ["STAGE1_4", "STAGE1_6"].includes(state.map.sessionProtocolKey ?? "") &&
+          ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(state.map.sessionProtocolKey ?? "") &&
           state.map.sessionStageStatus === "IN_PROGRESS"
         }
         supplementalContent={integrationEditorSupplement}
         additionalBusy={mergingConcepts || undoRedoBusy}
         undoRedoState={
-          isLearner && ["STAGE1_4", "STAGE1_6"].includes(state.map.sessionProtocolKey ?? "") ? undoRedoState : null
+          isLearner && ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(state.map.sessionProtocolKey ?? "") ? undoRedoState : null
         }
         undoRedoFeedback={undoRedoFeedback}
         onUndoRedo={performUndoRedo}
@@ -2785,7 +2786,7 @@ function MapEditorShell({
     : "";
   const mapTitle = isLearner
     ? map.type === "PRIOR"
-      ? "STEP 2：Scratch-Build"
+      ? map.sessionProtocolKey==="STAGE1_5" ? "STEP 2：学習者マップ（Scratch-Build）" : "STEP 2：Scratch-Build"
       : map.type === "KB"
         ? "STEP 3：Kit-Build"
         : map.sessionProtocolKey === "STAGE1_6"
@@ -2803,6 +2804,7 @@ function MapEditorShell({
       <header className="map-editor-header">
         <div className="map-editor-title">
           <h1>{mapTitle}</h1>
+        {map.type==="PRIOR" && map.sessionProtocolKey==="STAGE1_5" && <p>初期概念は移動・リンク作成ができます。名前変更・削除はできません。</p>}
           {!isLearner && <span>{mapTitle}</span>}
         </div>
         <div className="map-editor-header-actions">
@@ -3130,7 +3132,7 @@ function MapEditorShell({
                       setConceptLabel(event.target.value);
                       setDrawerFeedback(null);
                     }}
-                    disabled={drawerSaving || interactionLocked}
+                    disabled={drawerSaving || interactionLocked || activeConcept?.isSeed}
                     required
                   />
                   <div className="map-editor-drawer-actions">
@@ -3138,7 +3140,7 @@ function MapEditorShell({
                       type="button"
                       className="is-danger"
                       disabled={
-                        drawerSaving || interactionLocked || activeConcept.isMergeResult
+                        drawerSaving || interactionLocked || activeConcept.isMergeResult || activeConcept.isSeed
                       }
                       onClick={() => void handleConceptDelete()}
                     >
@@ -3147,12 +3149,13 @@ function MapEditorShell({
                     <button
                       type="submit"
                       disabled={
-                        drawerSaving || interactionLocked || !conceptLabel.trim()
+                        drawerSaving || interactionLocked || activeConcept?.isSeed || !conceptLabel.trim()
                       }
                     >
                       {drawerSaving ? "保存中…" : "保存"}
                     </button>
                   </div>
+                  {activeConcept.isSeed && <p>初期概念の名前変更・削除はできません。移動・リンク作成はできます。</p>}
                   {activeConcept.isMergeResult && (
                     <p className="map-editor-drawer-hint">
                       Mergeの履歴を保持するため、このConceptは削除できません。
@@ -4091,6 +4094,7 @@ export function ConceptCanvas({
   }
 
   function beginLabelEdit(concept: Concept) {
+    if (concept.isSeed) return;
     if (
       readOnly ||
       !canEditConceptStructure ||
@@ -4385,6 +4389,7 @@ export function ConceptCanvas({
   }
 
   function beginConceptDelete(concept: Concept) {
+    if (concept.isSeed) return;
     if (
       !canEditConceptStructure ||
       concept.isMergeResult ||
@@ -5293,7 +5298,7 @@ export function ConceptCanvas({
                 )}
                 {usesMapEditorDrawers ? (
                   <h3>{concept.label}</h3>
-                ) : readOnly || !canEditConceptStructure ? (
+                ) : readOnly || !canEditConceptStructure || concept.isSeed ? (
                   <h3>{concept.label}</h3>
                 ) : editingConceptId === concept.id ? (
                   <form

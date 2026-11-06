@@ -1,3 +1,4 @@
+import { surveySnapshot } from "./surveys.js";
 import {redactResearchOutput} from "./research-output-safety.js";
 import {deliverySnapshot} from "./delivery-reports.js";
 import type { PoolClient } from "pg";
@@ -23,7 +24,7 @@ export type SessionRawExportWarning = {
 };
 
 export type SessionRawExport = {
-  exportVersion: 1 | 2;
+  exportVersion: 1 | 2 | 3;
   exportedAt: string;
   warnings: SessionRawExportWarning[];
   session: {
@@ -43,6 +44,8 @@ export type SessionRawExport = {
   maps: Array<Record<string, unknown>>;
   goalMaps: Array<Record<string, unknown>>;
   kitDefinitions: Array<Record<string, unknown>>;
+  seedConcepts?: Array<Record<string,unknown>>;
+  survey?: Awaited<ReturnType<typeof surveySnapshot>>;
   assessment?: Awaited<ReturnType<typeof assessmentSnapshot>>;
   delivery?: Awaited<ReturnType<typeof deliverySnapshot>>;
 };
@@ -147,7 +150,7 @@ export async function buildSessionRawExport(
   );
   const session = sessionResult.rows[0];
   if (!session) return { kind: "not_found" };
-  if (!["STAGE1_4", "STAGE1_6"].includes(session.protocolKey)) return { kind: "not_found" };
+  if (!["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(session.protocolKey)) return { kind: "not_found" };
   if (session.status !== "COMPLETED") {
     return { kind: "not_completed", status: session.status };
   }
@@ -166,7 +169,7 @@ export async function buildSessionRawExport(
   if (
     !assertSameSet(
       stages.map((stage) => stage.stageType),
-      session.protocolKey === "STAGE1_4" ? EXPECTED_STAGE_TYPES :
+      session.protocolKey === "STAGE1_4" ? EXPECTED_STAGE_TYPES : session.protocolKey === "STAGE1_5" ? ["LESSON","PRIOR_MAP","KB_MAP","INTEGRATION_MAP","SURVEY"] :
         ["LESSON", "PRIOR_MAP", "KB_MAP", "PRE_ASSESSMENT", session.studyGroup === "EXPERIMENTAL" ? "INTEGRATION_MAP" : "SELF_STUDY", "POST_ASSESSMENT"],
     ) ||
     stages.some(
@@ -551,7 +554,7 @@ export async function buildSessionRawExport(
     kitDefinitionId: map.kitDefinitionId,
     createdAt: iso(map.createdAt),
     submittedAt: iso(map.submittedAt),
-    ...(session.protocolKey === "STAGE1_6" && map.type === "INTEGRATION" ? { autoSubmittedAt: iso(map.autoSubmittedAt) } : {}),
+    ...(["STAGE1_6","STAGE1_5"].includes(session.protocolKey) && map.type === "INTEGRATION" ? { autoSubmittedAt: iso(map.autoSubmittedAt) } : {}),
     concepts: conceptsByMap.get(map.id) ?? [],
     links: linksByMap.get(map.id) ?? [],
     operationLogs: logsByMap.get(map.id) ?? [],
@@ -657,7 +660,7 @@ export async function buildSessionRawExport(
   return {
     kind: "exported",
     value: await redactResearchOutput({
-      exportVersion: session.protocolKey === "STAGE1_6" ? 2 : 1,
+      exportVersion: session.protocolKey === "STAGE1_5" ? 3 : session.protocolKey === "STAGE1_6" ? 2 : 1,
       exportedAt: exportedAt.toISOString(),
       warnings,
       session: {
@@ -670,7 +673,7 @@ export async function buildSessionRawExport(
         participantCode: (await client.query("SELECT pseudonym FROM research_session_ids WHERE session_id=$1",[sessionId])).rows[0]?.pseudonym ?? null,
         lessonVideoUrl: session.lessonVideoUrl,
         researchKitDefinitionId: session.researchKitDefinitionId,
-        ...(session.protocolKey === "STAGE1_6" ? { studyGroup: session.studyGroup, groupActivitySeconds: session.groupActivitySeconds } : {}),
+        ...(["STAGE1_6","STAGE1_5"].includes(session.protocolKey) ? { studyGroup: session.studyGroup, groupActivitySeconds: session.groupActivitySeconds } : {}),
       },
       stages: stages.map((stage) => ({
         id: stage.id,
@@ -694,6 +697,7 @@ export async function buildSessionRawExport(
       goalMaps: mapsWithProvenance.filter((map) => map.type === "GOAL"),
       kitDefinitions: kits,
       ...(assessment ? { assessment } : {}),
+      ...(session.protocolKey==="STAGE1_5" ? {survey:await surveySnapshot(client,sessionId),seedConcepts:(await client.query('SELECT seed.kit_concept_item_id AS "kitConceptItemId",item.source_concept_id AS "sourceConceptId",placed.concept_id AS "conceptId" FROM session_seed_concepts seed JOIN kit_concept_items item ON item.id=seed.kit_concept_item_id LEFT JOIN seeded_map_concepts placed ON placed.session_id=seed.session_id AND placed.kit_concept_item_id=seed.kit_concept_item_id WHERE seed.session_id=$1 ORDER BY seed.kit_concept_item_id',[sessionId])).rows} : {}),
       delivery: await deliverySnapshot(client,sessionId),
     },client),
   };

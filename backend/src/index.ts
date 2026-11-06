@@ -1,3 +1,4 @@
+import { registerSurveyRoutes, SeedValidationError, validSurveyQuestions, saveSurveyQuestions, seedLearnerMap, seededConceptGuard } from "./surveys.js";
 import { respondToMapFailure } from "./map-failure-response.js";
 import { validateMapStateV5, validMapCoordinate } from "./research-event-map-v5.js";
 import {EventExportService} from "./event-export-service.js";
@@ -11,7 +12,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool, type PoolClient } from "pg";
 import {
   assertStageIsCurrent,
-  createStage1Session,
+  createFiveActivitySession,
   STAGE1_PROTOCOL_KEY,
   getSession,
   getSessionFlow,
@@ -262,6 +263,7 @@ function ensureLinkLabelEditable(map: LockedMapState) {
 }
 
 function readOnlyMapResponse(response: Response, error: unknown) {
+  if(error instanceof Error && error.message==="seed_concept_read_only") return response.status(409).json({error:"seed_concept_read_only",message:"初期概念の名前変更・削除・統合はできません。移動とリンク作成はできます。"});
   if (error instanceof HistoryTransitionError) return response.status(409).json({ error: "map_history_unavailable", message: error.message });
   if (error instanceof InvalidEventError) return response.status(400).json({ error: "invalid_map_state", message: "マップの内容を確認してください。URLや認証情報を名前に含めることはできません。" });
   if (error instanceof SessionFlowGuardError) {
@@ -432,6 +434,7 @@ type MapConceptRow = {
   conceptCreatedAt: Date | null;
   conceptUpdatedAt: Date | null;
   isMergeResult: boolean;
+  isSeed: boolean;
 };
 
 type MapLinkRow = {
@@ -598,7 +601,7 @@ async function withTransaction<T>(
     if (guarded && (guarded.mapIds.size || guarded.stageIds.size)) {
       const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id
         LEFT JOIN maps m ON m.session_stage_id=st.id AND m.type='INTEGRATION'
-        WHERE s.protocol_key='STAGE1_6' AND st.stage_type='INTEGRATION_MAP'
+        WHERE s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type='INTEGRATION_MAP'
           AND (m.id = ANY($1::uuid[]) OR st.id = ANY($2::uuid[]))
           AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second' LIMIT 1`,
         [[...guarded.mapIds], [...guarded.stageIds]]);
@@ -684,7 +687,7 @@ async function lockMapForConcept(
       WHERE concept.id = $1::uuid
         AND (map.type = 'GOAL' OR (
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
-          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
+          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5')
         ))
       FOR NO KEY UPDATE OF map
     `,
@@ -730,7 +733,7 @@ async function lockMapForLink(
       WHERE link.id = $1::uuid
         AND (map.type = 'GOAL' OR (
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
-          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
+          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5')
         ))
       FOR NO KEY UPDATE OF map
     `,
@@ -775,7 +778,7 @@ async function lockMapById(
       WHERE map.id = $1::uuid
         AND (map.type = 'GOAL' OR (
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
-          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
+          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5')
         ))
       FOR NO KEY UPDATE OF map
     `,
@@ -1559,7 +1562,7 @@ async function isStage1LearnerMap(client: PoolClient, mapId: string) {
   );
   const row = result.rows[0];
   return Boolean(
-    (row?.protocolKey === STAGE1_PROTOCOL_KEY || row?.protocolKey === "STAGE1_6") &&
+    ([STAGE1_PROTOCOL_KEY,"STAGE1_6","STAGE1_5"].includes(row?.protocolKey ?? "")) &&
       (row.type === "PRIOR" || row.type === "KB" || row.type === "INTEGRATION"),
   );
 }
@@ -1740,9 +1743,9 @@ app.use("/api", (request, response, next) => {
           const table = targetType === "CONCEPT" ? "concepts" : "links";
           const owner = await client.query<{mapId:string;sessionId:string;protocolKey:string;stageType:string;studyGroup:string|null;expired:boolean}>(
             `SELECT item.map_id AS "mapId",s.id AS "sessionId",s.protocol_key AS "protocolKey",st.stage_type AS "stageType",s.study_group AS "studyGroup",
-              (s.protocol_key='STAGE1_6' AND st.stage_type='INTEGRATION_MAP' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
+              (s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type='INTEGRATION_MAP' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
              FROM ${table} item JOIN maps m ON m.id=item.map_id JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id
-             WHERE item.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6')`,[targetId]);
+             WHERE item.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')`,[targetId]);
           if (!owner.rowCount) { await client.query("ROLLBACK"); return null; }
           resolvedMapId=owner.rows[0]!.mapId;
           if (principal.role==="learner"&&principal.sessionId!==owner.rows[0]!.sessionId) {await client.query("ROLLBACK");return null;}
@@ -1751,9 +1754,9 @@ app.use("/api", (request, response, next) => {
         if (!resolvedMapId) { await client.query("ROLLBACK"); return null; }
         const owner=await client.query<{sessionId:string;protocolKey:string;status:string;mapStatus:string;stageType:string;stageStatus:string;expired:boolean}>(
           `SELECT s.id AS "sessionId",s.protocol_key AS "protocolKey",s.status,m.status AS "mapStatus",st.stage_type AS "stageType",st.status AS "stageStatus",
-            (s.protocol_key='STAGE1_6' AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
+            (s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
            FROM maps m JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id
-           WHERE m.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6')`,[resolvedMapId]);
+           WHERE m.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')`,[resolvedMapId]);
         if (!owner.rowCount || principal.role==="learner"&&principal.sessionId!==owner.rows[0]!.sessionId) {await client.query("ROLLBACK");return null;}
         const sessionId=owner.rows[0]!.sessionId;
         if(owner.rows[0]!.expired){reasonCode="DEADLINE";}
@@ -1762,7 +1765,7 @@ app.use("/api", (request, response, next) => {
         await client.query("SELECT id FROM maps WHERE id=$1::uuid FOR NO KEY UPDATE",[resolvedMapId]);
         const lockedOwner=await client.query<{status:string;mapStatus:string;stageStatus:string;expired:boolean}>(
           `SELECT s.status,m.status AS "mapStatus",st.status AS "stageStatus",
-            (s.protocol_key='STAGE1_6' AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
+            (s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
            FROM maps m JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id WHERE m.id=$1::uuid`,[resolvedMapId]);
         if(lockedOwner.rows[0]?.expired) reasonCode="DEADLINE";
         else if(lockedOwner.rows[0]?.mapStatus==="SUBMITTED"||lockedOwner.rows[0]?.status==="COMPLETED"||lockedOwner.rows[0]?.stageStatus==="COMPLETED") reasonCode="PERMISSION";
@@ -1812,6 +1815,7 @@ app.use("/api", (request, response, next) => {
 });
 app.use("/api", accessControl(pool));
 registerOperationContext(app);
+app.use("/api",seededConceptGuard(pool));
 registerAudit(app, pool);
 app.use("/api", async (request, response, next) => {
   if (!["POST", "PATCH"].includes(request.method) || !/^\/(maps|concepts|links)\//.test(request.path) || !request.body || typeof request.body.label !== "string") return next();
@@ -1832,6 +1836,7 @@ app.use("/api", (request, response, next) => {
 app.get("/api/me", (_request, response) => response.json(principalOf(response)));
 registerStage1AnalysisRoutes(app, pool);
 registerAssessmentRoutes(app, pool);
+registerSurveyRoutes(app,pool);
 registerResearchEventRoutes(app, pool);
 registerDeliveryReports(app,pool);
 const eventExportPool=new Pool({connectionString:databaseUrl,max:2,connectionTimeoutMillis:5000});
@@ -1908,7 +1913,7 @@ const recordMapOperationCancellation = async (
         `SELECT s.id AS "sessionId", s.protocol_key AS "protocolKey", s.study_group AS "studyGroup",
           s.status AS "sessionStatus", st.stage_type AS "stageType", st.status AS "stageStatus",
           current_stage.id AS "currentStageId",
-          (s.protocol_key='STAGE1_6' AND st.stage_type='INTEGRATION_MAP'
+          (s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type='INTEGRATION_MAP'
             AND s.study_group='EXPERIMENTAL'
             AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second') AS expired
          FROM session_stages st JOIN sessions s ON s.id=st.session_id
@@ -1922,7 +1927,7 @@ const recordMapOperationCancellation = async (
       );
       const stage = owner.rows[0];
       const expectedStageType = map.mapType === "PRIOR" ? "PRIOR_MAP" : map.mapType === "KB" ? "KB_MAP" : map.mapType === "INTEGRATION" ? "INTEGRATION_MAP" : null;
-      if (!stage || stage.sessionId !== principal.sessionId || !["STAGE1_4", "STAGE1_6"].includes(stage.protocolKey)
+      if (!stage || stage.sessionId !== principal.sessionId || !["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(stage.protocolKey)
         || !expectedStageType || stage.stageType !== expectedStageType || stage.sessionStatus !== "IN_PROGRESS"
         || stage.stageStatus !== "IN_PROGRESS" || stage.currentStageId !== map.sessionStageId || stage.expired) return null;
       if (targetId) {
@@ -2355,14 +2360,15 @@ app.post("/api/research/stage1/sessions", async (request, response) => {
     typeof data.videoUrl === "string" ? data.videoUrl.trim() : "";
   const videoUrl = requestedVideo || process.env.STAGE1_VIDEO_URL?.trim() || "";
   const kitDefinitionId = data.kitDefinitionId;
-  const studyGroup = data.studyGroup;
+  const surveyQuestions = data.surveyQuestions;
+  const seedConceptIds = data.seedConceptIds;
   const validVideoUrl =
     videoUrl.length > 0 &&
     videoUrl.length <= 2048 &&
     ((videoUrl.startsWith("/") && !videoUrl.startsWith("//")) ||
       /^https?:\/\//i.test(videoUrl));
   if (
-    (studyGroup !== "EXPERIMENTAL" && studyGroup !== "CONTROL") ||
+    data.studyGroup !== undefined || !validSurveyQuestions(surveyQuestions) || !Array.isArray(seedConceptIds) || !seedConceptIds.every(id => typeof id === "string" && uuidPattern.test(id)) || new Set(seedConceptIds).size !== seedConceptIds.length ||
     !participantCode ||
     participantCode.length > 64 ||
     !validVideoUrl ||
@@ -2440,18 +2446,23 @@ app.post("/api/research/stage1/sessions", async (request, response) => {
       ) {
         return { kind: "kit_not_complete" as const };
       }
-      const session = await createStage1Session(client, {
+      const seeds = await client.query(`SELECT item.id FROM kit_concept_items item JOIN concepts c ON c.id=item.source_concept_id
+        WHERE item.kit_definition_id=$1 AND item.id=ANY($2::uuid[]) AND c.map_id=$3 AND c.merged_into_concept_id IS NULL FOR SHARE OF item,c`,[kitDefinitionId,seedConceptIds,kit.rows[0]!.goalMapId]);
+      if(seeds.rowCount !== seedConceptIds.length) return {kind:"invalid_seeds" as const};
+      const session = await createFiveActivitySession(client, {
         participantCode,
         lessonVideoUrl: videoUrl,
         kitDefinitionId,
-        studyGroup: studyGroup as "EXPERIMENTAL" | "CONTROL",
         groupActivitySeconds: settings.rows[0].seconds,
       });
+      await saveSurveyQuestions(client,session.id,surveyQuestions);
+      for(const item of seedConceptIds) await client.query("INSERT INTO session_seed_concepts(session_id,kit_concept_item_id) VALUES($1,$2)",[session.id,item]);
       const credential = createLearnerToken();
       await storeLearnerToken(client, session.id, credential.hash);
       await auditCurrent(client, { sessionId: session.id });
       return { kind: "created" as const, session, learnerAccessToken: credential.token };
     });
+    if (result.kind === "invalid_seeds") return response.status(400).json({error:"invalid_seed_concepts",message:"使用するKitの概念を重複せず選択してください。"});
     if (result.kind === "settings_missing") return response.status(409).json({ error: "settings_missing", message: "群別活動の共通時間を設定してください。" });
     if (result.kind === "kit_not_found") {
       return response.status(404).json({ error: "kit_not_found" });
@@ -2476,7 +2487,7 @@ app.post("/api/research/stage1/sessions/:sessionId/learner-token", async (reques
   try {
     const result = await withTransaction(async (client) => {
       const session = await client.query(
-        "SELECT id FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6') FOR UPDATE",
+        "SELECT id FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5') FOR UPDATE",
         [sessionId],
       );
       if (!session.rowCount) return null;
@@ -2496,7 +2507,7 @@ app.post("/api/research/stage1/sessions/:sessionId/learner-token", async (reques
 async function currentLearnerMapState(sessionId: string) {
   const result = await pool.query<{ id: string; status: string; type: string; expired: boolean; autoSubmittedAt: Date | null }>(
     `SELECT m.id, m.status, m.type, m.auto_submitted_at AS "autoSubmittedAt",
-       (s.protocol_key = 'STAGE1_6' AND st.stage_type = 'INTEGRATION_MAP' AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second') AS expired
+       (s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type = 'INTEGRATION_MAP' AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second') AS expired
      FROM sessions s
      JOIN LATERAL (
        SELECT id, status, stage_type, started_at FROM session_stages
@@ -2695,7 +2706,7 @@ app.post("/api/sessions/:sessionId/start", async (request, response) => {
   try {
     const outcome = await withTransaction(async (client) => {
       const current = await client.query<{ status: string; protocolKey: string }>(
-        "SELECT status, protocol_key AS \"protocolKey\" FROM sessions WHERE id = $1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6') FOR UPDATE",
+        "SELECT status, protocol_key AS \"protocolKey\" FROM sessions WHERE id = $1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5') FOR UPDATE",
         [sessionId],
       );
       const session = current.rows[0];
@@ -2786,7 +2797,7 @@ app.post("/api/session-stages/:stageId/start", async (request, response) => {
       if (stage.status === "IN_PROGRESS") {
         {
           const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id
-            WHERE st.id=$1::uuid AND s.protocol_key='STAGE1_6' AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY')
+            WHERE st.id=$1::uuid AND s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY')
               AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`, [stageId]);
           if (expired.rowCount) return { kind: "time_expired" as const };
         }
@@ -2886,15 +2897,15 @@ app.post("/api/session-stages/:stageId/complete", async (request, response) => {
       if (flow.kind !== "ready") {
         return { kind: "flow_conflict" as const, flow };
       }
-      if (stage.stageType === "PRE_ASSESSMENT" || stage.stageType === "POST_ASSESSMENT") return { kind: "assessment_requires_submission" as const };
+      if (stage.stageType === "PRE_ASSESSMENT" || stage.stageType === "POST_ASSESSMENT" || stage.stageType === "SURVEY") return { kind: "assessment_requires_submission" as const };
       const timed = await client.query<{ protocol: string; studyGroup: string; elapsed: boolean; submitted: boolean }>(
         `SELECT s.protocol_key AS protocol, s.study_group AS "studyGroup",
           clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second' AS elapsed,
           EXISTS (SELECT 1 FROM maps m WHERE m.session_stage_id=st.id AND m.type='INTEGRATION' AND m.status='SUBMITTED') AS submitted
          FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid`, [stageId]);
       const conditions = timed.rows[0];
-      const isTimed = conditions?.protocol === "STAGE1_6" && (stage.stageType === "SELF_STUDY" || stage.stageType === "INTEGRATION_MAP");
-      if (isTimed && (stage.stageType === "SELF_STUDY" ? conditions.studyGroup !== "CONTROL" : conditions.studyGroup !== "EXPERIMENTAL")) return { kind: "group_mismatch" as const };
+      const isTimed = ["STAGE1_6","STAGE1_5"].includes(conditions?.protocol ?? "") && (stage.stageType === "SELF_STUDY" || stage.stageType === "INTEGRATION_MAP");
+      if (isTimed && conditions?.protocol === "STAGE1_6" && (stage.stageType === "SELF_STUDY" ? conditions.studyGroup !== "CONTROL" : conditions.studyGroup !== "EXPERIMENTAL")) return { kind: "group_mismatch" as const };
       if (isTimed && (!conditions.elapsed || (stage.stageType === "INTEGRATION_MAP" && !conditions.submitted))) return { kind: "timed_incomplete" as const };
       if (
         stage.stageType === "PRIOR_MAP" ||
@@ -3004,11 +3015,8 @@ app.post(
           if (!map) throw new Error("Prior Map insert returned no row");
           // The post-lesson Scratch-Build map starts with a single anchor.
           // System initialization does not create a learner ADD_CONCEPT log.
-          await client.query(
-            `INSERT INTO concepts (map_id, label, position_x, position_y)
-             VALUES ($1::uuid, '注意', 320, 240)`,
-            [map.id],
-          );
+          if(!await seedLearnerMap(client,validation.stage.sessionId,map.id)) await client.query(
+            `INSERT INTO concepts (map_id, label, position_x, position_y) VALUES ($1::uuid, '注意', 320, 240)`,[map.id]);
           await createMapInitialSnapshot(client, map.id);
           return { kind: "created", map };
         },
@@ -3018,6 +3026,7 @@ app.post(
         return response.status(201).json(outcome.map);
       return sessionStageMapResponse(response, outcome);
     } catch (error) {
+      if(error instanceof SeedValidationError) return response.status(400).json({error:"invalid_seed_label",message:"初期概念の名前にURL・認証情報や上限を超える内容が含まれています。研究者に確認してください。"});
       if (isPostgresErrorCode(error, "23505")) {
         return sessionStageMapResponse(response, {
           kind: "session_stage_already_assigned",
@@ -3090,7 +3099,7 @@ app.get("/api/maps/:mapId/kit-feedback", async (request, response) => {
       if (!result) return { kind: "not_found" as const };
       let activityLogSaved: boolean | null = null;
       if (principal.role === "learner" && owner.sessionId && owner.stageId && owner.protocolKey &&
-          ["STAGE1_4", "STAGE1_6"].includes(owner.protocolKey)) {
+          ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(owner.protocolKey)) {
         const log = await insertResearchEventBestEffort(client, owner.sessionId, "LEARNER", {
           schemaVersion:6,eventType: "FEEDBACK_CHECK", targetType: "FEEDBACK", targetId:mapId,stageId: owner.stageId, mapId,
           outcome: "SUCCESS", details:{matched:result.matched},clientTimeQuality: "NOT_APPLICABLE",beforeQuality:"NOT_APPLICABLE",afterQuality:"NOT_APPLICABLE",
@@ -3136,7 +3145,7 @@ app.post("/api/maps/:mapId/kit-feedback/display", async (request, response) => {
         [mapId, principal.sessionId],
       );
       const item = owner.rows[0];
-      if (!item || !["STAGE1_4", "STAGE1_6"].includes(item.protocolKey) || item.stageType !== "KB_MAP" ||
+      if (!item || !["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(item.protocolKey) || item.stageType !== "KB_MAP" ||
           item.mapStatus !== "DRAFT" || item.sessionStatus !== "IN_PROGRESS" || item.stageStatus !== "IN_PROGRESS" || item.currentStageId !== item.stageId) {
         return { allowed: false as const };
       }
@@ -3440,7 +3449,7 @@ app.post(["/api/maps/:priorMapId/integration", "/api/session-stages/:stageId/int
          JOIN maps kb ON kb.session_stage_id = kb_stage.id AND kb.type = 'KB' AND kb.status = 'SUBMITTED' AND kb.kit_definition_id IS NOT NULL
          WHERE target.id = $1::uuid AND target.stage_type = 'INTEGRATION_MAP'
            AND target.status = 'IN_PROGRESS' AND s.status = 'IN_PROGRESS'
-           AND (s.protocol_key = 'STAGE1_4' OR (s.protocol_key = 'STAGE1_6' AND s.study_group = 'EXPERIMENTAL'))
+           AND (s.protocol_key IN ('STAGE1_4','STAGE1_5') OR (s.protocol_key = 'STAGE1_6' AND s.study_group = 'EXPERIMENTAL'))
            AND target.id = (SELECT id FROM session_stages WHERE session_id = s.id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1)`,
         [stageId],
       );
@@ -3528,7 +3537,7 @@ app.post(["/api/maps/:priorMapId/integration", "/api/session-stages/:stageId/int
           ) {
             integrationStageSessionId = validation.stage.sessionId;
             {
-              const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid AND s.protocol_key='STAGE1_6' AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`, [sessionStageId]);
+              const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid AND s.protocol_key IN ('STAGE1_6','STAGE1_5') AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`, [sessionStageId]);
               if (expired.rowCount) return { kind: "time_expired" };
               deadlineContext.getStore()?.stageIds.add(sessionStageId);
             }
@@ -6878,7 +6887,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
             SELECT 1
             FROM concepts AS merged_source
             WHERE merged_source.merged_into_concept_id = c.id
-          ) AS "isMergeResult"
+          ) AS "isMergeResult", EXISTS(SELECT 1 FROM seeded_map_concepts seed WHERE seed.concept_id=c.id) AS "isSeed"
         FROM maps AS m
         LEFT JOIN kit_definitions AS kit ON kit.id = m.kit_definition_id
         LEFT JOIN LATERAL (
@@ -6896,7 +6905,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
         WHERE m.id = $1::uuid
           AND (m.type = 'GOAL' OR (
             m.type IN ('PRIOR', 'KB', 'INTEGRATION')
-            AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6')
+            AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5')
           ))
         ORDER BY c.created_at NULLS LAST, c.id
       `,
@@ -7073,7 +7082,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
                 positionY: row.positionY,
                 createdAt: row.conceptCreatedAt,
                 updatedAt: row.conceptUpdatedAt,
-                isMergeResult: row.isMergeResult,
+                isMergeResult: row.isMergeResult, isSeed: (row as typeof row & {isSeed:boolean}).isSeed,
               },
             ],
       ),
@@ -7122,7 +7131,7 @@ async function submitExpiredIntegrationMaps() {
     await observeExpiredStages(pool);
     const candidates = await pool.query<{ id: string }>(`SELECT m.id FROM maps m JOIN session_stages st ON m.session_stage_id=st.id JOIN sessions s ON s.id=st.session_id
       WHERE m.type='INTEGRATION' AND m.status='DRAFT'
-        AND s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL' AND s.status='IN_PROGRESS'
+        AND (s.protocol_key='STAGE1_5' OR (s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL')) AND s.status='IN_PROGRESS'
         AND st.stage_type='INTEGRATION_MAP' AND st.status='IN_PROGRESS' AND st.started_at IS NOT NULL
         AND st.id=(SELECT current_stage.id FROM session_stages current_stage
           WHERE current_stage.session_id=s.id AND current_stage.status <> 'COMPLETED' ORDER BY current_stage.order_index LIMIT 1)
@@ -7138,7 +7147,7 @@ async function submitExpiredIntegrationMaps() {
             UPDATE maps m SET status='SUBMITTED', submitted_at=clock.submitted_at, auto_submitted_at=clock.submitted_at
             FROM session_stages st JOIN sessions s ON s.id=st.session_id CROSS JOIN submission_clock clock
             WHERE m.id=$1::uuid AND m.session_stage_id=st.id AND m.type='INTEGRATION' AND m.status='DRAFT'
-              AND s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL' AND s.status='IN_PROGRESS'
+              AND (s.protocol_key='STAGE1_5' OR (s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL')) AND s.status='IN_PROGRESS'
               AND st.stage_type='INTEGRATION_MAP' AND st.status='IN_PROGRESS' AND st.started_at IS NOT NULL
               AND st.id=(SELECT current_stage.id FROM session_stages current_stage WHERE current_stage.session_id=s.id AND current_stage.status <> 'COMPLETED' ORDER BY current_stage.order_index LIMIT 1)
               AND clock.submitted_at >= st.started_at + s.group_activity_seconds * interval '1 second' RETURNING m.id`, [candidate.id]);

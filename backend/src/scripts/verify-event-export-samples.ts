@@ -8,6 +8,8 @@ import { validateEvent } from "../research-events.js";
 import { eventTargets, type EventType } from "../research-event-catalog.js";
 import { eventTestMatrix } from "../event-test-matrix.js";
 const files = sampleFiles();
+const protocols=new Map<string,string|null>();
+for(const e of sampleEvents){if(e.session_id===null){assert.equal(e.protocol_key,null);continue;}if(protocols.has(e.session_id))assert.equal(e.protocol_key,protocols.get(e.session_id),"sample Session protocol mismatch");protocols.set(e.session_id,e.protocol_key??null);if(e.activity==="SURVEY")assert.equal(e.protocol_key,"STAGE1_5");}
 const ids = new Set(sampleEvents.map((x) => x.event_id));
 assert.equal(ids.size, sampleEvents.length);
 for (const [name, text] of Object.entries(files)) {
@@ -92,6 +94,6 @@ for (const e of sampleEvents) {
 for(const event of JSON.parse((await readFile("../docs/samples/event-export/events.json","utf8"))).events){if(event.session_id!==null)assert.match(event.learner_id,/^P-[a-f0-9-]{36}$/);}
 
 console.log(
-  "Dummy samples: exact generated files, event references/count/time/outcome, v1-v3/v5/v6 validation + server-only v4 contract, Map/Stage ownership: PASS",
+  "Dummy samples: exact generated files, event references/count/time/outcome, v1-v3/v5/v6/v7 validation + server-only v4 contract, Map/Stage ownership: PASS",
 );
 

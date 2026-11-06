@@ -1,0 +1,30 @@
+{
+  "fixture": "synthetic SQL fixture for loading measurement; not an end-to-end acquisition benchmark",
+  "databaseTotalsAtMeasurement": {
+    "sessions": 62,
+    "events": 7506,
+    "legacy_logs": 6
+  },
+  "participants": 20,
+  "sessions": 20,
+  "events": 4000,
+  "pageSize": 25,
+  "pages": 160,
+  "fixtureMs": 955.7131999999999,
+  "prepareJsonCsvZipMs": 5532.2052,
+  "pageMedianMs": 6.8858000000000175,
+  "pageP95Ms": 10.067600000000311,
+  "downloadAndValidateMs": 256.40059999999903,
+  "jsonBytes": 3988944,
+  "csvBytes": 1496270,
+  "environment": {
+    "os": "win32",
+    "release": "10.0.26300",
+    "node": "v24.15.0",
+    "cpu": "AMD Ryzen 7 7730U with Radeon Graphics         ",
+    "logicalCpus": 16,
+    "totalMemory": 14877257728,
+    "postgres": "17.11"
+  },
+  "guarantees": "Single machine mock run only; not a production performance guarantee; 20 sessions are populated, not 20 concurrent browsers"
+}
