@@ -55,6 +55,8 @@ export function parse(args: string[]) {
       "suite",
       "scale",
       "serve",
+      "empty-session-deletion",
+      "data-management",
     ].includes(action)
   )
     throw new Error("unknown_action");
@@ -281,6 +283,8 @@ function child(script: string, url: string, password: string) {
     suite: "test:research-event-suite",
     scale: "test:event-scale",
     serve: "dev",
+    "empty-session-deletion": "test:empty-session-deletion",
+    "data-management": "test:data-management",
   };
   const npmCli =
     process.env.npm_execpath ??
@@ -329,7 +333,7 @@ export async function main(args: string[]) {
   let released = false;
   try {
     await guard(c, manifest);
-    if (["migrate", "seed", "check", "safety", "suite", "scale", "serve"].includes(action)) {
+    if (["migrate", "seed", "check", "safety", "suite", "scale", "serve", "empty-session-deletion", "data-management"].includes(action)) {
       c.release();
       released = true;
       await pool.end();

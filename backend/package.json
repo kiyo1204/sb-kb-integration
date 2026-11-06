@@ -44,7 +44,8 @@
     "test:map-failure-retry": "tsx src/scripts/verify-map-failure-retry.ts",
     "test:autosubmit-deadlock": "tsx src/scripts/verify-autosubmit-deadlock.ts",
     "test:session-flow-survey": "tsx src/scripts/verify-session-flow-survey.ts",
-    "test:goal-map-transfer": "tsx src/scripts/verify-goal-map-transfer.ts"
+    "test:goal-map-transfer": "tsx src/scripts/verify-goal-map-transfer.ts",
+    "test:empty-session-deletion": "tsx src/scripts/verify-empty-session-deletion.ts"
   },
   "dependencies": {
     "express": "^5.1.0",
