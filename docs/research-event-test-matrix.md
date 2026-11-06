@@ -44,5 +44,7 @@
 |RESEARCH_ANALYSIS_VIEW|SESSION|1,4|test:research-event-schema,test:server-audit|DB処理の失敗/拒否とブラウザー観測の未確認を区別。UI送信前の取消は未観測。Undo/Redoはこの活動には非適用。|
 |RESEARCH_ASSESSMENT_CHANGE|ASSESSMENT|1,4|test:research-event-schema,test:server-audit|DB処理の失敗/拒否とブラウザー観測の未確認を区別。UI送信前の取消は未観測。Undo/Redoはこの活動には非適用。|
 |RESEARCH_EXPORT|SESSION|1,4|test:research-event-schema,test:server-audit|DB処理の失敗/拒否とブラウザー観測の未確認を区別。UI送信前の取消は未観測。Undo/Redoはこの活動には非適用。|
+|SURVEY_EDIT|ASSESSMENT|7|test:session-flow-survey|確定保存のみ。UI内の取消とキーストロークは未観測。Undo/Redo非適用。|
+|SURVEY_SUBMIT|ASSESSMENT|7|test:session-flow-survey|サーバー確定。未送信回答は未観測。Undo/Redo非適用。|
 
 旧操作語彙：ADD_CONCEPT, EDIT_CONCEPT, MOVE_CONCEPT, DELETE_CONCEPT, MERGE_CONCEPT, IMPORT_KIT_CONCEPT, ADD_LINK, EDIT_LINK, DELETE_LINK, RECONNECT_LINK, IMPORT_KIT_LINK, UNDO, REDO, MAP_SAVE, MAP_KIT_ASSIGN, MAP_SUBMIT, MAP_AUTO_SUBMIT。Map再生の全分岐・不正状態はUndo/Redo・混在履歴・実Map APIの検証と組み合わせる。

@@ -48,7 +48,7 @@ jobs:
           npm run db:mock --prefix backend -- seed --name stage1_mock_ci
       - name: Empty legacy stream full API flow
         run: npm run db:mock --prefix backend -- check --name stage1_mock_ci
-      - name: Catalog, v5 Link positions, v6 feedback, replay, delivery, export, deletion and browser suite
+      - name: Catalog, v5 positions, v6 feedback, v7 survey, old/new flows, replay and browser suite
         run: npm run db:mock --prefix backend -- suite --name stage1_mock_ci
       - name: Upload aggregate mock results (no raw event data or credentials)
         if: always()

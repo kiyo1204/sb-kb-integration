@@ -208,6 +208,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
         <div className="stage1-analysis-heading">
           <p className="eyebrow">研究者用</p>
           <h1>再構成行動の分析</h1>
+          <p>フロー：{data?.session.protocolKey==="STAGE1_5"?"5活動（群なし・アンケート）":data?.session.protocolKey==="STAGE1_6"?"6活動（群別・事前事後評価）":"4活動（旧形式）"}</p>
           <p>セッション：{sessionId} 参加者コード：{data?.session.participantCode??"—"}</p>
         </div>
         <div className="stage1-analysis-exports" role="group" aria-label="データ出力">

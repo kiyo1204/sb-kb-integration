@@ -1,9 +1,9 @@
 {
   "exportId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-  "exportSchemaVersion": 2,
+  "exportSchemaVersion": 3,
   "snapshotAt": "2026-01-01T00:01:00.000Z",
   "expiresAt": "2026-01-01T00:16:00.000Z",
-  "eventCount": 17,
+  "eventCount": 19,
   "filters": {
     "sessionIds": [],
     "learnerIds": [],
@@ -16,43 +16,48 @@
   "files": [
     {
       "name": "events.json",
-      "rows": 17,
-      "bytes": 28803
+      "rows": 19,
+      "bytes": 32356
     },
     {
       "name": "events.csv",
-      "rows": 17,
-      "bytes": 7835
+      "rows": 19,
+      "bytes": 8855
+    },
+    {
+      "name": "survey_events.csv",
+      "rows": 2,
+      "bytes": 1569
     },
     {
       "name": "map_operations.csv",
       "rows": 7,
-      "bytes": 7306
+      "bytes": 7396
     },
     {
       "name": "activity_times.csv",
       "rows": 6,
-      "bytes": 3601
+      "bytes": 3680
     },
     {
       "name": "assessment_events.csv",
       "rows": 2,
-      "bytes": 1610
+      "bytes": 1645
     },
     {
       "name": "system_events.csv",
       "rows": 1,
-      "bytes": 893
+      "bytes": 917
     },
     {
       "name": "researcher_events.csv",
       "rows": 2,
-      "bytes": 1105
+      "bytes": 1132
     },
     {
       "name": "data-dictionary.md",
       "rows": null,
-      "bytes": 9887
+      "bytes": 11077
     }
   ],
   "payloadWarnings": 0,

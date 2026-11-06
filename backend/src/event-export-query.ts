@@ -61,7 +61,7 @@ export function extractionQuery(filters: ExportFilters, chronological = false) {
  CASE WHEN b.map_id IS NULL THEN 'LEGACY_ONLY' WHEN l.sequence_number<=b.legacy_count THEN 'WITHIN_LEGACY_BOUNDARY' ELSE 'INVALID_AFTER_BOUNDARY' END AS boundary_status,0 AS stream_order
  FROM map_operation_logs l JOIN maps m ON m.id=l.map_id JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id
  LEFT JOIN map_history_boundaries b ON b.map_id=l.map_id
- WHERE s.protocol_key IN ('STAGE1_4','STAGE1_6') AND m.type IN ('PRIOR','KB','INTEGRATION')
+ WHERE s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5') AND m.type IN ('PRIOR','KB','INTEGRATION')
  UNION ALL
  SELECT e.event_id::text,'EVENT',e.schema_version::integer,e.session_id,e.study_group,e.activity,e.stage_id,e.map_id,e.actor_type,e.event_type,e.target_type,e.target_id,e.outcome,e.reason_code,e.sequence_number,
  CASE WHEN e.session_id IS NULL THEN 'GLOBAL' ELSE 'SESSION' END,
@@ -72,8 +72,8 @@ export function extractionQuery(filters: ExportFilters, chronological = false) {
  st.started_at,b.legacy_count,b.legacy_last_id,
  CASE WHEN e.schema_version NOT IN (2,5) THEN 'NOT_APPLICABLE' WHEN b.map_id IS NULL THEN 'MISSING_BOUNDARY' ELSE 'AFTER_LEGACY_BOUNDARY' END,1
  FROM research_events e LEFT JOIN sessions s ON s.id=e.session_id LEFT JOIN session_stages st ON st.id=e.stage_id LEFT JOIN map_history_boundaries b ON b.map_id=e.map_id
- WHERE s.protocol_key IN ('STAGE1_4','STAGE1_6') OR e.session_id IS NULL
- ) SELECT source.*,(SELECT pseudonym FROM research_session_ids i WHERE i.session_id=source.session_id) AS pseudonym FROM source ${where.length ? "WHERE " + where.join(" AND ") : ""}
+ WHERE s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5') OR e.session_id IS NULL
+ ) SELECT source.*,(SELECT protocol_key FROM sessions s WHERE s.id=source.session_id) AS protocol_key,(SELECT pseudonym FROM research_session_ids i WHERE i.session_id=source.session_id) AS pseudonym FROM source ${where.length ? "WHERE " + where.join(" AND ") : ""}
  ORDER BY ${chronological ? "server_timestamp,event_id" : "session_id ASC NULLS LAST,stream_order,CASE WHEN source_format='LEGACY' THEN map_id END ASC,sequence_number,event_id"}`,
   };
 }
@@ -264,15 +264,15 @@ export async function normaliseEvent(
       else if ((row.schema_version === 2 || row.schema_version === 5)) {
         for (const state of [before, after])
           if (state) labels.push(...mapStateLabels(state as MapStateV2));
-      } else if (row.schema_version === 3) {
+      } else if (row.schema_version === 3 || row.schema_version===7) {
         for (const state of [before, after])
           if (
             state &&
             typeof state === "object" &&
-            "answer" in state &&
-            typeof state.answer === "string"
+            ("answer" in state || "value" in state) &&
+            typeof ("answer" in state ? state.answer : "value" in state ? state.value : null) === "string"
           )
-            labels.push(state.answer);
+            labels.push(String("answer" in state ? state.answer : "value" in state ? state.value : ""));
       }
     }
   }
@@ -310,6 +310,7 @@ export async function normaliseEvent(
   )
     status = "NO_PAYLOAD";
   return {
+    protocol_key:row.protocol_key??null,
     event_id: row.event_id,
     source_format: row.source_format,
     schema_version: row.schema_version,

@@ -21,6 +21,7 @@ const priorStage = "44444444-4444-4444-8444-444444444445",
 const legacy = "legacy:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 function event(n: number, patch: Partial<ExportEvent>): ExportEvent {
   return {
+    protocol_key:patch.session_id===null?null:"STAGE1_6",
     feedback_match:null,
     event_id: "00000000-0000-4000-8000-" + String(n).padStart(12, "0"),
     source_format: "EVENT",
@@ -264,6 +265,8 @@ export const sampleEvents: ExportEvent[] = [
     payload_status:typeof result==="boolean"?"EXPORTED":"NO_PAYLOAD",details:typeof result==="boolean"?{matched:result}:{},feedback_match:typeof result==="boolean"?result:null,client_time_quality:"NOT_APPLICABLE",before_quality:"NOT_APPLICABLE",after_quality:"NOT_APPLICABLE",
   })),
 
+  event(17,{session_id:"11111111-1111-4111-8111-111111111113",learner_id:"P-99999999-9999-4999-8999-999999999993",protocol_key:"STAGE1_5",schema_version:7,event_type:"SURVEY_EDIT",target_type:"ASSESSMENT",target_id:question,activity:"SURVEY",study_group:null,stage_id:"44444444-4444-4444-8444-444444444448",before:{questionId:question,kind:"RATING",value:null},after:{questionId:question,kind:"RATING",value:2},before_quality:"OBSERVED",after_quality:"OBSERVED",client_time_quality:"NOT_APPLICABLE",payload_status:"EXPORTED"}),
+  event(18,{session_id:"11111111-1111-4111-8111-111111111113",learner_id:"P-99999999-9999-4999-8999-999999999993",protocol_key:"STAGE1_5",schema_version:7,event_type:"SURVEY_SUBMIT",target_type:"ASSESSMENT",target_id:"44444444-4444-4444-8444-444444444448",activity:"SURVEY",study_group:null,stage_id:"44444444-4444-4444-8444-444444444448",client_time_quality:"NOT_APPLICABLE"}),
 ];
 export function sampleFiles() {
   const files: Record<string, string> = {},

@@ -78,6 +78,7 @@ try {
   await start();
   for (const test of [
     "test:stage1:integration",
+    "test:session-flow-survey",
     "test:map-api-v2",
     "test:map-failure-retry",
     "test:parent-followup",
@@ -103,6 +104,7 @@ try {
     await start();
     await run("test:research-log-ui", true);
     await run("test:link-position-browser", true);
+    await run("test:session-flow-survey-browser",true);
     await run("test:delivery-browser", true);
     await run("test:event-export-browser", true);
     await run("test:data-management-browser", true);

@@ -1,3 +1,4 @@
+import {legacySixFixture} from "./legacy-session-fixture.js";
 import {verifyMockTestUrl} from "./mock-db.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -12,10 +13,10 @@ async function api(path:string,status=200,method="GET",body?:unknown,token=resea
 }
 try{
  await api("/research/stage1/settings",200,"PUT",{minutes:1});
- const s=await api("/research/stage1/sessions",201,"POST",{participantCode:"integrated-"+randomUUID(),videoUrl:"/dummy.mp4",kitDefinitionId:kit,studyGroup:"EXPERIMENTAL"});
+ const s=await legacySixFixture(pool,{participantCode:"integrated-"+randomUUID(),videoUrl:"/dummy.mp4",kitDefinitionId:kit,studyGroup:"EXPERIMENTAL"});
  const learner=s.learnerAccessToken as string;
  const call=(path:string,status=200,method="GET",body?:unknown)=>api(path,status,method,body,learner);
- const stage=(type:string)=>s.stages.find((st:{stageType:string})=>st.stageType===type);
+ const stage=(type:string)=>s.stages.find((st:{stageType:string})=>st.stageType===type)!;
  await api("/research/stage1/sessions/"+s.id+"/assessment/questions",200,"PUT",{questions:[{category:"DESCRIPTION",prompt:"Dummy 1"},{category:"DESCRIPTION",prompt:"Dummy 2"}]});
  await call("/sessions/"+s.id+"/start",200,"POST",{});
  await call("/session-stages/"+stage("LESSON").id+"/start",200,"POST",{});

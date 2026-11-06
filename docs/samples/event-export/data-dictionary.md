@@ -1,6 +1,6 @@
-# 研究イベント出力データ辞書 v2
+# 研究イベント出力データ辞書 v3
 
-JSON: export_schema_version=2。日時は全てUTCのISO 8601（Z）。新形式イベントのschema_version 1〜4は変更せず、5は保存Link位置を含む状態、6はKit確認結果。従来の共通CSV列は意味と順序を保ち末尾にfeedback_matchを追加。CSVはUTF-8 BOM、CRLF、RFC 4180引用符。nullは空セル。空文字とnullの解釈には品質とJSONを参照する。整数連番/IDは文字列として取り込む。
+JSON: export_schema_version=3。日時は全てUTCのISO 8601（Z）。新形式イベントのschema_version 1〜4は変更せず、5は保存Link位置を含む状態、6はKit確認結果。7は新5活動のアンケートで、before/after={questionId,kind,value}。SURVEY_EDIT/SURVEY_SUBMITは旧評価と混同せずsurvey_events.csvへ分類。群はnull。自由記述・選択肢は文字列、段階評価は整数、未回答はnull。従来の共通CSV列は意味と順序を保ち末尾にfeedback_matchを追加。出力schemaVersion=3は既存列の意味・順序を保ち、共通列末尾にprotocol_keyを追加し、survey_events.csvを別ファイルとして追加。CSVはUTF-8 BOM、CRLF、RFC 4180引用符。nullは空セル。空文字とnullの解釈には品質とJSONを参照する。整数連番/IDは文字列として取り込む。
 
 ## 共通抽出
 
@@ -24,7 +24,7 @@ CSVのテキストが空白/制御・書式文字の後に =,+,-,@（全角を�
 |---|---|---|
 |event_id|string  /  null|イベント結合キー。新形式は保存済みUUID、旧ログはlegacy:UUID。全CSVの参照先。|
 |source_format|string  /  null|EVENT / LEGACY。旧ログを新イベントと再解釈しない。|
-|schema_version|integer  /  null|保存済み1/2/3/4/5/6。旧形式は未設定（null）。|
+|schema_version|integer  /  null|保存済み1/2/3/4/5/6/7。旧形式は未設定（null）。|
 |session_id|string  /  null|Session UUID。Session未所属監査はnull。|
 |learner_id|string  /  null|P-UUID。明示的に関連付けたSession間で共有する仮名。人物をコード一致で推測しない。再発行後は現在の仮名で投影する。|
 |study_group|string  /  null|EXPERIMENTAL / CONTROL / null。旧ログはSessionの現在情報。|
@@ -51,6 +51,19 @@ CSVのテキストが空白/制御・書式文字の後に =,+,-,@（全角を�
 |legacy_boundary_count|string  /  null|保存済み切替境界の旧件数。未導入はnull。|
 |legacy_boundary_last_id|string  /  null|保存済み境界直前の旧ログUUID。|
 |feedback_match|boolean  /  null|v6 FEEDBACK_CHECK/SUCCESSの一致判定。true=一致、false=学習上の不一致、null=結果未保存/非該当。旧v1はoutcomeを保持し、この列を補完しない。|
+|protocol_key|string  /  null|STAGE1_4=旧4活動、STAGE1_6=旧群別6活動、STAGE1_5=群なし5活動。Sessionなしの監査はnull。|
+
+## survey_events.csv
+
+共通列に次を追加する。各行はevent_idでevents.csvへ結合する。複数の用途別CSVへ同じイベントが含まれることがあるため、用途別件数を合計して総イベント件数にしない。
+
+|列|型|意味|
+|---|---|---|
+|question_id|string  /  null|v3確定編集に明示される設問UUIDのみ。提出の対象Stageを設問とみなさない。|
+|before_value|string  /  null|undefined|
+|after_value|string  /  null|undefined|
+|before_json|JSON  /  null|認可・検証した変更前構造。|
+|after_json|JSON  /  null|認可・検証した変更後構造。|
 
 ## map_operations.csv
 

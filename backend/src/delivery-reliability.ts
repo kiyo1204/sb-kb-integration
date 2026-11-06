@@ -35,7 +35,7 @@ function eligible(req: Request) {
   return (
     ["POST", "PATCH", "DELETE"].includes(req.method) &&
     (/^\/(maps|concepts|links)\//.test(req.path) ||
-      /^\/session-stages\/[^/]+\/(start|complete|prior-map|integration-map|assessment\/(save|submit))$/.test(
+      /^\/session-stages\/[^/]+\/(start|complete|prior-map|integration-map|(?:assessment|survey)\/(save|submit))$/.test(
         req.path,
       ) ||
       /^\/kits\/[^/]+\/kb-map$/.test(req.path)) &&

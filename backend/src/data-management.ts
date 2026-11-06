@@ -14,6 +14,10 @@ const mapIds =
 const scopes: Record<string, string> = Object.fromEntries(
   [
     "research_events",
+    "survey_answers",
+    "survey_questions",
+    "seeded_map_concepts",
+    "session_seed_concepts",
     "assessment_answers",
     "assessment_questions",
     "research_proposition_evaluations",
@@ -321,6 +325,10 @@ export function registerDataManagement(
         "research_reflection_notes",
         "client_event_receipts",
         "client_delivery_reports",
+        "survey_answers",
+        "survey_questions",
+        "seeded_map_concepts",
+        "session_seed_concepts",
         "assessment_answers",
         "assessment_questions",
         "research_events",

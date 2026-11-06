@@ -1,0 +1,10 @@
+{
+  "mockOnly": true,
+  "results": [
+    "5-stage end-to-end, null group, seed origin/locks, Link/move, Undo/Redo/replay, Kit, manual integration submit, survey formats/required/optional/freeze/auth/atomicity/retry/export: PASS",
+    "new protocol deadline auto-submit once, hidden submitted map, explicit next to SURVEY: PASS",
+    "real v7 JSON/common CSV/detail CSV exact IDs/counts/times/outcomes/protocol; old assessment CSV excludes survey: PASS",
+    "new survey/seed records included in confirmed deletion, injected failure rolls back, deleted credential rejects replay, other session retained: PASS",
+    "v7 strict payload and secret/unknown-field rejection: PASS"
+  ]
+}

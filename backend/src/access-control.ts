@@ -22,7 +22,7 @@ export function createLearnerToken(): { token: string; hash: string } {
 
 export async function storeLearnerToken(client: PoolClient, sessionId: string, hash: string) {
   await client.query(
-    "UPDATE sessions SET learner_access_token_hash=$2 WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6')",
+    "UPDATE sessions SET learner_access_token_hash=$2 WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')",
     [sessionId, hash],
   );
 }
@@ -75,7 +75,7 @@ export async function learnerMayAccessMap(
        ORDER BY order_index LIMIT 1
      ) current_stage ON true
      WHERE ${lookup.id} = $1::uuid AND s.id = $2::uuid
-       AND s.protocol_key IN ('STAGE1_4', 'STAGE1_6')
+       AND s.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5')
        AND s.status = 'IN_PROGRESS'
        AND (
          (m.status = 'DRAFT' AND st.id = current_stage.id
@@ -83,8 +83,8 @@ export async function learnerMayAccessMap(
           AND ((m.type = 'PRIOR' AND st.stage_type = 'PRIOR_MAP')
             OR (m.type = 'KB' AND st.stage_type = 'KB_MAP')
             OR (m.type = 'INTEGRATION' AND st.stage_type = 'INTEGRATION_MAP'))
-          AND (s.protocol_key <> 'STAGE1_6' OR st.stage_type <> 'INTEGRATION_MAP'
-            OR (s.study_group = 'EXPERIMENTAL' AND clock_timestamp() < st.started_at + s.group_activity_seconds * interval '1 second')))
+          AND (s.protocol_key NOT IN ('STAGE1_6','STAGE1_5') OR st.stage_type <> 'INTEGRATION_MAP'
+            OR ((s.protocol_key='STAGE1_5' OR s.study_group = 'EXPERIMENTAL') AND clock_timestamp() < st.started_at + s.group_activity_seconds * interval '1 second')))
          OR ($3::boolean AND m.status = 'SUBMITTED'
           AND s.protocol_key = 'STAGE1_6' AND s.study_group = 'CONTROL'
           AND current_stage.stage_type = 'SELF_STUDY'
@@ -112,7 +112,7 @@ export function accessControl(pool: Pool) {
       try {
         const result = await pool.query<{ id: string; kitId: string }>(
           `SELECT id, research_kit_definition_id AS "kitId" FROM sessions
-           WHERE learner_access_token_hash=$1 AND protocol_key IN ('STAGE1_4','STAGE1_6')`,
+           WHERE learner_access_token_hash=$1 AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')`,
           [hash],
         );
         const session = result.rows[0];
@@ -168,7 +168,7 @@ export function accessControl(pool: Pool) {
     if (["sessions", "session-stages"].includes(kind) && id) {
       try {
         const owner = await ownerFor(pool, kind, id);
-        if (owner?.id === principal.sessionId && ["STAGE1_4", "STAGE1_6"].includes(owner.protocolKey)) return permit(kind==="session-stages"&&["prior-map","integration-map"].includes(parts[2])?stageMapReplay(id):undefined);
+        if (owner?.id === principal.sessionId && ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(owner.protocolKey)) return permit(kind==="session-stages"&&["prior-map","integration-map"].includes(parts[2])?stageMapReplay(id):undefined);
       } catch (error) { return next(error); }
       return response.status(404).json({ error: "not_found" });
     }

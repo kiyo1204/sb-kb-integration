@@ -1,3 +1,4 @@
+import { SurveyEditor,type SurveyQuestion } from "./Survey";
 import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch, uiText } from "./auth-client";
 
@@ -6,7 +7,10 @@ type Kit = { id: string; name: string };
 export default function Stage1NewSessionPage() {
   const [minutes, setMinutes] = useState<number | null>(null);
   const [durationInput, setDurationInput] = useState("");
-  const [studyGroup, setStudyGroup] = useState("");
+  const [surveyQuestions,setSurveyQuestions]=useState<SurveyQuestion[]>([{kind:"TEXT",prompt:"",required:true,config:{}}]);
+  const [seedConceptIds,setSeedConceptIds]=useState<string[]>([]);
+  const [parts,setParts]=useState<{kitConceptItemId:string;label:string}[]>([]);
+  const [partsLoading,setPartsLoading]=useState(true);
   const [kits, setKits] = useState<Kit[]>([]);
   const [kitId, setKitId] = useState("");
   const [participantCode, setParticipantCode] = useState("");
@@ -36,6 +40,8 @@ export default function Stage1NewSessionPage() {
     return () => { active = false; };
   }, []);
 
+  useEffect(()=>{if(!kitId)return;let active=true;void apiFetch(`/api/kits/${kitId}`).then(async r=>{if(!r.ok)throw Error();return r.json();}).then(d=>{if(active)setParts(d.concepts);}).catch(()=>{if(active)setError("Kitの概念を取得できませんでした。");}).finally(()=>{if(active)setPartsLoading(false);});return()=>{active=false;};},[kitId]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy || !kitId || !participantCode.trim() || !videoUrl.trim()) return;
@@ -49,7 +55,8 @@ export default function Stage1NewSessionPage() {
           participantCode: participantCode.trim(),
           videoUrl: videoUrl.trim(),
           kitDefinitionId: kitId,
-          studyGroup,
+          surveyQuestions,
+          seedConceptIds,
         }),
       });
       const result: unknown = await response.json().catch(() => null);
@@ -83,11 +90,11 @@ export default function Stage1NewSessionPage() {
         <p className="eyebrow">研究 活動 1 / 開発用</p>
         <h1>学習セッションの作成</h1>
         <p className="description">
-          動画 → Scratch-Build → Kit-Build → 事前評価 → 群別活動 → 事後評価。セッション作成後、開始前に評価問題を登録してください。
+          動画 → 学習者マップ → Kit-Build → 統合マップ → アンケート。作成後も開始前までアンケートを編集できます。
         </p>
         <p>実名やメールアドレスは入力しないでください。作成後の学習者用コードは一度だけ表示されます。</p>
         <div className="stage1-form stage1-settings">
-          <label htmlFor="duration">群別活動の共通時間（分）
+          <label htmlFor="duration">統合マップの制限時間（分）
             <input id="duration" type="number" min="1" step="1" value={durationInput} onChange={event => setDurationInput(event.target.value)} />
           </label>
           <button type="button" disabled={busy} onClick={() => void saveSettings()}>共通時間を保存</button>
@@ -118,17 +125,14 @@ export default function Stage1NewSessionPage() {
             <label htmlFor="stage1-kit">
               使用するKit
               <select id="stage1-kit" value={kitId}
-                onChange={(event) => setKitId(event.target.value)} required>
+                onChange={(event) => {setKitId(event.target.value);setParts([]);setSeedConceptIds([]);setPartsLoading(true);}} required>
                 {kits.map((kit) => <option key={kit.id} value={kit.id}>{kit.name}</option>)}
               </select>
             </label>
-            <label htmlFor="group">群
-              <select id="group" required value={studyGroup} onChange={event => setStudyGroup(event.target.value)}>
-                <option value="">選択してください</option><option value="EXPERIMENTAL">実験群</option><option value="CONTROL">統制群</option>
-              </select>
-            </label>
+            <fieldset disabled={busy||partsLoading}><legend>学習者マップの初期概念</legend><p>選択した概念だけを配置します。リンクは含めません。初期概念は移動できますが、名前変更・削除はできません。</p><button type="button" onClick={()=>setSeedConceptIds(parts.map(p=>p.kitConceptItemId))}>すべて選択</button><button type="button" onClick={()=>setSeedConceptIds([])}>選択を解除</button>{parts.map(p=><label key={p.kitConceptItemId}><input type="checkbox" checked={seedConceptIds.includes(p.kitConceptItemId)} onChange={e=>setSeedConceptIds(ids=>e.target.checked?[...ids,p.kitConceptItemId]:ids.filter(id=>id!==p.kitConceptItemId))}/>{p.label}</label>)}</fieldset>
+            <SurveyEditor questions={surveyQuestions} onChange={setSurveyQuestions} disabled={busy}/>
             <button type="submit" className="session-primary-button"
-              disabled={busy || kits.length === 0 || minutes === null || !studyGroup}>
+              disabled={busy || kits.length === 0 || minutes === null || partsLoading || surveyQuestions.length===0}>
               {busy ? "作成中…" : "活動 1 セッションを作成"}
             </button>
           </form>

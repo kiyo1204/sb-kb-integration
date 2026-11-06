@@ -325,6 +325,8 @@ export const eventTestMatrix = {
     limitation:
       "DB処理の失敗/拒否とブラウザー観測の未確認を区別。UI送信前の取消は未観測。Undo/Redoはこの活動には非適用。",
   },
+  SURVEY_EDIT:{versions:[7],suites:["test:session-flow-survey"],limitation:"確定保存のみ。UI内の取消とキーストロークは未観測。Undo/Redo非適用。"},
+  SURVEY_SUBMIT:{versions:[7],suites:["test:session-flow-survey"],limitation:"サーバー確定。未送信回答は未観測。Undo/Redo非適用。"},
 } satisfies Record<EventType, Policy>;
 export const legacyOperationTypes = [
   "ADD_CONCEPT",

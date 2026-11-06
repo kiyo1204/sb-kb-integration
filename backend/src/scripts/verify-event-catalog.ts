@@ -47,7 +47,7 @@ let checks = 0;
 for (const name of Object.keys(eventTestMatrix) as EventType[]) {
   const policy = eventTestMatrix[name];
   assert.ok(
-    (policy.versions as number[]).every((v) => [1, 2, 3, 4, 5, 6].includes(v)),
+    (policy.versions as number[]).every((v) => [1, 2, 3, 4, 5, 6, 7].includes(v)),
   );
   for (const suite of policy.suites) assert.ok(pkg.scripts[suite], suite);
   const base = {
@@ -81,6 +81,13 @@ for (const name of Object.keys(eventTestMatrix) as EventType[]) {
       name + ":v1:" + outcome,
     );
     checks++;
+  }
+  if((policy.versions as number[]).includes(7)){
+    const event={...base,schemaVersion:7,mapId:undefined,targetId:name==="SURVEY_SUBMIT"?stage:question,
+      ...(name==="SURVEY_EDIT"?{before:{questionId:question,kind:"TEXT",value:null},after:{questionId:question,kind:"TEXT",value:"MOCK"}}:{})};
+    assert.equal(validateEvent(event),true,name+":v7");
+    for(const outcome of ["FAILURE","REJECTED","CANCELLED","UNKNOWN"])assert.equal(validateEvent({...event,outcome,before:undefined,after:undefined}),true);
+    checks+=5;
   }
   assert.equal(validateEvent({ ...base, actorType: "SYSTEM" }), false);
   assert.equal(validateEvent({ ...base, schemaVersion: 4 }), false);

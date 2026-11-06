@@ -36,7 +36,7 @@ async function api<T>(path:string,status:number,method="GET",body?:unknown):Prom
 type Stage={id:string;stageType:string;status:string;mapId:string|null};
 type Session={id:string;status:string;protocolKey:string;stages:Stage[];learnerAccessToken:string};
 
-// The public creation API now creates only STAGE1_6. Keep the existing
+// The public creation API now creates only STAGE1_5. Keep the existing
 // four-stage compatibility checks using a legacy fixture in the test database.
 async function legacySession(participantCode:string):Promise<Session>{
   const client=await pool.connect();
@@ -308,7 +308,7 @@ async function run(){
     await api("/research/stage1/settings",200,"PUT",{minutes:10});
     await api("/research/stage1/sessions",422,"POST",{
       participantCode:"TEST-STAGE1-PARTIAL-KIT",
-      videoUrl:"/lesson-test.mp4",kitDefinitionId:incompleteKit.id,studyGroup:"EXPERIMENTAL",
+      videoUrl:"/lesson-test.mp4",kitDefinitionId:incompleteKit.id,seedConceptIds:[],surveyQuestions:[{kind:"TEXT",prompt:"Mock survey",required:true,config:{}}],
     });
     const retiredSessionId=randomUUID();
     await pool.query(

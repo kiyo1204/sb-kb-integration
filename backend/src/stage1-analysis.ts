@@ -78,7 +78,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         current_stage.stage_type AS "currentStageType", current_stage.order_index AS "currentStageOrder"
         FROM sessions s LEFT JOIN LATERAL (SELECT stage_type, order_index FROM session_stages
           WHERE session_id=s.id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1) current_stage ON s.status='IN_PROGRESS'
-        WHERE s.protocol_key IN ('STAGE1_4','STAGE1_6') ORDER BY s.created_at DESC, s.id DESC`);
+        WHERE s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5') ORDER BY s.created_at DESC, s.id DESC`);
       return res.json({ sessions: result.rows });
     } catch (error) {
       console.error("Stage1 session list failed", safeServerErrorCode(error));
@@ -125,6 +125,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         operations, operationCounts: counts,
         propositionEvaluations: evals.rows,
         reflectionNotes: notes.rows,
+        ...(raw.survey ? {survey:raw.survey}:{}),
         limitations: [
           "Counts indicate operations, not learning quality.",
           "Kit usage in other non-import events requires provenance-specific analysis.",
@@ -160,7 +161,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
           [sessionId],
         );
         if (
-          !["STAGE1_4", "STAGE1_6"].includes(completedSession.rows[0]?.protocolKey ?? "") ||
+          !["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(completedSession.rows[0]?.protocolKey ?? "") ||
           completedSession.rows[0]?.status !== "COMPLETED"
         ) {
           return res.status(409).json({ error: "session_not_completed" });
@@ -171,7 +172,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
            INNER JOIN session_stages AS stage ON stage.id = map.session_stage_id
            INNER JOIN sessions AS session ON session.id = stage.session_id
            WHERE map.id = $1::uuid AND stage.session_id = $2::uuid
-             AND session.protocol_key IN ('STAGE1_4','STAGE1_6')
+             AND session.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')
              AND map.type IN ('PRIOR', 'KB', 'INTEGRATION')`,
           [mapId, sessionId],
         );
@@ -303,12 +304,12 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       const result=await sessionExport(pool,req.params.sessionId,true);
       if(result.kind!=="exported") return res.status(result.kind==="not_found"?404:409).json({error:result.kind});
       const operations=flattenOperations(result.value).map(op=>({
-        sessionId:req.params.sessionId, participantCode:result.value.session.participantCode,
+        sessionId:req.params.sessionId, participantCode:result.value.session.participantCode, protocolKey:result.value.session.protocolKey,
         ...op,
       }));
       const columns=["sessionId","participantCode","mapId","mapType","researchRole","sessionStageId",
         "id","sequenceNumber","operationType","relatedOperationLogId","targetType","targetId","serverTimestamp",
-        "clientTimestamp","elapsedMs","before","after","historySource","eventId","schemaVersion","eventType","actorType","outcome","eventSequenceNumber","relatedEventId","relatedLegacyOperationLogId"];
+        "clientTimestamp","elapsedMs","before","after","historySource","eventId","schemaVersion","eventType","actorType","outcome","eventSequenceNumber","relatedEventId","relatedLegacyOperationLogId","protocolKey"];
       res.setHeader("Content-Type","text/csv; charset=utf-8");
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-operations.csv"`);
       return res.send("\uFEFF"+csv(operations,columns));

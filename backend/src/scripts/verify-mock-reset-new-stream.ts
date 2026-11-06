@@ -1,3 +1,4 @@
+import {legacySixFixture} from "./legacy-session-fixture.js";
 import {verifyMockTestUrl} from "./mock-db.js";
 import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
@@ -78,7 +79,7 @@ try {
   }
   assert.ok(ready, "Mock API failed to start");
   await api("/research/stage1/settings", "PUT", { minutes: 1 });
-  const s = await api("/research/stage1/sessions", "POST", {
+  const s = await legacySixFixture(pool, {
     participantCode: "MOCK-ISSUE12-NEW-STREAM",
     videoUrl: "/dummy.mp4",
     kitDefinitionId: "66666666-6666-4666-8666-666666666662",
@@ -99,12 +100,12 @@ try {
   await api("/sessions/" + s.id + "/start", "POST", {}, token);
   const lesson = s.stages.find(
     (x: { stageType: string }) => x.stageType === "LESSON",
-  );
+  )!;
   await api("/session-stages/" + lesson.id + "/start", "POST", {}, token);
   await api("/session-stages/" + lesson.id + "/complete", "POST", {}, token);
   const prior = s.stages.find(
     (x: { stageType: string }) => x.stageType === "PRIOR_MAP",
-  );
+  )!;
   await api("/session-stages/" + prior.id + "/start", "POST", {}, token);
   const map = await api(
     "/session-stages/" + prior.id + "/prior-map",
@@ -147,7 +148,7 @@ try {
   assert.ok(JSON.stringify(replay).includes("REPLAYABLE"));
   await api("/maps/" + map.id + "/submit", "POST", {}, token);
   const stage = (type: string) =>
-    s.stages.find((x: { stageType: string }) => x.stageType === type);
+    s.stages.find((x: { stageType: string }) => x.stageType === type)!;
   const kit = "66666666-6666-4666-8666-666666666662";
   await api(
     "/session-stages/" + stage("KB_MAP").id + "/start",

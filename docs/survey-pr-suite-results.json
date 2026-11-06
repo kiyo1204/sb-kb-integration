@@ -1,0 +1,162 @@
+[
+  {
+    "test": "test:test-target-guards",
+    "exitCode": 0,
+    "elapsedMs": 1149
+  },
+  {
+    "test": "test:event-catalog",
+    "exitCode": 0,
+    "elapsedMs": 2136
+  },
+  {
+    "test": "test:research-event-schema",
+    "exitCode": 0,
+    "elapsedMs": 1012
+  },
+  {
+    "test": "test:undo-redo:unit",
+    "exitCode": 0,
+    "elapsedMs": 1042
+  },
+  {
+    "test": "test:map-mixed-history",
+    "exitCode": 0,
+    "elapsedMs": 1019
+  },
+  {
+    "test": "test:research-events",
+    "exitCode": 0,
+    "elapsedMs": 3215
+  },
+  {
+    "test": "test:event-export-samples",
+    "exitCode": 0,
+    "elapsedMs": 1103
+  },
+  {
+    "test": "test:event-export",
+    "exitCode": 0,
+    "elapsedMs": 18386
+  },
+  {
+    "test": "test:data-management",
+    "exitCode": 0,
+    "elapsedMs": 3334
+  },
+  {
+    "test": "test:stage1:integration",
+    "exitCode": 0,
+    "elapsedMs": 16982
+  },
+  {
+    "test": "test:session-flow-survey",
+    "exitCode": 0,
+    "elapsedMs": 5925
+  },
+  {
+    "test": "test:map-api-v2",
+    "exitCode": 0,
+    "elapsedMs": 4971
+  },
+  {
+    "test": "test:map-failure-retry",
+    "exitCode": 0,
+    "elapsedMs": 5120
+  },
+  {
+    "test": "test:parent-followup",
+    "exitCode": 0,
+    "elapsedMs": 7734
+  },
+  {
+    "test": "test:map-auto-submit-v2",
+    "exitCode": 0,
+    "elapsedMs": 2813
+  },
+  {
+    "test": "test:learning-activity-events",
+    "exitCode": 0,
+    "elapsedMs": 3425
+  },
+  {
+    "test": "test:assessment-events",
+    "exitCode": 0,
+    "elapsedMs": 4794
+  },
+  {
+    "test": "test:server-audit",
+    "exitCode": 0,
+    "elapsedMs": 6860
+  },
+  {
+    "test": "test:audit-routing",
+    "exitCode": 0,
+    "elapsedMs": 1579
+  },
+  {
+    "test": "test:integrated-streams",
+    "exitCode": 0,
+    "elapsedMs": 4596
+  },
+  {
+    "test": "test:integration-invariants",
+    "exitCode": 0,
+    "elapsedMs": 1423
+  },
+  {
+    "test": "test:safe-server-error",
+    "exitCode": 0,
+    "elapsedMs": 968
+  },
+  {
+    "test": "test:server-recovery",
+    "exitCode": 0,
+    "elapsedMs": 4986
+  },
+  {
+    "test": "test:autosubmit-deadlock",
+    "exitCode": 0,
+    "elapsedMs": 5192
+  },
+  {
+    "test": "test:delivery-reliability",
+    "exitCode": 0,
+    "elapsedMs": 7153
+  },
+  {
+    "test": "test:event-scale",
+    "exitCode": 0,
+    "elapsedMs": 10676
+  },
+  {
+    "test": "test:research-log-ui",
+    "exitCode": 0,
+    "elapsedMs": 9868
+  },
+  {
+    "test": "test:link-position-browser",
+    "exitCode": 0,
+    "elapsedMs": 10686
+  },
+  {
+    "test": "test:session-flow-survey-browser",
+    "exitCode": 0,
+    "elapsedMs": 12146
+  },
+  {
+    "test": "test:delivery-browser",
+    "exitCode": 0,
+    "elapsedMs": 16530
+  },
+  {
+    "test": "test:event-export-browser",
+    "exitCode": 0,
+    "elapsedMs": 27223
+  },
+  {
+    "test": "test:data-management-browser",
+    "exitCode": 0,
+    "elapsedMs": 11131
+  }
+]

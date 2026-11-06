@@ -3,7 +3,7 @@ import { insertAudit, recordAudit } from "./server-audit.js";
 export async function observeExpiredStages(pool:Pool) {
  // A deadline observation never marks the Stage complete.
  const expired=await pool.query<{sessionId:string;stageId:string}>(
-  "SELECT s.id AS \"sessionId\",st.id AS \"stageId\" FROM sessions s JOIN session_stages st ON st.session_id=s.id WHERE s.protocol_key='STAGE1_6' AND s.status='IN_PROGRESS' AND st.status='IN_PROGRESS' AND ((s.study_group='CONTROL' AND st.stage_type='SELF_STUDY') OR(s.study_group='EXPERIMENTAL' AND st.stage_type='INTEGRATION_MAP')) AND st.id=(SELECT id FROM session_stages WHERE session_id=s.id AND status<>'COMPLETED' ORDER BY order_index LIMIT 1) AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second'");
+  "SELECT s.id AS \"sessionId\",st.id AS \"stageId\" FROM sessions s JOIN session_stages st ON st.session_id=s.id WHERE s.protocol_key IN ('STAGE1_6','STAGE1_5') AND s.status='IN_PROGRESS' AND st.status='IN_PROGRESS' AND ((s.study_group='CONTROL' AND st.stage_type='SELF_STUDY') OR((s.protocol_key='STAGE1_5' OR s.study_group='EXPERIMENTAL') AND st.stage_type='INTEGRATION_MAP')) AND st.id=(SELECT id FROM session_stages WHERE session_id=s.id AND status<>'COMPLETED' ORDER BY order_index LIMIT 1) AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second'");
  for(const item of expired.rows) {
   const client=await pool.connect();
   try {
