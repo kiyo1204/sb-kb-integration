@@ -16,6 +16,7 @@ export default function Stage1GoalMapsPage() {
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [transferBusy, setTransferBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadGoalMaps = useCallback(async () => {
@@ -110,6 +111,66 @@ export default function Stage1GoalMapsPage() {
     }
   }
 
+  async function importGoalMap(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const input = event.currentTarget.elements.namedItem("goal-map-json") as HTMLInputElement | null;
+    const file = input?.files?.[0];
+    if (!file || transferBusy) return;
+    setTransferBusy(true);
+    setError(null);
+    try {
+      if (file.size > 4_000_000) throw new Error("JSONファイルは4MB以内にしてください。");
+      const text = await file.text();
+      let document: unknown;
+      try {
+        document = JSON.parse(text);
+      } catch {
+        throw new Error("JSONを読み取れませんでした。ファイルの内容を確認してください。");
+      }
+      const response = await apiFetch("/api/research/goal-maps/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(document),
+      });
+      const payload = (await response.json().catch(() => null)) as { id?: string; message?: string } | null;
+      if (!response.ok || !payload || typeof payload.id !== "string") {
+        throw new Error(payload?.message ?? "ゴールマップを取り込めませんでした。");
+      }
+      if (input) input.value = "";
+      await loadGoalMaps();
+    } catch (importError) {
+      setError(importError instanceof Error ? uiText(importError.message) : "ゴールマップを取り込めませんでした。");
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
+  async function exportGoalMap(mapId: string) {
+    if (transferBusy) return;
+    setTransferBusy(true);
+    setError(null);
+    try {
+      const response = await apiFetch(`/api/research/goal-maps/${encodeURIComponent(mapId)}/export`);
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(payload?.message ?? "JSONを書き出せませんでした。");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `goal-map-${mapId}.json`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (exportError) {
+      setError(exportError instanceof Error ? uiText(exportError.message) : "JSONを書き出せませんでした。");
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
   return (
     <main className="goal-map-page">
       <header className="goal-map-page-heading">
@@ -124,6 +185,23 @@ export default function Stage1GoalMapsPage() {
           トップへ戻る
         </a>
       </header>
+
+      <section className="goal-map-create-card" aria-labelledby="goal-map-transfer-title">
+        <div>
+          <p className="home-card-kicker">JSON</p>
+          <h2 id="goal-map-transfer-title">ゴールマップを取り込む</h2>
+          <p>書き出したゴールマップを新しいマップとして追加します。同じ名前のマップがある場合は、JSON内の名前を変更してから取り込んでください。</p>
+        </div>
+        <form className="goal-map-create-form" onSubmit={(event) => void importGoalMap(event)}>
+          <label htmlFor="goal-map-json">JSONファイル（4MB以内）</label>
+          <div className="goal-map-create-control">
+            <input id="goal-map-json" name="goal-map-json" type="file" accept="application/json,.json" required />
+            <button type="submit" className="home-primary-button" disabled={transferBusy}>
+              {transferBusy ? "処理中…" : "取り込む"}
+            </button>
+          </div>
+        </form>
+      </section>
 
       <section
         className="goal-map-create-card"
@@ -212,6 +290,9 @@ export default function Stage1GoalMapsPage() {
                   {map.kitDefinitionId ? "内容を確認" : "編集する"}
                   <span aria-hidden="true">→</span>
                 </a>
+                <button type="button" className="home-refresh-button" disabled={transferBusy} onClick={() => void exportGoalMap(map.id)}>
+                  JSONを書き出す
+                </button>
               </li>
             ))}
           </ul>
