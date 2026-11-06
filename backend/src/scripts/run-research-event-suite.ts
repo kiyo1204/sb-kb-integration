@@ -69,6 +69,7 @@ try {
     "test:research-event-schema",
     "test:undo-redo:unit",
     "test:merge-release",
+    "test:five-flow-features",
     "test:map-mixed-history",
     "test:research-events",
     "test:event-export-samples",
@@ -81,6 +82,7 @@ try {
     "test:stage1:integration",
     "test:session-flow-survey",
     "test:five-flow-composite",
+    "test:five-flow-feature-maps",
     "test:goal-map-transfer",
     "test:map-api-v2",
     "test:map-failure-retry",
@@ -110,6 +112,7 @@ try {
     await run("test:link-position-browser", true);
     await run("test:session-flow-survey-browser",true);
     await run("test:five-flow-feedback-browser",true);
+    await run("test:five-flow-features-browser",true);
     await run("test:undo-role-browser", true);
     await run("test:delivery-browser", true);
     await run("test:event-export-browser", true);

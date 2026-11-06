@@ -6,6 +6,7 @@ import { parse } from "csv-parse/sync";
 import { writeFile } from "node:fs/promises";
 import { verifyMockTestUrl } from "./mock-db.js";
 import { createStage1Session } from "../sessions.js";
+import { insertResearchEvent } from "../research-events.js";
 import type { MapHistorySnapshot } from "../map-history.js";
 await verifyMockTestUrl(process.env.DATABASE_URL!);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -602,6 +603,9 @@ try {
   });
   await checkpoint(s.id, id);
   const beforeProtectedDelete = graph(await dbState(id));
+  const draftFeatures=await research(`/research/stage1/sessions/${s.id}/descriptive-features`);
+  assert.equal(draftFeatures.completion.reason,"NOT_SUBMITTED");
+  assert.equal(draftFeatures.completion.activeConcepts,null);
   await request(`/concepts/${merged.concept.id}`, 200, "DELETE", {});
   const released = graph(await checkpoint(s.id, id));
   assert.ok(!released.concepts.some((c) => c.id === merged.concept.id));
@@ -841,8 +845,34 @@ try {
   checks.push(
     "single/nested Merge release; source denial; original Link labels/positions restored; unrelated edits retained; failure and receipt rollback; same-key retry; missing history refused; Undo/Redo and immutable prior events",
   );
+  await request(`/maps/${id}/operation-cancellations/ADD_CONCEPT`,201,"POST",{});
+  const unknownClient=await pool.connect();
+  try{await unknownClient.query("BEGIN");await insertResearchEvent(unknownClient,s.id,"SYSTEM",{schemaVersion:5,eventType:"MAP_SAVE",targetType:"MAP",targetId:id,mapId:id,outcome:"UNKNOWN",clientTimeQuality:"NOT_APPLICABLE"});await unknownClient.query("COMMIT");}catch(error){await unknownClient.query("ROLLBACK");throw error;}finally{unknownClient.release();}
   await request(`/maps/${id}/submit`, 200, "POST", {});
   const final = await dbState(id);
+  const featurePath=`/research/stage1/sessions/${s.id}/descriptive-features`;
+  const features=await research(featurePath);
+  assert.equal(features.featureVersion,"stage1-5-descriptive-v1");
+  assert.equal(features.protocolKey,"STAGE1_5");
+  const expectedCounts=(state:MapHistorySnapshot)=>[state.concepts.filter(c=>c.mergedIntoConceptId===null).length,state.concepts.filter(c=>c.mergedIntoConceptId!==null).length,state.links.length];
+  const startCounts=expectedCounts(initial),finalCounts=expectedCounts(final);
+  assert.equal(features.start.status,"AVAILABLE");
+  assert.equal(features.completion.status,"AVAILABLE");
+  for(const [index,key] of ["activeConcepts","hiddenMergeSources","links"].entries()){
+    assert.equal(features.start[key],startCounts[index]);assert.equal(features.completion[key],finalCounts[index]);assert.equal(features.delta[key],finalCounts[index]!-startCounts[index]!);
+  }
+  const featureCsv=parse(await research(featurePath+".csv"),{columns:true,bom:true}) as Record<string,string>[];
+  for(const point of ["start","completion","delta"]){const row=featureCsv.find(r=>r.aggregationPoint===point)!;for(const key of ["activeConcepts","hiddenMergeSources","links"])assert.equal(Number(row[key]),features[point][key]);assert.equal(row.featureVersion,features.featureVersion);assert.equal(row.protocolKey,features.protocolKey);}
+  const savedCounts=(await pool.query("SELECT actor_type,outcome,count(*)::int n FROM research_events WHERE map_id=$1 AND schema_version IN(2,5) GROUP BY actor_type,outcome",[id])).rows;
+  for(const r of savedCounts)assert.equal(features.operationResults.rows.find((x:{actorType:string;outcome:string})=>x.actorType===r.actor_type&&x.outcome===r.outcome)?.count,r.n);
+  for(const suffix of ["",".csv"]){await request(featurePath+suffix,401,"GET",undefined,undefined,"");await request(featurePath+suffix,403,"GET",undefined,undefined,token);}
+  const storedInitial=(await pool.query("SELECT snapshot,captured_at FROM map_initial_snapshots WHERE map_id=$1",[id])).rows[0];
+  await pool.query("DELETE FROM map_initial_snapshots WHERE map_id=$1",[id]);
+  try {const missing=await research(featurePath);assert.equal(missing.start.activeConcepts,null);assert.equal(missing.delta.links,null);const rows=parse(await research(featurePath+".csv"),{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.find(r=>r.aggregationPoint==="delta")!.links,"");}
+  finally {await pool.query("INSERT INTO map_initial_snapshots(map_id,snapshot_version,snapshot,captured_at) VALUES($1,1,$2,$3)",[id,storedInitial.snapshot,storedInitial.captured_at]);}
+  const unmatched=randomUUID();
+  await pool.query("INSERT INTO concepts(id,map_id,label,position_x,position_y) VALUES($1,$2,'TEST-ONLY inconsistent current map',0,0)",[unmatched,id]);
+  try {const missing=await research(featurePath);assert.equal(missing.completion.reason,"HISTORY_INCONSISTENT");assert.equal(missing.delta.activeConcepts,null);}finally{await pool.query("DELETE FROM concepts WHERE id=$1",[unmatched]);}
   assert.equal(
     (await pool.query("SELECT status FROM maps WHERE id=$1", [id])).rows[0]
       .status,
@@ -912,6 +942,10 @@ try {
   }
   assert.equal(map.operationLogs.length, own.length);
   const analysis = await research(`/research/stage1/sessions/${s.id}/analysis`);
+  assert.deepEqual(analysis.descriptiveFeatures.start.activeConcepts,features.start.activeConcepts);
+  assert.deepEqual(analysis.descriptiveFeatures.completion,features.completion);
+  assert.deepEqual(analysis.descriptiveFeatures.delta,features.delta);
+  checks.push("new-five-flow version-separated start/submission/delta counts, actor/outcome counts, JSON/CSV agreement, auth, missing snapshot and inconsistent history refusal");
   assert.deepEqual(
     analysis.operations.map((o: { eventId: string }) => o.eventId).sort(),
     events.map((e) => e.event_id).sort(),
@@ -923,7 +957,7 @@ try {
   assert.deepEqual(
     analysis.features,
     {},
-    "new-five-flow feature definitions remain intentionally unchanged",
+    "legacy features field remains empty; new-five-flow descriptiveFeatures is version-separated",
   );
   const full = await research(
     `/research/stage1/sessions/${s.id}/maps/${id}/history?sequenceNumber=${own.length}`,
@@ -1005,6 +1039,8 @@ try {
     assert.deepEqual(legacyShape(legacyAfter[i]), legacyShape(legacyBefore[i]));
   for (const protocol of ["STAGE1_4", "STAGE1_6"] as const) {
     const oldSid = await legacyFixture(protocol, kit.id);
+    await research(`/research/stage1/sessions/${oldSid}/descriptive-features`,409);
+    await research(`/research/stage1/sessions/${oldSid}/descriptive-features.csv`,409);
     const oldStage = (
       await pool.query(
         "UPDATE session_stages SET status='IN_PROGRESS',completed_at=NULL WHERE session_id=$1 AND stage_type='INTEGRATION_MAP' RETURNING id",
@@ -1050,9 +1086,11 @@ try {
         checks,
         mapEventCount: events.length,
         integrationEventCount: own.length,
+        descriptiveFeatureVersion:features.featureVersion,
+        featureCounts:{start:startCounts,completion:finalCounts,delta:finalCounts.map((n,i)=>n-startCounts[i]!)},
         knownUnresolved: [
           "Merge release restricted to new-five-flow integration; ambiguous history refused",
-          "new-five-flow features undefined",
+          "only active/hidden Concept and Link counts defined; finer provenance/features remain out of scope",
           "SB link-label coordinate inheritance not asserted as a requirement",
         ],
       },

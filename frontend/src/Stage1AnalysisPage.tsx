@@ -1,4 +1,5 @@
 import {ResearchDeliveryStatus} from "./DeliveryStatus";
+import {FiveFlowFeatures} from "./FiveFlowFeatures";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { apiFetch, downloadApiFile, uiText } from "./auth-client";
 import { ReadOnlyMapSnapshot, type HistoricalMapSnapshot } from "./MapPage";
@@ -256,7 +257,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
         <div className="stage1-analysis-heading">
           <p className="eyebrow">研究者用</p>
           <h1>再構成行動の分析</h1>
-          <p>フロー：{data?.session.protocolKey==="STAGE1_5"?"5活動（群なし・アンケート）":data?.session.protocolKey==="STAGE1_6"?"6活動（群別・事前事後評価）":"4活動（旧形式）"}</p>
+          <p>フロー：{!data?"記録確認中":data.session.protocolKey==="STAGE1_5"?"5活動（群なし・アンケート）":data.session.protocolKey==="STAGE1_6"?"6活動（群別・事前事後評価）":"4活動（旧形式）"}</p>
           <p>セッション：{sessionId} 参加者コード：{data?.session.participantCode??"—"}</p>
         </div>
         <div className="stage1-analysis-exports" role="group" aria-label="データ出力">
@@ -271,6 +272,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
         {status&&<p role="status">{status}</p>}
       </section>
       <ResearchDeliveryStatus sessionId={sessionId}/>
+      {(!data || data.session.protocolKey==="STAGE1_5") && <FiveFlowFeatures key={sessionId} sessionId={sessionId}/>}
       {!data?<p role="status">分析データを読み込んでいます…</p>:(
         <>
           <section className="session-card activity-overview">

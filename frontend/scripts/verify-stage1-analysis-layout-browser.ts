@@ -39,6 +39,12 @@ let protocol = "STAGE1_5";
 let emptyHistory = false;
 let noSnapshot = false;
 let replayUnavailable = false;
+let featureMode = "AVAILABLE";
+const featureFixture=()=>{
+  const available={status:"AVAILABLE",reason:null,activeConcepts:3,hiddenMergeSources:0,links:2};
+  const missing={status:"UNAVAILABLE",reason:featureMode,activeConcepts:null,hiddenMergeSources:null,links:null};
+  return {featureVersion:"stage1-5-descriptive-v1",protocolKey:"STAGE1_5",sessionId:sid,mapId,sampledAt:start,start:{...(featureMode==="INITIAL_SNAPSHOT_MISSING_OR_INVALID"?missing:available),capturedAt:start},completion:{...(featureMode==="AVAILABLE"?{...available,activeConcepts:2,hiddenMergeSources:2,links:3}:missing),submittedAt:featureMode==="NOT_SUBMITTED"?null:start,eventId:featureMode==="AVAILABLE"?operationId:null,eventType:featureMode==="AVAILABLE"?"MAP_SUBMIT":null},delta:featureMode==="AVAILABLE"?{...available,activeConcepts:-1,hiddenMergeSources:2,links:1}:missing,operationResults:{scope:"SAVED_AT_READ",total:8,rows:["SUCCESS","FAILURE","REJECTED","CANCELLED","UNKNOWN"].map(outcome=>({historySource:"EVENT",actorType:outcome==="SUCCESS"?"SYSTEM":"LEARNER",outcome,count:outcome==="SUCCESS"?3:1})).concat([{historySource:"LEGACY",actorType:"UNRECORDED",outcome:"UNRECORDED",count:1}])}};
+};
 
 try {
   const context = await browser.newContext({ viewport: { width: 1500, height: 1100 } });
@@ -47,6 +53,8 @@ try {
   await page.route("**/api/**", async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/me") return route.fulfill({ json: { role: "researcher" } });
+    if(path.endsWith("/descriptive-features"))return protocol==="STAGE1_5"?route.fulfill({json:featureFixture()}):route.fulfill({status:409,json:{error:"wrong_protocol"}});
+    if(path.endsWith("/descriptive-features.csv"))return route.fulfill({headers:{"Content-Type":"text/csv","Content-Disposition":"attachment; filename=mock-five-flow.csv"},body:"featureVersion,protocolKey,aggregationPoint,activeConcepts,hiddenMergeSources,links\r\nstage1-5-descriptive-v1,STAGE1_5,completion,2,2,3\r\n"});
     if (path.endsWith("/delivery-status")) return route.fulfill({ json: { clientReported: [], serverVerified: [], missingIsUnknown: true } });
     if (path === `/api/research/stage1/sessions/${sid}/analysis`) {
       const five = protocol === "STAGE1_5";
@@ -79,6 +87,14 @@ try {
   });
   const url = vite.resolvedUrls!.local[0]!;
   await page.goto(`${url}research/stage1/${sid}/analysis`);
+  const featurePanel=page.getByRole("region",{name:"新5活動の記述的特徴量"});
+  await featurePanel.waitFor();
+  assert.match(await featurePanel.innerText(),/stage1-5-descriptive-v1/);
+  assert.deepEqual(await featurePanel.locator('[data-feature-point="completion"] td').allTextContents(),["2","2","3","算出済み"]);
+  assert.deepEqual(await featurePanel.locator('[data-feature-point="delta"] td').allTextContents(),["-1","2","1","算出済み"]);
+  for(const outcome of ["SUCCESS","FAILURE","REJECTED","CANCELLED","UNKNOWN","UNRECORDED"])assert.ok((await featurePanel.innerText()).includes(outcome));
+  const featureDownload=page.waitForEvent("download");await featurePanel.getByRole("button",{name:"新5活動の特徴量CSVを出力"}).click();
+  const featureStream=await (await featureDownload).createReadStream();let downloadedFeatures="";for await(const chunk of featureStream)downloadedFeatures+=chunk.toString();assert.match(downloadedFeatures,/stage1-5-descriptive-v1,STAGE1_5,completion,2,2,3/);
   await page.getByRole("heading", { name: "活動概要" }).waitFor();
   assert.equal(await page.getByText("群：", { exact: false }).count(), 0, "5 activity protocol with null group must omit group summary");
   assert.ok((await page.locator(".activity-overview").innerText()).includes("アンケート"));
@@ -133,9 +149,14 @@ try {
   const oldText = await page.locator(".activity-overview").innerText();
   assert.match(oldText, /群：EXPERIMENTAL/);
   assert.match(oldText, /記録時刻の差/);
+  assert.equal(await page.getByRole("region",{name:"新5活動の記述的特徴量"}).count(),0);
   protocol = "STAGE1_4";
   await page.goto(`${url}research/stage1/${sid}/analysis`);
+  await page.getByText("フロー：4活動（旧形式）",{exact:true}).waitFor();
   assert.match(await page.locator(".stage1-analysis-heading").innerText(), /4活動（旧形式）/);
+  assert.equal(await page.getByRole("region",{name:"新5活動の記述的特徴量"}).count(),0);
+  protocol="STAGE1_5";
+  for(const mode of ["NOT_SUBMITTED","INITIAL_SNAPSHOT_MISSING_OR_INVALID","HISTORY_INCONSISTENT"]){featureMode=mode;await page.goto(`${url}research/stage1/${sid}/analysis`);await featurePanel.waitFor();const row=featurePanel.locator('[data-feature-point="completion"]');assert.deepEqual((await row.locator("td").allTextContents()).slice(0,3),["算出不可","算出不可","算出不可"]);if(mode==="NOT_SUBMITTED")assert.match(await row.innerText(),/未提出/);}
   console.log("Mock API browser: 5/6/4 activity summaries, no-group vs retained historical group, empty operation history, no-snapshot label with no fabricated diff, change/add/delete link rendering, TEXT/CHOICE/RATING survey answers, responsive layout: PASS");
   await context.close();
 } finally {

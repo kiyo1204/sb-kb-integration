@@ -400,6 +400,13 @@ try {
     1,
   );
   await api("/maps/" + im.id, 404, "GET", undefined, auto.learnerAccessToken);
+  const autoFeatures=await api(`/research/stage1/sessions/${auto.id}/descriptive-features`,200);
+  assert.equal(autoFeatures.completion.status,"AVAILABLE");
+  assert.equal(autoFeatures.completion.eventType,"MAP_AUTO_SUBMIT");
+  assert.equal(autoFeatures.completion.activeConcepts,0);
+  assert.equal(autoFeatures.completion.hiddenMergeSources,0);
+  assert.equal(autoFeatures.completion.links,0);
+  assert.ok(autoFeatures.operationResults.rows.some((r:{actorType:string;outcome:string;count:number})=>r.actorType==="SYSTEM"&&r.outcome==="SUCCESS"&&r.count===1));
   await api(
     "/session-stages/" + st.id + "/complete",
     200,
