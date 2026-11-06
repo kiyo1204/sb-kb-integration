@@ -146,6 +146,13 @@ export async function reliableOperation<T>(
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
     scope + ":" + ctx.key,
   ]);
+  // Authentication can precede Session deletion. Hold the parent until its
+  // receipt commits, and never create orphan learner receipts after deletion.
+  if (ctx.scope.startsWith("LEARNER:")) {
+    const sessionId=ctx.scope.slice("LEARNER:".length);
+    if (!isUuid(sessionId) || !(await client.query("SELECT 1 FROM sessions WHERE id=$1 FOR KEY SHARE",[sessionId])).rowCount)
+      throw new Error("session_not_found");
+  }
   const prior = (
     await client.query(
       "SELECT request_hash,result FROM operation_receipts WHERE principal_scope=$1 AND operation_key=$2",

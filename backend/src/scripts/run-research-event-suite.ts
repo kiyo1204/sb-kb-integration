@@ -79,6 +79,7 @@ try {
   for (const test of [
     "test:stage1:integration",
     "test:session-flow-survey",
+    "test:session-cleanup",
     "test:goal-map-transfer",
     "test:map-api-v2",
     "test:map-failure-retry",
@@ -111,6 +112,7 @@ try {
     await run("test:delivery-browser", true);
     await run("test:event-export-browser", true);
     await run("test:data-management-browser", true);
+    await run("test:session-cleanup-browser", true);
     await stop();
   }
   assert.ok(selected.every(name=>results.some(r=>r.test===name)),"unknown selected verification");
