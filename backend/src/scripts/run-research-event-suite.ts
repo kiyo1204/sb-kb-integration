@@ -79,6 +79,7 @@ try {
   for (const test of [
     "test:stage1:integration",
     "test:session-flow-survey",
+    "test:five-flow-composite",
     "test:goal-map-transfer",
     "test:map-api-v2",
     "test:map-failure-retry",
@@ -107,6 +108,7 @@ try {
     await run("test:stage1-analysis-layout-browser", true);
     await run("test:link-position-browser", true);
     await run("test:session-flow-survey-browser",true);
+    await run("test:five-flow-feedback-browser",true);
     await run("test:undo-role-browser", true);
     await run("test:delivery-browser", true);
     await run("test:event-export-browser", true);
