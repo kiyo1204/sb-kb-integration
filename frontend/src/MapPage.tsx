@@ -32,6 +32,8 @@ type MergeConceptResponse = {
   incidentLinks: MapLink[];
 };
 
+const mergeReleaseNotice = "このConceptを削除すると、直近のMergeを1段階だけ解除し、直接の元ConceptとMerge前のリンク・位置を復元します。内側のMergeは維持します。このConceptに接続する後発リンクは削除されます。無関係な編集は保持されます。";
+
 type MapLink = {
   labelPositionX?: number | null;
   labelPositionY?: number | null;
@@ -1029,13 +1031,17 @@ export default function MapPage({
       throw new Error(message);
     }
 
-    const deleted = (await response.json()) as { id?: unknown };
+    const deleted = (await response.json()) as { id?: unknown; mergeReleased?: boolean };
     if (deleted.id !== conceptId) {
       throw new Error(
         "削除結果を確認できませんでした。マップを再読み込みして状態を確認してください。",
       );
     }
 
+    if (deleted.mergeReleased) {
+      await reloadMapFromServer();
+      return;
+    }
     setState((current) =>
       current.status === "success"
         ? {
@@ -2641,7 +2647,7 @@ function MapEditorShell({
     ) {
       return;
     }
-    if (!window.confirm(`「${activeConcept.label}」を削除しますか？`)) {
+    if (!window.confirm(activeConcept.isMergeResult && map.type === "INTEGRATION" && map.sessionProtocolKey === "STAGE1_5" ? mergeReleaseNotice : `「${activeConcept.label}」を削除しますか？`)) {
       void onCancelOperation("DELETE_CONCEPT", activeConcept.id);
       return;
     }
@@ -2983,6 +2989,7 @@ function MapEditorShell({
           <ConceptCanvas
             mapId={map.id}
             mapType={map.type}
+            allowMergeRelease={map.type === "INTEGRATION" && map.sessionProtocolKey === "STAGE1_5"}
             concepts={map.concepts}
             links={map.links}
             kitDefinitionName={map.kitDefinitionName}
@@ -3145,7 +3152,7 @@ function MapEditorShell({
                       type="button"
                       className="is-danger"
                       disabled={
-                        drawerSaving || interactionLocked || activeConcept.isMergeResult || activeConcept.isSeed
+                        drawerSaving || interactionLocked || (activeConcept.isMergeResult && !(map.type === "INTEGRATION" && map.sessionProtocolKey === "STAGE1_5")) || activeConcept.isSeed
                       }
                       onClick={() => void handleConceptDelete()}
                     >
@@ -3163,7 +3170,7 @@ function MapEditorShell({
                   {activeConcept.isSeed && <p>初期概念の名前変更・削除はできません。移動・リンク作成はできます。</p>}
                   {activeConcept.isMergeResult && (
                     <p className="map-editor-drawer-hint">
-                      Mergeの履歴を保持するため、このConceptは削除できません。
+                      {map.type === "INTEGRATION" && map.sessionProtocolKey === "STAGE1_5" ? mergeReleaseNotice : "Mergeの履歴を保持するため、このConceptは削除できません。"}
                     </p>
                   )}
                 </form>
@@ -3345,6 +3352,7 @@ function MapPageFrame({
 export function ConceptCanvas({
   mapId,
   mapType,
+  allowMergeRelease = false,
   concepts,
   links,
   kitDefinitionName,
@@ -3379,6 +3387,7 @@ export function ConceptCanvas({
 }: {
   mapId: string;
   mapType: MapResponse["type"];
+  allowMergeRelease?: boolean;
   concepts: Concept[];
   links: MapLink[];
   kitDefinitionName: string | null;
@@ -4401,7 +4410,7 @@ export function ConceptCanvas({
     if (concept.isSeed) return;
     if (
       !canEditConceptStructure ||
-      concept.isMergeResult ||
+      (concept.isMergeResult && !allowMergeRelease) ||
       positionSaving ||
       labelSaving ||
       deletingConceptRef.current !== null ||
@@ -4428,7 +4437,7 @@ export function ConceptCanvas({
   async function confirmConceptDelete(concept: Concept) {
     if (
       !canEditConceptStructure ||
-      concept.isMergeResult ||
+      (concept.isMergeResult && !allowMergeRelease) ||
       confirmingDeleteConceptId !== concept.id ||
       positionSaving ||
       labelSaving ||
@@ -5355,7 +5364,7 @@ export function ConceptCanvas({
                     aria-label={`${concept.label}の削除確認`}
                     onPointerDown={(event) => event.stopPropagation()}
                   >
-                    <p>このConceptを削除しますか？</p>
+                    <p>{concept.isMergeResult && allowMergeRelease ? mergeReleaseNotice : "このConceptを削除しますか？"}</p>
                     <p className="concept-delete-id">
                       ID末尾: {concept.id.slice(-6)}
                     </p>
@@ -5408,7 +5417,7 @@ export function ConceptCanvas({
                         type="button"
                         aria-label={`「${concept.label}」を削除`}
                         title={
-                          concept.isMergeResult
+                          concept.isMergeResult && !allowMergeRelease
                             ? "Merge lineageを保持するため削除できません。"
                             : undefined
                         }
@@ -5418,11 +5427,11 @@ export function ConceptCanvas({
                           deletingConceptId !== null ||
                           confirmingDeleteConceptId !== null ||
                           editingConceptId !== null ||
-                          concept.isMergeResult === true
+                          (concept.isMergeResult === true && !allowMergeRelease)
                         }
                         onClick={() => beginConceptDelete(concept)}
                       >
-                        {concept.isMergeResult
+                        {concept.isMergeResult && !allowMergeRelease
                           ? "削除不可"
                           : deletingConceptId === concept.id
                             ? "削除中…"
@@ -5431,7 +5440,7 @@ export function ConceptCanvas({
                     </div>
                     {concept.isMergeResult && (
                       <p className="concept-merge-protected-notice">
-                        Mergeの履歴を保持するため、このConceptは削除できません。
+                        {allowMergeRelease ? mergeReleaseNotice : "Mergeの履歴を保持するため、このConceptは削除できません。"}
                       </p>
                     )}
                   </>

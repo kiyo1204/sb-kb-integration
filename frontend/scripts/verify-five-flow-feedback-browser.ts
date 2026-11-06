@@ -15,7 +15,16 @@ const sid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01",
 let kind: "KB" | "INTEGRATION" = "KB",
   stale = false,
   checks = 0;
-const concepts = [
+let protocol = "STAGE1_5";
+let concepts: {
+  id: string;
+  mapId: string;
+  label: string;
+  positionX: number;
+  positionY: number;
+  mergedIntoConceptId: string | null;
+  isMergeResult?: boolean;
+}[] = [
   {
     id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa05",
     mapId: mid,
@@ -35,6 +44,7 @@ try {
   const page = await browser.newPage({
     viewport: { width: 1400, height: 1000 },
   });
+  const deletes: string[] = [];
   await page.addInitScript(() =>
     sessionStorage.setItem(
       "stage1-access-token",
@@ -43,6 +53,29 @@ try {
   );
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (
+      path.startsWith("/api/concepts/") &&
+      route.request().method() === "DELETE"
+    ) {
+      const target = path.split("/").at(-1)!;
+      deletes.push(target);
+      concepts = concepts.filter((c) => c.id !== target);
+      const make = (suffix: string, label: string, isMergeResult = false) => ({
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa" + suffix,
+        mapId: mid,
+        label,
+        positionX: 100 + (Number(suffix) - 7) * 340,
+        positionY: 100,
+        mergedIntoConceptId: null,
+        isMergeResult,
+      });
+      concepts.push(
+        ...(target.endsWith("06")
+          ? [make("07", "TEST-ONLY inner M", true), make("08", "TEST-ONLY C")]
+          : [make("09", "TEST-ONLY A"), make("10", "TEST-ONLY B")]),
+      );
+      return route.fulfill({ json: { id: target, mergeReleased: true } });
+    }
     if (path === "/api/me")
       return route.fulfill({
         json: { role: "learner", sessionId: sid, kitId: kit },
@@ -58,7 +91,7 @@ try {
           kitDefinitionName: "TEST-ONLY Kit",
           sessionId: sid,
           sessionStageId: stage,
-          sessionProtocolKey: "STAGE1_5",
+          sessionProtocolKey: protocol,
           concepts,
           links: [],
           kitConcepts: [],
@@ -79,7 +112,7 @@ try {
           session: {
             id: sid,
             status: "IN_PROGRESS",
-            protocolKey: "STAGE1_5",
+            protocolKey: protocol,
             studyGroup: null,
             groupActivitySeconds: 1800,
           },
@@ -188,8 +221,58 @@ try {
     1,
     "integration must not request or display KB feedback",
   );
+  concepts = [
+    {
+      ...concepts[0]!,
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa06",
+      label: "TEST-ONLY outer N",
+      isMergeResult: true,
+    },
+  ];
+  await page.goto(url);
+  for (const label of ["TEST-ONLY outer N", "TEST-ONLY inner M"]) {
+    await page.getByText(label, { exact: true }).click();
+    await page.locator("#map-editor-concept-edit-label").waitFor();
+    const deletion = page.getByRole("button", { name: "削除", exact: true });
+    assert.equal(await deletion.isEnabled(), true);
+    page.once("dialog", async (dialog) => {
+      assert.ok(dialog.message().includes("1段階だけ解除"));
+      assert.ok(dialog.message().includes("後発リンクは削除"));
+      await dialog.accept();
+    });
+    await deletion.click();
+    await page
+      .getByText(
+        label === "TEST-ONLY outer N" ? "TEST-ONLY inner M" : "TEST-ONLY A",
+        { exact: true },
+      )
+      .waitFor();
+    assert.equal(await page.getByText(label, { exact: true }).count(), 0);
+  }
+  assert.equal(deletes.length, 2);
+  await page.getByText("TEST-ONLY B", { exact: true }).waitFor();
+  await page.getByText("TEST-ONLY C", { exact: true }).waitFor();
+  for (const old of ["STAGE1_4", "STAGE1_6"]) {
+    protocol = old;
+    concepts = [
+      {
+        ...concepts[0]!,
+        label: "TEST-ONLY legacy merged",
+        isMergeResult: true,
+      },
+    ];
+    await page.goto(url);
+    await page.getByText("TEST-ONLY legacy merged", { exact: true }).click();
+    await page.locator("#map-editor-concept-edit-label").waitFor();
+    assert.equal(
+      await page
+        .getByRole("button", { name: "削除", exact: true })
+        .isDisabled(),
+      true,
+    );
+  }
   console.log(
-    "New-five-flow mock browser: KB result/current-to-stale; integration editing shown without feedback UI/requests: PASS",
+    "Mock browser: KB freshness; integration no-feedback; nested Merge release confirmation/reload; legacy Merge deletion protected: PASS",
   );
 } finally {
   await browser.close();

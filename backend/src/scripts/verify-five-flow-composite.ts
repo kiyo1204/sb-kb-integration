@@ -602,15 +602,245 @@ try {
   });
   await checkpoint(s.id, id);
   const beforeProtectedDelete = graph(await dbState(id));
+  await request(`/concepts/${merged.concept.id}`, 200, "DELETE", {});
+  const released = graph(await checkpoint(s.id, id));
+  assert.ok(!released.concepts.some((c) => c.id === merged.concept.id));
   assert.equal(
-    (await request(`/concepts/${merged.concept.id}`, 409, "DELETE", {})).error,
-    "concept_merge_result_protected",
+    released.concepts.find((c) => c.id === mergeA.id)!.mergedIntoConceptId,
+    null,
   );
-  assert.deepEqual(graph(await checkpoint(s.id, id)), beforeProtectedDelete);
+  assert.equal(
+    released.concepts.find((c) => c.id === mergeB.id)!.mergedIntoConceptId,
+    null,
+  );
   await undo(id, "UNDO");
-  await checkpoint(s.id, id);
+  assert.deepEqual(graph(await checkpoint(s.id, id)), beforeProtectedDelete);
   await undo(id, "REDO");
-  await checkpoint(s.id, id);
+  assert.deepEqual(graph(await checkpoint(s.id, id)), released);
+  // TEST-ONLY regression: a local inverse of the outer Merge, not a map rollback.
+  const make = (label: string, x: number) =>
+    request(`/maps/${id}/concepts`, 201, "POST", {
+      label: "TEST-ONLY " + label,
+      positionX: x,
+      positionY: 800,
+    });
+  const ra = await make("release A", 100),
+    rb = await make("release B", 300),
+    rc = await make("release C", 500);
+  const originalLink = await request(`/maps/${id}/links`, 201, "POST", {
+    label: "TEST-ONLY original",
+    sourceConceptId: ra.id,
+    targetConceptId: initial.concepts[0]!.id,
+  });
+  await request(`/links/${originalLink.id}/position`, 200, "PATCH", {
+    labelPositionX: 210,
+    labelPositionY: 420,
+  });
+  const beforeInner = graph(await checkpoint(s.id, id));
+  const inner = await request(`/maps/${id}/concepts/merge`, 201, "POST", {
+    conceptIds: [ra.id, rb.id],
+    label: "TEST-ONLY inner M",
+  });
+  const mid = inner.concept.id;
+  // Merge sources remain hidden and cannot be manipulated directly.
+  await request(`/concepts/${ra.id}`, 409, "DELETE", {});
+  await request(`/links/${originalLink.id}/label`, 200, "PATCH", {
+    label: "TEST-ONLY edited after merge",
+  });
+  await request(`/links/${originalLink.id}/position`, 200, "PATCH", {
+    labelPositionX: 777,
+    labelPositionY: 888,
+  });
+  const late = await request(`/maps/${id}/links`, 201, "POST", {
+    label: "TEST-ONLY later",
+    sourceConceptId: mid,
+    targetConceptId: rc.id,
+  });
+  const outerBefore = graph(await checkpoint(s.id, id));
+  const outer = await request(`/maps/${id}/concepts/merge`, 201, "POST", {
+    conceptIds: [mid, rc.id],
+    label: "TEST-ONLY outer N",
+  });
+  const nid = outer.concept.id;
+  const unrelated = await make("unrelated retained", 1700);
+  const unrelatedLink = await request(`/maps/${id}/links`, 201, "POST", {
+    label: "TEST-ONLY unrelated link",
+    sourceConceptId: unrelated.id,
+    targetConceptId: a.id,
+  });
+  await request(`/links/${unrelatedLink.id}/label`, 200, "PATCH", {
+    label: "TEST-ONLY unrelated edit retained",
+  });
+  await request(`/links/${unrelatedLink.id}/position`, 200, "PATCH", {
+    labelPositionX: 900,
+    labelPositionY: 900,
+  });
+  const beforeRelease = graph(await checkpoint(s.id, id));
+  await request(`/concepts/${nid}`, 401, "DELETE", {}, undefined, "");
+  const otherSession = await research(
+    "/research/stage1/sessions",
+    201,
+    "POST",
+    {
+      participantCode: "TEST-ONLY-OTHER",
+      videoUrl: "/test-only.mp4",
+      kitDefinitionId: kit.id,
+      seedConceptIds: [],
+      surveyQuestions: [
+        {
+          kind: "TEXT",
+          prompt: "TEST-ONLY authorization fixture",
+          required: true,
+          config: {},
+        },
+      ],
+    },
+  );
+  await request(
+    `/concepts/${nid}`,
+    404,
+    "DELETE",
+    {},
+    undefined,
+    otherSession.learnerAccessToken,
+  );
+  const historyBeforeRelease = (
+    await pool.query(
+      "SELECT event_id,before_state,after_state FROM research_events WHERE map_id=$1 ORDER BY sequence_number",
+      [id],
+    )
+  ).rows;
+  // Fail after state updates but before SUCCESS event: everything must roll back.
+  const releaseKey = randomUUID();
+  await pool.query(
+    `CREATE FUNCTION test58304_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'TEST-ONLY release write failure'; END $$; CREATE TRIGGER test58304_fault BEFORE INSERT ON research_events FOR EACH ROW WHEN (NEW.map_id='${id}'::uuid AND NEW.event_type='DELETE_CONCEPT' AND NEW.target_id='${nid}'::uuid AND NEW.outcome='SUCCESS') EXECUTE FUNCTION test58304_fault()`,
+  );
+  try {
+    const failed = await request(
+      `/concepts/${nid}`,
+      409,
+      "DELETE",
+      {},
+      releaseKey,
+    );
+    assert.equal(failed.error, "map_history_unavailable");
+    assert.equal(failed.operationOutcome, "FAILURE");
+    assert.equal(failed.logSaved, true);
+    assert.ok(
+      !JSON.stringify(failed).includes("TEST-ONLY release write failure"),
+    );
+    assert.deepEqual(graph(await checkpoint(s.id, id)), beforeRelease);
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*)::int n FROM operation_receipts WHERE operation_key=$1 AND principal_scope NOT LIKE '%:audit'",
+          [releaseKey],
+        )
+      ).rows[0].n,
+      0,
+    );
+  } finally {
+    await pool.query(
+      "DROP TRIGGER test58304_fault ON research_events; DROP FUNCTION test58304_fault()",
+    );
+  }
+  await request(`/concepts/${nid}`, 200, "DELETE", {}, releaseKey);
+  const afterOuter = graph(await checkpoint(s.id, id));
+  await request(`/concepts/${nid}`, 200, "DELETE", {}, releaseKey);
+  assert.deepEqual(graph(await checkpoint(s.id, id)), afterOuter);
+  await request(
+    `/concepts/${nid}`,
+    404,
+    "DELETE",
+    {},
+    releaseKey,
+    otherSession.learnerAccessToken,
+  );
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*)::int n FROM research_events WHERE map_id=$1 AND target_id=$2 AND event_type='DELETE_CONCEPT' AND outcome='SUCCESS'",
+        [id, nid],
+      )
+    ).rows[0].n,
+    1,
+  );
+  for (const cid of [mid, rc.id])
+    assert.deepEqual(
+      afterOuter.concepts.find((c) => c.id === cid),
+      outerBefore.concepts.find((c) => c.id === cid),
+    );
+  for (const cid of [ra.id, rb.id])
+    assert.equal(
+      afterOuter.concepts.find((c) => c.id === cid)!.mergedIntoConceptId,
+      mid,
+    );
+  for (const lid of [originalLink.id, late.id])
+    assert.deepEqual(
+      afterOuter.links.find((l) => l.id === lid),
+      outerBefore.links.find((l) => l.id === lid),
+    );
+  assert.deepEqual(
+    afterOuter.links.find((l) => l.id === unrelatedLink.id),
+    beforeRelease.links.find((l) => l.id === unrelatedLink.id),
+  );
+  await undo(id, "UNDO");
+  assert.deepEqual(graph(await checkpoint(s.id, id)), beforeRelease);
+  await undo(id, "REDO");
+  assert.deepEqual(graph(await checkpoint(s.id, id)), afterOuter);
+  // Missing/unrecorded lineage must fail closed, without inventing a before state.
+  const fake = randomUUID();
+  await pool.query(
+    "INSERT INTO concepts(id,map_id,label,position_x,position_y,merged_into_concept_id) VALUES($1,$2,'TEST-ONLY invalid unrecorded lineage',0,0,$3)",
+    [fake, id, mid],
+  );
+  const invalidBefore = graph(await dbState(id));
+  try {
+    assert.equal(
+      (await request(`/concepts/${mid}`, 409, "DELETE", {})).error,
+      "merge_release_unavailable",
+    );
+    assert.deepEqual(graph(await dbState(id)), invalidBefore);
+  } finally {
+    await pool.query("DELETE FROM concepts WHERE id=$1", [fake]);
+  }
+  await request(`/concepts/${mid}`, 200, "DELETE", {});
+  const afterInner = graph(await checkpoint(s.id, id));
+  for (const cid of [ra.id, rb.id])
+    assert.deepEqual(
+      afterInner.concepts.find((c) => c.id === cid),
+      beforeInner.concepts.find((c) => c.id === cid),
+    );
+  assert.deepEqual(
+    afterInner.links.find((l) => l.id === originalLink.id),
+    beforeInner.links.find((l) => l.id === originalLink.id),
+  );
+  assert.ok(!afterInner.links.some((l) => l.id === late.id));
+  assert.deepEqual(
+    afterInner.concepts.find((c) => c.id === unrelated.id),
+    beforeRelease.concepts.find((c) => c.id === unrelated.id),
+  );
+  assert.deepEqual(
+    afterInner.links.find((l) => l.id === unrelatedLink.id),
+    beforeRelease.links.find((l) => l.id === unrelatedLink.id),
+  );
+  await undo(id, "UNDO");
+  assert.deepEqual(graph(await checkpoint(s.id, id)), afterOuter);
+  await undo(id, "REDO");
+  assert.deepEqual(graph(await checkpoint(s.id, id)), afterInner);
+  for (const row of historyBeforeRelease)
+    assert.deepEqual(
+      (
+        await pool.query(
+          "SELECT event_id,before_state,after_state FROM research_events WHERE event_id=$1",
+          [row.event_id],
+        )
+      ).rows[0],
+      row,
+    );
+  checks.push(
+    "single/nested Merge release; source denial; original Link labels/positions restored; unrelated edits retained; failure and receipt rollback; same-key retry; missing history refused; Undo/Redo and immutable prior events",
+  );
   await request(`/maps/${id}/submit`, 200, "POST", {});
   const final = await dbState(id);
   assert.equal(
@@ -653,7 +883,7 @@ try {
   assert.deepEqual(graph(map.initialSnapshot), graph(initial));
   const events = (
     await pool.query(
-      "SELECT event_id,event_type,map_id,target_id,outcome,reason_code,sequence_number,server_timestamp,before_state,after_state FROM research_events WHERE session_id=$1 AND schema_version IN (2,5) ORDER BY sequence_number",
+      "SELECT event_id,event_type,map_id,target_id,actor_type,outcome,reason_code,sequence_number,server_timestamp,before_state,after_state FROM research_events WHERE session_id=$1 AND schema_version IN (2,5) ORDER BY sequence_number",
       [s.id],
     )
   ).rows;
@@ -745,6 +975,7 @@ try {
         );
         assert.equal(String(x.sequence_number), String(e.sequence_number));
         assert.equal(x.protocol_key, "STAGE1_5");
+        assert.equal(x.actor_type, e.actor_type);
       }
       assert.deepEqual(out.before, e.before_state);
       assert.deepEqual(out.after, e.after_state);
@@ -757,6 +988,7 @@ try {
         );
       assert.ok(rawOp);
       assert.equal(rawOp.outcome, e.outcome);
+      assert.equal(rawOp.actorType, e.actor_type);
       assert.deepEqual(rawOp.before, e.before_state);
       assert.deepEqual(rawOp.after, e.after_state);
     }
@@ -771,6 +1003,41 @@ try {
   );
   for (let i = 0; i < 2; i++)
     assert.deepEqual(legacyShape(legacyAfter[i]), legacyShape(legacyBefore[i]));
+  for (const protocol of ["STAGE1_4", "STAGE1_6"] as const) {
+    const oldSid = await legacyFixture(protocol, kit.id);
+    const oldStage = (
+      await pool.query(
+        "UPDATE session_stages SET status='IN_PROGRESS',completed_at=NULL WHERE session_id=$1 AND stage_type='INTEGRATION_MAP' RETURNING id",
+        [oldSid],
+      )
+    ).rows[0].id;
+    await pool.query(
+      "UPDATE sessions SET status='IN_PROGRESS',completed_at=NULL WHERE id=$1",
+      [oldSid],
+    );
+    const oldMap = (
+      await pool.query(
+        "INSERT INTO maps(type,session_stage_id) VALUES('INTEGRATION',$1) RETURNING id",
+        [oldStage],
+      )
+    ).rows[0].id;
+    const oldResult = (
+      await pool.query(
+        "INSERT INTO concepts(map_id,label,position_x,position_y) VALUES($1,'TEST-ONLY legacy Merge result',0,0) RETURNING id",
+        [oldMap],
+      )
+    ).rows[0].id;
+    await pool.query(
+      "INSERT INTO concepts(map_id,label,position_x,position_y,merged_into_concept_id) VALUES($1,'TEST-ONLY legacy source A',0,0,$2),($1,'TEST-ONLY legacy source B',1,1,$2)",
+      [oldMap, oldResult],
+    );
+    const oldBefore = graph(await dbState(oldMap));
+    assert.equal(
+      (await research(`/concepts/${oldResult}`, 409, "DELETE", {})).error,
+      "concept_merge_result_protected",
+    );
+    assert.deepEqual(graph(await dbState(oldMap)), oldBefore);
+  }
   checks.push(
     "legacy 4/6 export versions/group/assessment shape and data unchanged across new five-flow run",
   );
@@ -784,7 +1051,7 @@ try {
         mapEventCount: events.length,
         integrationEventCount: own.length,
         knownUnresolved: [
-          "Merge-result deletion restrictions unchanged",
+          "Merge release restricted to new-five-flow integration; ambiguous history refused",
           "new-five-flow features undefined",
           "SB link-label coordinate inheritance not asserted as a requirement",
         ],
