@@ -3609,13 +3609,13 @@ button.link-connector-label:active {
   font-size: 11px;
   font-weight: 750;
 }
-.concept-node.is-history-added {
+.map-history-preview .concept-node.is-history-added {
   border: 3px solid #368355;
 }
-.concept-node.is-history-removed {
+.map-history-preview .concept-node.is-history-removed {
   border: 3px dashed #a94f4f;
 }
-.concept-node.is-history-changed {
+.map-history-preview .concept-node.is-history-modified {
   border: 3px double #6571a2;
 }
 .map-history-preview .history-change-marker {
@@ -3636,10 +3636,19 @@ button.link-connector-label:active {
   stroke-dasharray: 6 4;
   stroke-width: 3;
 }
-.map-history-preview .is-history-changed .concept-edge-path {
+.map-history-preview .is-history-modified .concept-edge-path {
   stroke: #6571a2;
   stroke-dasharray: 2 3;
   stroke-width: 3;
+}
+.map-history-preview .link-connector.is-history-added .link-connector-label {
+  outline: 3px solid #368355;
+}
+.map-history-preview .link-connector.is-history-removed .link-connector-label {
+  outline: 3px dashed #a94f4f;
+}
+.map-history-preview .link-connector.is-history-modified .link-connector-label {
+  outline: 3px double #6571a2;
 }
 .map-history-operation {
   margin-top: 16px;

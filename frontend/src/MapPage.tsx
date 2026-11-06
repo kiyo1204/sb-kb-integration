@@ -311,6 +311,11 @@ type MapResponse = {
   availableKitDefinitions: KitDefinitionOption[];
 };
 
+function historyHighlightClass(highlighted: boolean, kind?: "ADDED" | "REMOVED" | "CHANGED") {
+  if (!highlighted) return "";
+  return kind ? ` is-history-${kind === "CHANGED" ? "modified" : kind.toLowerCase()}` : " is-history-changed";
+}
+
 export type HistoricalMapSnapshot = {
   mapId: string;
   mapType: "PRIOR" | "KB" | "INTEGRATION";
@@ -4997,7 +5002,7 @@ export function ConceptCanvas({
                 conceptsById.get(edge.target)?.label ?? edge.target;
 
               return (
-                <g key={edge.id} className={highlightedLinkIds?.has(edge.id) ? `is-history-changed${historyLinkChangeKinds?.has(edge.id) ? ` is-history-${historyLinkChangeKinds.get(edge.id)!.toLowerCase()}` : ""}` : undefined}>
+                <g key={edge.id} className={historyHighlightClass(!!highlightedLinkIds?.has(edge.id), historyLinkChangeKinds?.get(edge.id)) || undefined}>
                   <path
                     className="concept-edge-hit-target"
                     d={geometry.path}
@@ -5115,7 +5120,7 @@ export function ConceptCanvas({
             };
             return (
               <div
-                className={`link-connector${selectedLinkId === edge.id ? " is-selected" : ""}${highlightedLinkIds?.has(edge.id) ? " is-history-changed" : ""}`}
+                className={`link-connector${selectedLinkId === edge.id ? " is-selected" : ""}${historyHighlightClass(!!highlightedLinkIds?.has(edge.id), historyLinkChangeKinds?.get(edge.id))}`}
                 key={`${edge.id}-connector`}
                 data-connector-id={edge.id}
                 ref={element => { if (element) connectorElementsRef.current.set(edge.id, element); else connectorElementsRef.current.delete(edge.id); }}
@@ -5263,7 +5268,7 @@ export function ConceptCanvas({
 
             return (
               <article
-                className={`concept-node${isDragging ? " is-dragging" : ""}${editingConceptId === concept.id ? " is-editing" : ""}${positionSaving ? " is-position-saving" : ""}${highlightedConceptIds?.has(concept.id) ? ` is-history-changed${historyConceptChangeKinds?.has(concept.id) ? ` is-history-${historyConceptChangeKinds.get(concept.id)!.toLowerCase()}` : ""}` : ""}`}
+                className={`concept-node${isDragging ? " is-dragging" : ""}${editingConceptId === concept.id ? " is-editing" : ""}${positionSaving ? " is-position-saving" : ""}${historyHighlightClass(!!highlightedConceptIds?.has(concept.id), historyConceptChangeKinds?.get(concept.id))}`}
                 key={concept.id}
                 role="listitem"
                 tabIndex={canOpenConceptDrawer ? 0 : undefined}

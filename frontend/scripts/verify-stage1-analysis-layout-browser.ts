@@ -20,6 +20,7 @@ const before = {
     { id: "c1", mapId, label: "水", positionX: 100, positionY: 100, mergedIntoConceptId: null },
     { id: "c2", mapId, label: "蒸発", positionX: 450, positionY: 100, mergedIntoConceptId: null },
     { id: "c3", mapId, label: "雲", positionX: 780, positionY: 100, mergedIntoConceptId: null },
+    { id: "c5", mapId, label: "一時概念", positionX: 100, positionY: 360, mergedIntoConceptId: null },
   ],
   links: [
     { id: "l1", mapId, sourceConceptId: "c1", targetConceptId: "c2", label: "変化する", labelPositionX: 275, labelPositionY: 140 },
@@ -28,7 +29,7 @@ const before = {
 };
 const after = {
   ...before,
-  concepts: [...before.concepts, { id: "c4", mapId, label: "雨", positionX: 450, positionY: 360, mergedIntoConceptId: null }],
+  concepts: [...before.concepts.filter(item => item.id !== "c5").map(item => item.id === "c2" ? { ...item, positionX: 480 } : item), { id: "c4", mapId, label: "雨", positionX: 450, positionY: 360, mergedIntoConceptId: null }],
   links: [
     { ...before.links[0]!, label: "加熱される", labelPositionX: 295, labelPositionY: 175 },
     { id: "l3", mapId, sourceConceptId: "c3", targetConceptId: "c4", label: "降る", labelPositionX: 600, labelPositionY: 250 },
@@ -93,6 +94,21 @@ try {
   assert.ok(await page.locator(".history-change-tag").filter({ hasText: "＋ 追加" }).count() >= 1, "concept additions have a visible map marker");
   const linkMarkers = await page.locator(".history-change-marker").allTextContents();
   assert.ok(linkMarkers.some(text => text.includes("↔ 変更")), `changed links have a visible map marker; got ${JSON.stringify(linkMarkers)}`);
+  for (const [kind, color, line, dash] of [
+    ["added", "rgb(54, 131, 85)", "solid", "none"],
+    ["removed", "rgb(169, 79, 79)", "dashed", "6px, 4px"],
+    ["modified", "rgb(101, 113, 162)", "double", "2px, 3px"],
+  ]) {
+    const node = page.locator(`.concept-node.is-history-${kind}`).first();
+    await node.waitFor();
+    assert.ok(!(await node.getAttribute("class"))!.includes("is-history-changed"), "typed differences must not inherit the legacy highlight class");
+    assert.deepEqual(await node.evaluate(element => { const css = getComputedStyle(element); return [css.borderTopColor, css.borderTopStyle]; }), [color, line]);
+    const edge = page.locator(`g.is-history-${kind} .concept-edge-path`).first();
+    await edge.waitFor();
+    assert.deepEqual(await edge.evaluate(element => { const css = getComputedStyle(element); return [css.stroke, css.strokeDasharray]; }), [color, dash]);
+    const connector = page.locator(`.link-connector.is-history-${kind} .link-connector-label`).first();
+    assert.deepEqual(await connector.evaluate(element => { const css = getComputedStyle(element); return [css.outlineColor, css.outlineStyle]; }), [color, line]);
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: process.env.ANALYSIS_SCREENSHOT ?? "analysis-layout-mobile.png", fullPage: true });
 
