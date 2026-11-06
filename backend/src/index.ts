@@ -40,6 +40,8 @@ import { replayMixedMapHistory, type MapHistoryEventV2 } from "./map-mixed-histo
 
 import { registerAudit, auditCurrent, auditCommitted, recordAudit } from "./server-audit.js";
 import { observeExpiredStages } from "./system-submission.js";
+import { MAX_MAP_STATE_BYTES } from "./research-event-map-v2.js";
+import { registerGoalMapTransferRoutes } from "./goal-map-transfer.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -1701,7 +1703,10 @@ async function applyHistoryStateDelta(
   }
 }
 
-app.use(express.json());
+app.use((request, response, next) => {
+  const limit = request.path === "/api/research/goal-maps/import" ? MAX_MAP_STATE_BYTES : "100kb";
+  express.json({ limit })(request, response, next);
+});
 app.use("/api", (request, response, next) => {
   const path = request.path;
   const method = request.method.toUpperCase();
@@ -1814,6 +1819,7 @@ app.use("/api", (request, response, next) => {
   next();
 });
 app.use("/api", accessControl(pool));
+registerGoalMapTransferRoutes(app, pool);
 registerOperationContext(app);
 app.use("/api",seededConceptGuard(pool));
 registerAudit(app, pool);
