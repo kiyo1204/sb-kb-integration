@@ -27,25 +27,29 @@
 
 ## コマンドと最終結果
 
-最終統合後の結果を追記するまで、この欄の32件をPR #18込みの検証結果と読み替えない。
+最新main=bc6c07b8a84f3fa7f7ecf1c3f65eee0743c95f4e（PR #18）を統合後、学習者限定Undo表示とSTAGE1_5の両方を残して3ファイルの競合を解消した。旧教師KBに現在の認証情報が残っていた場合の初期配置も、全選択の事前検証で拒否するよう補強した。
+
+**最終結果：新規DB `stage1_mock_survey_release`、全39マイグレーション、全体suite 33/33、backend/frontendの型検査・Lint・ビルド6/6、リセット防護・新形式起動2/2が成功。** 33件は最新mainの31件＋新API＋新ブラウザー。`survey-release-suite-results.json`、`survey-release-invariants.json`、`survey-release-scale-results.json`が最終集計で、32件の`survey-pr-*`はPR #18取り込み前の記録として保持する。
+
+その後、検証ケースだけに実在する別Kitの部品・別Sessionの設問・不正選択肢・尺度外／小数の拒否を加え、`test:session-flow-survey`とbackend静的3件を再実行して成功。プロダクトコードはこの追加ケース時に変更していない。秘密情報を含む旧KBラベルを模擬DBへ一時挿入する異常系では、安全な400応答・Map未作成・機密本文なしを確認し、fixtureの元ラベルをfinallyで戻した。
 
 ```powershell
 $env:NODE_ENV='development'
 $env:STAGE1_MOCK_DATA='ONLY_SYNTHETIC'
 $env:RESEARCH_BROWSER_CHECKS='1'
 # 既存DATABASE_URLは使わず、create生成manifestのコンテナーだけへ接続
-npm run db:mock --prefix backend -- create --name stage1_mock_survey_pr --mock-data-only
-npm run db:mock --prefix backend -- migrate --name stage1_mock_survey_pr
-npm run db:mock --prefix backend -- seed --name stage1_mock_survey_pr
-npm run db:mock --prefix backend -- suite --name stage1_mock_survey_pr
-npm run db:mock --prefix backend -- safety --name stage1_mock_survey_pr
-npm run db:mock --prefix backend -- seed --name stage1_mock_survey_pr
-npm run db:mock --prefix backend -- check --name stage1_mock_survey_pr
+npm run db:mock --prefix backend -- create --name stage1_mock_survey_release --mock-data-only
+npm run db:mock --prefix backend -- migrate --name stage1_mock_survey_release
+npm run db:mock --prefix backend -- seed --name stage1_mock_survey_release
+npm run db:mock --prefix backend -- suite --name stage1_mock_survey_release
+npm run db:mock --prefix backend -- safety --name stage1_mock_survey_release
+npm run db:mock --prefix backend -- seed --name stage1_mock_survey_release
+npm run db:mock --prefix backend -- check --name stage1_mock_survey_release
 # backend/frontendそれぞれでtypecheck, lint, build
 ```
 
-上記の最初のfresh実行は全39マイグレーション・32/32・静的6/6・リセット防護と新形式起動2/2が成功。v7契約は42イベント種の対応表と433契約ケースに含む。追加の実API検証はsession-flow-survey-results.json、集計はsurvey-pr-invariants.json、規模確認はsurvey-pr-scale-results.jsonに記録。規模確認は20模擬Session/4000件であり20台のブラウザー同時利用ではない。
+取り込み前のfresh実行は全39マイグレーション・32/32・静的6/6・リセット防護と新形式起動2/2が成功。v7契約は42イベント種の対応表と433契約ケースに含む。追加の実API検証はsession-flow-survey-results.json、集計はsurvey-pr-invariants.json、規模確認はsurvey-pr-scale-results.jsonに記録。規模確認は20模擬Session/4000件であり20台のブラウザー同時利用ではない。
 
 ## 後片付け・限界
 
-初回準備、再試行、fresh実行の3コンテナーはID・名前・purpose/nonceを照合して削除済み（session-flow-survey-cleanup.json）。元のACK待ち1件には触れていない。既存環境へのマイグレーション適用、実機LAN、複数実端末、本番運用、バックアップ復元訓練は未確認。活動時間の研究上の扱いは決めない。所属不明の旧下書きの隔離保持を維持する。GitHub CIはPR作成後に実走行を別途確認する。
+初回準備、再試行、main取り込み後を含む5コンテナーはID・名前・purpose/nonceを照合して削除済み（session-flow-survey-cleanup.json）。元のACK待ち1件には触れていない。既存環境へのマイグレーション適用、実機LAN、複数実端末、本番運用、バックアップ復元訓練は未確認。活動時間の研究上の扱いは決めない。所属不明の旧下書きの隔離保持を維持する。GitHub CIはPR作成後に実走行を別途確認する。

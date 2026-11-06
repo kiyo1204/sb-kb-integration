@@ -1,278 +1,9 @@
 {
-  "base": "3284a408f21e6ba28ca71135efe2da0dd969c731",
   "hashRule": "SHA-256 of UTF-8 source with CRLF normalized to LF; excludes generated outputs and credentials",
   "files": [
     {
-      "path": "backend/src/access-control.ts",
-      "sha256CanonicalLf": "44e0059894afcfddd3eb779c438ad829ee2ce23457a1699f9d24f45ea9ebc554"
-    },
-    {
-      "path": "backend/src/assessments.ts",
-      "sha256CanonicalLf": "4f70af9449d3c8eea48062a6a7bff3780ab0219c841abd8919b4af70a65d2bec"
-    },
-    {
-      "path": "backend/src/csv.ts",
-      "sha256CanonicalLf": "9d322da24cda1de20bfcdf214fc8dd40f313341824353a626c0762b54002a84e"
-    },
-    {
-      "path": "backend/src/data-management.ts",
-      "sha256CanonicalLf": "11ec3aa238cd3833b38f7295961258ec6aff45333b00b8e38f274100a8132df2"
-    },
-    {
-      "path": "backend/src/delivery-reliability.ts",
-      "sha256CanonicalLf": "4a6d178af8bd99208d9959eed98ec0ec0a3aec7c50f83d70a6dc5a35e1a34937"
-    },
-    {
-      "path": "backend/src/delivery-reports.ts",
-      "sha256CanonicalLf": "b7e8ac1f64801a207033d1d49dbc9c20a20f4b3759a899083b2fe9173490ffd5"
-    },
-    {
-      "path": "backend/src/event-export-contract.ts",
-      "sha256CanonicalLf": "4c3928304d624a83038e1d2ae5c04fa5d0395788593347bde3ef77aaf79fcc16"
-    },
-    {
-      "path": "backend/src/event-export-dictionary.ts",
-      "sha256CanonicalLf": "4f5de45a65859b6047ecfe2f6082bddb667dd3c074d8db47d1496509002d3dbe"
-    },
-    {
-      "path": "backend/src/event-export-query.ts",
-      "sha256CanonicalLf": "83d324fd5f5cda35e7747b7e540e6736264c6c1527ea5649bf594813398e4c3f"
-    },
-    {
-      "path": "backend/src/event-export-routes.ts",
-      "sha256CanonicalLf": "62288c0b35c340dc2e40640c37d01f7694f168ce3d4fd66efaec429a839dceb8"
-    },
-    {
-      "path": "backend/src/event-export-samples.ts",
-      "sha256CanonicalLf": "a1bf251eaa8e4022a89d5acfa7d848ea054001b4837794900d5de74cf200bab0"
-    },
-    {
-      "path": "backend/src/event-export-service.ts",
-      "sha256CanonicalLf": "7815c2072ad1500819de5c73aa69f54d28f13181bcba99678a564f7671f629eb"
-    },
-    {
-      "path": "backend/src/event-test-matrix.ts",
-      "sha256CanonicalLf": "c09be91700b8e1a45971ebe629e6143523243c3a5a0f4718a30d4702240bad3e"
-    },
-    {
-      "path": "backend/src/index.ts",
-      "sha256CanonicalLf": "da8cec638a9cc797ed0a122b92967311fc5b4435f11b12999ebce276cd719652"
-    },
-    {
-      "path": "backend/src/map-failure-response.ts",
-      "sha256CanonicalLf": "0180848e06083c0ce104ae83baf450b5c75658983f0d0b53fb77073f0d235358"
-    },
-    {
-      "path": "backend/src/map-history.ts",
-      "sha256CanonicalLf": "e61fba693f0a841401fba713e524ebd0e1637fbdff9c49873173cc8d0e8921e8"
-    },
-    {
-      "path": "backend/src/map-mixed-history.ts",
-      "sha256CanonicalLf": "bfa778ab9b555ad2f125f4f5c4b9c7ed000075ec229f88ba8cb36b5e705a8007"
-    },
-    {
-      "path": "backend/src/map-undo-redo.ts",
-      "sha256CanonicalLf": "515ed6166a6a76fe996050a499d9d47fb268b07bfa3f31bbff5977f01140d353"
-    },
-    {
-      "path": "backend/src/research-event-assessment-v3.ts",
-      "sha256CanonicalLf": "16966a44b495be5fca4dc11bd2e726100a3c21d1e1b9a81fe33f140ccc61a237"
-    },
-    {
-      "path": "backend/src/research-event-catalog.ts",
-      "sha256CanonicalLf": "21b9c2eef6894e31d085482f009df5897decf8acfefec35f9ddc1e4025c191cc"
-    },
-    {
-      "path": "backend/src/research-event-feedback-v6.ts",
-      "sha256CanonicalLf": "e2b063cd41d5aeaf30b6d0b01b49134a95d130f7af6aae0ee7460e7e6d01b8ad"
-    },
-    {
-      "path": "backend/src/research-event-map-v2.ts",
-      "sha256CanonicalLf": "a5b23886f90f80dafd7d74820b1972df9b9837af6ec32987fbae72939eb19fb7"
-    },
-    {
-      "path": "backend/src/research-event-map-v5.ts",
-      "sha256CanonicalLf": "772ccba3737238948a0a5807041f4589304063eb608ce58434e3f6b5cb435e51"
-    },
-    {
-      "path": "backend/src/research-event-survey-v7.ts",
-      "sha256CanonicalLf": "b674cf273a3daf631e8ce8e6239147b5f2c06cc0495be45f34efe8f96265dc84"
-    },
-    {
-      "path": "backend/src/research-events.ts",
-      "sha256CanonicalLf": "b6064546072cf1ca13fa0ad476c56806c8084cd8a9def2586c9d0b68cc5cd760"
-    },
-    {
-      "path": "backend/src/research-export.ts",
-      "sha256CanonicalLf": "63fee3c27ba5228ea86fc80370402687f98e836ae88bb279d6cb46f38fd992d0"
-    },
-    {
-      "path": "backend/src/research-output-safety.ts",
-      "sha256CanonicalLf": "5404ae331ac7ce905a2353b5b9e00f55768e608d52f036e37e6f983b8f9f9041"
-    },
-    {
-      "path": "backend/src/safe-server-error.ts",
-      "sha256CanonicalLf": "2fe19c03534c0e4de84aa9768a94df013af53e0bb33d0218acc5e20abc9250c7"
-    },
-    {
-      "path": "backend/src/scripts/fixtures/map-failure-connect.ts",
-      "sha256CanonicalLf": "a35c2067aa2c30ebe9b4741d4bf059d73bcc125f3f9ee398e6130af9dcf5de26"
-    },
-    {
-      "path": "backend/src/scripts/generate-event-export-samples.ts",
-      "sha256CanonicalLf": "48297f78b12cf262bcb764753cab0e7299261f114827736234e707a44b876694"
-    },
-    {
-      "path": "backend/src/scripts/legacy-session-fixture.ts",
-      "sha256CanonicalLf": "fa412a6ac7e0c832feb9d2fcaafa6acd5521792209fcb6c73be1f6ed52ede2db"
-    },
-    {
-      "path": "backend/src/scripts/mock-db.ts",
-      "sha256CanonicalLf": "1516da5be44e650a995af28fc1fb79fbc49e3f8bc8b5c2cd5fc5d686558e6389"
-    },
-    {
-      "path": "backend/src/scripts/run-research-event-suite.ts",
-      "sha256CanonicalLf": "b6cc40f337e5e1f2a6e714ae741f9a731bd4db4dd71d2f456d1aab86966e950a"
-    },
-    {
-      "path": "backend/src/scripts/seed-dev.ts",
-      "sha256CanonicalLf": "c6fe1530ecde2071678bac2052e12e47dbc317cf35c30283e01f35207e677f27"
-    },
-    {
-      "path": "backend/src/scripts/verify-assessment-events.ts",
-      "sha256CanonicalLf": "545c68daf981d32045dff95a72dee40069208116b3c5853fec67164567de1be1"
-    },
-    {
-      "path": "backend/src/scripts/verify-audit-routing.ts",
-      "sha256CanonicalLf": "7c510a6fdb9f986086b1db6b1e33b83854f4e36bc614d826ca6fbe40e0f8891b"
-    },
-    {
-      "path": "backend/src/scripts/verify-autosubmit-deadlock.ts",
-      "sha256CanonicalLf": "a5d86af2ef2daf5e51cf0b198b3c2a1d8c6428c2b12c4eb4af5e79b95b326425"
-    },
-    {
-      "path": "backend/src/scripts/verify-data-management.ts",
-      "sha256CanonicalLf": "f6de53b13063790009c14de122c11e1062c24ea3b0356e4e3dea128697688bda"
-    },
-    {
-      "path": "backend/src/scripts/verify-delivery-reliability.ts",
-      "sha256CanonicalLf": "0e5c13334c62d1f2a65bfcd082ea4cf984fc0cec8329fa3b282df053a4d28fa2"
-    },
-    {
-      "path": "backend/src/scripts/verify-event-catalog.ts",
-      "sha256CanonicalLf": "2aab7a72189f4ac19694cc43eb2c2cbeb9c2ef31133e56fc21fda9afef902359"
-    },
-    {
-      "path": "backend/src/scripts/verify-event-export-samples.ts",
-      "sha256CanonicalLf": "f98fb40778d33b474689d84d4c037d05d39e2d165f115098704a172e0e4fb14a"
-    },
-    {
-      "path": "backend/src/scripts/verify-event-export.ts",
-      "sha256CanonicalLf": "e0c38505d9c064df44386cc81d79f1afc6051e548fb64330258f5b9cd4f34429"
-    },
-    {
-      "path": "backend/src/scripts/verify-event-scale.ts",
-      "sha256CanonicalLf": "10e33d32a368efec4ee498f9af397b50a45f7f35a6f27e4072db6c010c9d20e1"
-    },
-    {
-      "path": "backend/src/scripts/verify-integrated-streams.ts",
-      "sha256CanonicalLf": "b23b7a040fa96fd751ed55c4d12719be065ba0aebb52a7c8763004fe06dce6cc"
-    },
-    {
-      "path": "backend/src/scripts/verify-integration-invariants.ts",
-      "sha256CanonicalLf": "7e0783e88a80bd7b237c966e1606ea37f6bb76372d334d4fd80f8ee6515a41fb"
-    },
-    {
-      "path": "backend/src/scripts/verify-learning-activity-events.ts",
-      "sha256CanonicalLf": "71c13c479eac24eb3a90e94e45e4dc82dabd9f799db847455300fc84ba0602c4"
-    },
-    {
-      "path": "backend/src/scripts/verify-map-api-v2.ts",
-      "sha256CanonicalLf": "d5c1b6db67aa9e931692a064d27776bf094374a29ec59ae0caf35170eb9e7bd3"
-    },
-    {
-      "path": "backend/src/scripts/verify-map-auto-submit-v2.ts",
-      "sha256CanonicalLf": "6e31378e0a8985a3bbb13426c248ce6caa1d5c72d25e30bca91028e1d73eb295"
-    },
-    {
-      "path": "backend/src/scripts/verify-map-failure-retry.ts",
-      "sha256CanonicalLf": "57917dfdf2fe34b4a34c4ebc87d8d740b3b082c7c48f99367ee86c1b81c0bd4a"
-    },
-    {
-      "path": "backend/src/scripts/verify-map-mixed-history.ts",
-      "sha256CanonicalLf": "1e15c4aeef42eb886b96b0316f554defd4788fecb0332b6d2286b2e388000543"
-    },
-    {
-      "path": "backend/src/scripts/verify-mock-reset-new-stream.ts",
-      "sha256CanonicalLf": "a3aa9a919ca01b2bb4f6dcc228d6ef60250a5bf466beb570aa2cfd25ae329704"
-    },
-    {
-      "path": "backend/src/scripts/verify-mock-reset-safety.ts",
-      "sha256CanonicalLf": "6a67d64066672c4d00af0f8834ee72231a83c502c409099835737230ff44d98d"
-    },
-    {
-      "path": "backend/src/scripts/verify-parent-followup.ts",
-      "sha256CanonicalLf": "a05091b9a67b19002af1eaee2fe87dc6053216bf022e1da8946799a94575c6dc"
-    },
-    {
-      "path": "backend/src/scripts/verify-research-event-schema.ts",
-      "sha256CanonicalLf": "1b7662d1a3dca497c9aabe1ed57016ffd122524da424dec05521a00c37cabc71"
-    },
-    {
-      "path": "backend/src/scripts/verify-research-events.ts",
-      "sha256CanonicalLf": "d012a06a925cb49da43f2aac4bb5883bbb4709dd3f9676a71df81bc8472d2e53"
-    },
-    {
-      "path": "backend/src/scripts/verify-safe-server-error.ts",
-      "sha256CanonicalLf": "23e950ec0072ef1d16036e436f679d6ebd4852719369456a02d585495dad5229"
-    },
-    {
-      "path": "backend/src/scripts/verify-server-audit.ts",
-      "sha256CanonicalLf": "c696c0706f95ec374ca42444170831c6ec281399121f8b7fd09e78297af65270"
-    },
-    {
-      "path": "backend/src/scripts/verify-server-recovery.ts",
-      "sha256CanonicalLf": "773615bcb9b24ef7930475e48f99514feccceb34d4516909bc29abdc868f07a9"
-    },
-    {
-      "path": "backend/src/scripts/verify-session-flow-survey.ts",
-      "sha256CanonicalLf": "9200fc9051b40f3caa60744b46234c2962bd54690afa1ee3f97350968fbc0794"
-    },
-    {
-      "path": "backend/src/scripts/verify-stage1.ts",
-      "sha256CanonicalLf": "dea9a9f2a8fbd04d5800bf3a0ba1569bac7ef476af629590e33e0630943052b5"
-    },
-    {
-      "path": "backend/src/scripts/verify-test-target-guards.ts",
-      "sha256CanonicalLf": "6f8053d764cce57b4868a1bfa5255233e1ba09b8530024938173803fd188f68e"
-    },
-    {
-      "path": "backend/src/scripts/verify-undo-redo.ts",
-      "sha256CanonicalLf": "73b543b8bc77d52caa8b001770a9a6b6058caf92e180a9acdf662acb6fbbe7f5"
-    },
-    {
-      "path": "backend/src/server-audit.ts",
-      "sha256CanonicalLf": "deaf448ace8db6109e1ae8c02d0771fa672563f08d90928646b4ce9b4d003628"
-    },
-    {
-      "path": "backend/src/sessions.ts",
-      "sha256CanonicalLf": "88f96df0f5e47b30a7ea08893603106befa9ca64673dc6bf9a953a8372709b05"
-    },
-    {
-      "path": "backend/src/stage1-analysis.ts",
-      "sha256CanonicalLf": "0eec998dc1ef4a7b3859418cd2c3642a871a96438c3b0e3c7dde21c8b03b8f89"
-    },
-    {
-      "path": "backend/src/stage1-features.ts",
-      "sha256CanonicalLf": "336a7c5840987e9953a2053f6e10f145111883c2aeb517ba26d4dde95670c01e"
-    },
-    {
-      "path": "backend/src/surveys.ts",
-      "sha256CanonicalLf": "2104fcf5c8bd4913c801073ea0f79da1abd350d4eaff12eddeddc93ffca34951"
-    },
-    {
-      "path": "backend/src/system-submission.ts",
-      "sha256CanonicalLf": "370a7c46f16e0d10697a93b1354ce6ca487d1d3c4ee17dad05be56f7ceaf2bba"
+      "path": ".github/workflows/stage1-prototype.yml",
+      "sha256CanonicalLf": "dfbd7f8a959d1b5047fbca5610c6f53da8d69799be31560fd9be69fe35a4ce52"
     },
     {
       "path": "backend/migrations/1780272000000_baseline.js",
@@ -431,92 +162,292 @@
       "sha256CanonicalLf": "01c4ca6d5e80cb8feb27690f4e7cb66c759aa2b1f3487c7e384b88d4a20307a1"
     },
     {
-      "path": "frontend/src/App.tsx",
-      "sha256CanonicalLf": "db3ee4c66dfdb40cebe7148db65f32b3984e5f0dc85241dedf53beff75282bd5"
+      "path": "backend/package-lock.json",
+      "sha256CanonicalLf": "2f28df064c68cc5fcfd926e9b67a70bc5e6c8aa6a3ff8980f2f463eb247de2f9"
     },
     {
-      "path": "frontend/src/assessment-drafts.ts",
-      "sha256CanonicalLf": "8f8e472739ec4b07919519847b066633b34799e580bf89901f8411af655c920f"
+      "path": "backend/package.json",
+      "sha256CanonicalLf": "791d8a09f89da76bda42b08b33923c48492300a581c68820930430ba59bb3f66"
     },
     {
-      "path": "frontend/src/Assessment.tsx",
-      "sha256CanonicalLf": "dfcfae6c3099852e04b537904e54a079252f6dea66901aebc24030dfd9915220"
+      "path": "backend/src/access-control.ts",
+      "sha256CanonicalLf": "44e0059894afcfddd3eb779c438ad829ee2ce23457a1699f9d24f45ea9ebc554"
     },
     {
-      "path": "frontend/src/auth-client.ts",
-      "sha256CanonicalLf": "dbe9d6177ed06e597d5b44607a358e74e9ec13b48bd79d2652d4f01c606e0a5a"
+      "path": "backend/src/assessments.ts",
+      "sha256CanonicalLf": "4f70af9449d3c8eea48062a6a7bff3780ab0219c841abd8919b4af70a65d2bec"
     },
     {
-      "path": "frontend/src/client-identity.ts",
-      "sha256CanonicalLf": "2cd9f7106ee59c10a25539680ec0de5516b57698daeda442e12e9f2ae09d7fad"
+      "path": "backend/src/csv.ts",
+      "sha256CanonicalLf": "9d322da24cda1de20bfcdf214fc8dd40f313341824353a626c0762b54002a84e"
     },
     {
-      "path": "frontend/src/DataManagementPage.tsx",
-      "sha256CanonicalLf": "b4fd44da0cf183aa4b80c11fa3d13148f37127c3c9c7854b007d420907d04c1d"
+      "path": "backend/src/data-management.ts",
+      "sha256CanonicalLf": "11ec3aa238cd3833b38f7295961258ec6aff45333b00b8e38f274100a8132df2"
     },
     {
-      "path": "frontend/src/DeliveryStatus.tsx",
-      "sha256CanonicalLf": "9d23dd6c8eb1788137d0f89a93a2165c408e44d9ce079aca01ac92c2151d4c1d"
+      "path": "backend/src/delivery-reliability.ts",
+      "sha256CanonicalLf": "4a6d178af8bd99208d9959eed98ec0ec0a3aec7c50f83d70a6dc5a35e1a34937"
     },
     {
-      "path": "frontend/src/EventExportPage.tsx",
-      "sha256CanonicalLf": "fd82fb94330c89be04b02ca0eca4c49babf57ca1160b009d729d7aa3796e6d80"
+      "path": "backend/src/delivery-reports.ts",
+      "sha256CanonicalLf": "b7e8ac1f64801a207033d1d49dbc9c20a20f4b3759a899083b2fe9173490ffd5"
     },
     {
-      "path": "frontend/src/EventTimeline.tsx",
-      "sha256CanonicalLf": "06505acc8e07d7350f1d80427bd6f559bb4fb456fa2018922a3a7a3dbb87879d"
+      "path": "backend/src/event-export-contract.ts",
+      "sha256CanonicalLf": "4c3928304d624a83038e1d2ae5c04fa5d0395788593347bde3ef77aaf79fcc16"
     },
     {
-      "path": "frontend/src/HomePage.tsx",
-      "sha256CanonicalLf": "8a10aa403f58da7d318a2d2dbdf6d4bda6fb2ab9c188406b9edc0677a880eebe"
+      "path": "backend/src/event-export-dictionary.ts",
+      "sha256CanonicalLf": "4f5de45a65859b6047ecfe2f6082bddb667dd3c074d8db47d1496509002d3dbe"
     },
     {
-      "path": "frontend/src/learning-events.ts",
-      "sha256CanonicalLf": "4cf084bd63a996b9a7742b22b60f85da312846724ebe3f1f7b4f0d725063fa9c"
+      "path": "backend/src/event-export-query.ts",
+      "sha256CanonicalLf": "83d324fd5f5cda35e7747b7e540e6736264c6c1527ea5649bf594813398e4c3f"
     },
     {
-      "path": "frontend/src/main.tsx",
-      "sha256CanonicalLf": "c9aa42a90ec7e4c679422d7fadaef718d70362769ec5dea87226ec35b9ad5c8c"
+      "path": "backend/src/event-export-routes.ts",
+      "sha256CanonicalLf": "62288c0b35c340dc2e40640c37d01f7694f168ce3d4fd66efaec429a839dceb8"
     },
     {
-      "path": "frontend/src/MapPage.tsx",
-      "sha256CanonicalLf": "37776dba4665776bfd4725c705bd62e8c6e539204f66b395acf4e3c576824daa"
+      "path": "backend/src/event-export-samples.ts",
+      "sha256CanonicalLf": "a1bf251eaa8e4022a89d5acfa7d848ea054001b4837794900d5de74cf200bab0"
     },
     {
-      "path": "frontend/src/observation-outbox.ts",
-      "sha256CanonicalLf": "503adad6ed8f7d54d7857f63a34142b4b12166ed3b5dde7037f269900af05bb8"
+      "path": "backend/src/event-export-service.ts",
+      "sha256CanonicalLf": "7815c2072ad1500819de5c73aa69f54d28f13181bcba99678a564f7671f629eb"
     },
     {
-      "path": "frontend/src/operation-client.ts",
-      "sha256CanonicalLf": "7f67eb45c4c51c9d6fd958172587ec0c527293f7f8591875fa46374dd22a9c44"
+      "path": "backend/src/event-test-matrix.ts",
+      "sha256CanonicalLf": "c09be91700b8e1a45971ebe629e6143523243c3a5a0f4718a30d4702240bad3e"
     },
     {
-      "path": "frontend/src/SessionFlowPage.tsx",
-      "sha256CanonicalLf": "6a18cee3600c31e00331936436a000f2b2ccf7e8aa685138cdf2cc96a91a917d"
+      "path": "backend/src/index.ts",
+      "sha256CanonicalLf": "d9c45eb43c9518508af922c35a55f5979fcb73e1805d84a3280c0d5c599fd648"
     },
     {
-      "path": "frontend/src/Stage1AnalysisPage.tsx",
-      "sha256CanonicalLf": "079c310eee12aabda6fd0041754d7e581e0347216bb218ab74531871ebd723f8"
+      "path": "backend/src/map-failure-response.ts",
+      "sha256CanonicalLf": "0180848e06083c0ce104ae83baf450b5c75658983f0d0b53fb77073f0d235358"
     },
     {
-      "path": "frontend/src/Stage1GoalMapsPage.tsx",
-      "sha256CanonicalLf": "4741158baf928efd55e888f22abfd1c95e03636f350529d9b8830ad497ef3700"
+      "path": "backend/src/map-history.ts",
+      "sha256CanonicalLf": "e61fba693f0a841401fba713e524ebd0e1637fbdff9c49873173cc8d0e8921e8"
     },
     {
-      "path": "frontend/src/Stage1NewSessionPage.tsx",
-      "sha256CanonicalLf": "ae0f93753413b6d0088a1f5ad46764ea1f72ca5a85175c38e4fd7ff7c8dc739e"
+      "path": "backend/src/map-mixed-history.ts",
+      "sha256CanonicalLf": "bfa778ab9b555ad2f125f4f5c4b9c7ed000075ec229f88ba8cb36b5e705a8007"
     },
     {
-      "path": "frontend/src/Survey.tsx",
-      "sha256CanonicalLf": "261576c73e09d4c54374bce562bb7f4abe493d4bf26f1ce725950f4518a8d64d"
+      "path": "backend/src/map-undo-redo.ts",
+      "sha256CanonicalLf": "515ed6166a6a76fe996050a499d9d47fb268b07bfa3f31bbff5977f01140d353"
     },
     {
-      "path": "frontend/src/TutorialPage.tsx",
-      "sha256CanonicalLf": "8fdf969ef630b96fad62a11aeb6bfea15dbdf26c812d0b9acaf548b7ea0ee613"
+      "path": "backend/src/research-event-assessment-v3.ts",
+      "sha256CanonicalLf": "16966a44b495be5fca4dc11bd2e726100a3c21d1e1b9a81fe33f140ccc61a237"
     },
     {
-      "path": "frontend/src/vite-env.d.ts",
-      "sha256CanonicalLf": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5"
+      "path": "backend/src/research-event-catalog.ts",
+      "sha256CanonicalLf": "21b9c2eef6894e31d085482f009df5897decf8acfefec35f9ddc1e4025c191cc"
+    },
+    {
+      "path": "backend/src/research-event-feedback-v6.ts",
+      "sha256CanonicalLf": "e2b063cd41d5aeaf30b6d0b01b49134a95d130f7af6aae0ee7460e7e6d01b8ad"
+    },
+    {
+      "path": "backend/src/research-event-map-v2.ts",
+      "sha256CanonicalLf": "a5b23886f90f80dafd7d74820b1972df9b9837af6ec32987fbae72939eb19fb7"
+    },
+    {
+      "path": "backend/src/research-event-map-v5.ts",
+      "sha256CanonicalLf": "772ccba3737238948a0a5807041f4589304063eb608ce58434e3f6b5cb435e51"
+    },
+    {
+      "path": "backend/src/research-event-survey-v7.ts",
+      "sha256CanonicalLf": "b674cf273a3daf631e8ce8e6239147b5f2c06cc0495be45f34efe8f96265dc84"
+    },
+    {
+      "path": "backend/src/research-events.ts",
+      "sha256CanonicalLf": "b6064546072cf1ca13fa0ad476c56806c8084cd8a9def2586c9d0b68cc5cd760"
+    },
+    {
+      "path": "backend/src/research-export.ts",
+      "sha256CanonicalLf": "63fee3c27ba5228ea86fc80370402687f98e836ae88bb279d6cb46f38fd992d0"
+    },
+    {
+      "path": "backend/src/research-output-safety.ts",
+      "sha256CanonicalLf": "5404ae331ac7ce905a2353b5b9e00f55768e608d52f036e37e6f983b8f9f9041"
+    },
+    {
+      "path": "backend/src/safe-server-error.ts",
+      "sha256CanonicalLf": "2fe19c03534c0e4de84aa9768a94df013af53e0bb33d0218acc5e20abc9250c7"
+    },
+    {
+      "path": "backend/src/scripts/fixtures/map-failure-connect.ts",
+      "sha256CanonicalLf": "a35c2067aa2c30ebe9b4741d4bf059d73bcc125f3f9ee398e6130af9dcf5de26"
+    },
+    {
+      "path": "backend/src/scripts/generate-event-export-samples.ts",
+      "sha256CanonicalLf": "48297f78b12cf262bcb764753cab0e7299261f114827736234e707a44b876694"
+    },
+    {
+      "path": "backend/src/scripts/legacy-session-fixture.ts",
+      "sha256CanonicalLf": "fa412a6ac7e0c832feb9d2fcaafa6acd5521792209fcb6c73be1f6ed52ede2db"
+    },
+    {
+      "path": "backend/src/scripts/mock-db.ts",
+      "sha256CanonicalLf": "1516da5be44e650a995af28fc1fb79fbc49e3f8bc8b5c2cd5fc5d686558e6389"
+    },
+    {
+      "path": "backend/src/scripts/run-research-event-suite.ts",
+      "sha256CanonicalLf": "10e9cbe2d9fbf131c7cbf1d4397c18b342bcdadde77f4e0f3192183afd1df297"
+    },
+    {
+      "path": "backend/src/scripts/seed-dev.ts",
+      "sha256CanonicalLf": "c6fe1530ecde2071678bac2052e12e47dbc317cf35c30283e01f35207e677f27"
+    },
+    {
+      "path": "backend/src/scripts/verify-assessment-events.ts",
+      "sha256CanonicalLf": "545c68daf981d32045dff95a72dee40069208116b3c5853fec67164567de1be1"
+    },
+    {
+      "path": "backend/src/scripts/verify-audit-routing.ts",
+      "sha256CanonicalLf": "7c510a6fdb9f986086b1db6b1e33b83854f4e36bc614d826ca6fbe40e0f8891b"
+    },
+    {
+      "path": "backend/src/scripts/verify-autosubmit-deadlock.ts",
+      "sha256CanonicalLf": "a5d86af2ef2daf5e51cf0b198b3c2a1d8c6428c2b12c4eb4af5e79b95b326425"
+    },
+    {
+      "path": "backend/src/scripts/verify-data-management.ts",
+      "sha256CanonicalLf": "f6de53b13063790009c14de122c11e1062c24ea3b0356e4e3dea128697688bda"
+    },
+    {
+      "path": "backend/src/scripts/verify-delivery-reliability.ts",
+      "sha256CanonicalLf": "0e5c13334c62d1f2a65bfcd082ea4cf984fc0cec8329fa3b282df053a4d28fa2"
+    },
+    {
+      "path": "backend/src/scripts/verify-event-catalog.ts",
+      "sha256CanonicalLf": "2aab7a72189f4ac19694cc43eb2c2cbeb9c2ef31133e56fc21fda9afef902359"
+    },
+    {
+      "path": "backend/src/scripts/verify-event-export-samples.ts",
+      "sha256CanonicalLf": "f98fb40778d33b474689d84d4c037d05d39e2d165f115098704a172e0e4fb14a"
+    },
+    {
+      "path": "backend/src/scripts/verify-event-export.ts",
+      "sha256CanonicalLf": "e0c38505d9c064df44386cc81d79f1afc6051e548fb64330258f5b9cd4f34429"
+    },
+    {
+      "path": "backend/src/scripts/verify-event-scale.ts",
+      "sha256CanonicalLf": "10e33d32a368efec4ee498f9af397b50a45f7f35a6f27e4072db6c010c9d20e1"
+    },
+    {
+      "path": "backend/src/scripts/verify-integrated-streams.ts",
+      "sha256CanonicalLf": "b23b7a040fa96fd751ed55c4d12719be065ba0aebb52a7c8763004fe06dce6cc"
+    },
+    {
+      "path": "backend/src/scripts/verify-integration-invariants.ts",
+      "sha256CanonicalLf": "7e0783e88a80bd7b237c966e1606ea37f6bb76372d334d4fd80f8ee6515a41fb"
+    },
+    {
+      "path": "backend/src/scripts/verify-learning-activity-events.ts",
+      "sha256CanonicalLf": "71c13c479eac24eb3a90e94e45e4dc82dabd9f799db847455300fc84ba0602c4"
+    },
+    {
+      "path": "backend/src/scripts/verify-map-api-v2.ts",
+      "sha256CanonicalLf": "d5c1b6db67aa9e931692a064d27776bf094374a29ec59ae0caf35170eb9e7bd3"
+    },
+    {
+      "path": "backend/src/scripts/verify-map-auto-submit-v2.ts",
+      "sha256CanonicalLf": "6e31378e0a8985a3bbb13426c248ce6caa1d5c72d25e30bca91028e1d73eb295"
+    },
+    {
+      "path": "backend/src/scripts/verify-map-failure-retry.ts",
+      "sha256CanonicalLf": "57917dfdf2fe34b4a34c4ebc87d8d740b3b082c7c48f99367ee86c1b81c0bd4a"
+    },
+    {
+      "path": "backend/src/scripts/verify-map-mixed-history.ts",
+      "sha256CanonicalLf": "1e15c4aeef42eb886b96b0316f554defd4788fecb0332b6d2286b2e388000543"
+    },
+    {
+      "path": "backend/src/scripts/verify-mock-reset-new-stream.ts",
+      "sha256CanonicalLf": "a3aa9a919ca01b2bb4f6dcc228d6ef60250a5bf466beb570aa2cfd25ae329704"
+    },
+    {
+      "path": "backend/src/scripts/verify-mock-reset-safety.ts",
+      "sha256CanonicalLf": "6a67d64066672c4d00af0f8834ee72231a83c502c409099835737230ff44d98d"
+    },
+    {
+      "path": "backend/src/scripts/verify-parent-followup.ts",
+      "sha256CanonicalLf": "a05091b9a67b19002af1eaee2fe87dc6053216bf022e1da8946799a94575c6dc"
+    },
+    {
+      "path": "backend/src/scripts/verify-research-event-schema.ts",
+      "sha256CanonicalLf": "1b7662d1a3dca497c9aabe1ed57016ffd122524da424dec05521a00c37cabc71"
+    },
+    {
+      "path": "backend/src/scripts/verify-research-events.ts",
+      "sha256CanonicalLf": "d012a06a925cb49da43f2aac4bb5883bbb4709dd3f9676a71df81bc8472d2e53"
+    },
+    {
+      "path": "backend/src/scripts/verify-safe-server-error.ts",
+      "sha256CanonicalLf": "23e950ec0072ef1d16036e436f679d6ebd4852719369456a02d585495dad5229"
+    },
+    {
+      "path": "backend/src/scripts/verify-server-audit.ts",
+      "sha256CanonicalLf": "c696c0706f95ec374ca42444170831c6ec281399121f8b7fd09e78297af65270"
+    },
+    {
+      "path": "backend/src/scripts/verify-server-recovery.ts",
+      "sha256CanonicalLf": "773615bcb9b24ef7930475e48f99514feccceb34d4516909bc29abdc868f07a9"
+    },
+    {
+      "path": "backend/src/scripts/verify-session-flow-survey.ts",
+      "sha256CanonicalLf": "420130f3a773bf5abcc2413356448dd373928901fe1e8c62170b8abf5b11429f"
+    },
+    {
+      "path": "backend/src/scripts/verify-stage1.ts",
+      "sha256CanonicalLf": "dea9a9f2a8fbd04d5800bf3a0ba1569bac7ef476af629590e33e0630943052b5"
+    },
+    {
+      "path": "backend/src/scripts/verify-test-target-guards.ts",
+      "sha256CanonicalLf": "6f8053d764cce57b4868a1bfa5255233e1ba09b8530024938173803fd188f68e"
+    },
+    {
+      "path": "backend/src/scripts/verify-undo-redo.ts",
+      "sha256CanonicalLf": "73b543b8bc77d52caa8b001770a9a6b6058caf92e180a9acdf662acb6fbbe7f5"
+    },
+    {
+      "path": "backend/src/server-audit.ts",
+      "sha256CanonicalLf": "deaf448ace8db6109e1ae8c02d0771fa672563f08d90928646b4ce9b4d003628"
+    },
+    {
+      "path": "backend/src/sessions.ts",
+      "sha256CanonicalLf": "88f96df0f5e47b30a7ea08893603106befa9ca64673dc6bf9a953a8372709b05"
+    },
+    {
+      "path": "backend/src/stage1-analysis.ts",
+      "sha256CanonicalLf": "0eec998dc1ef4a7b3859418cd2c3642a871a96438c3b0e3c7dde21c8b03b8f89"
+    },
+    {
+      "path": "backend/src/stage1-features.ts",
+      "sha256CanonicalLf": "336a7c5840987e9953a2053f6e10f145111883c2aeb517ba26d4dde95670c01e"
+    },
+    {
+      "path": "backend/src/surveys.ts",
+      "sha256CanonicalLf": "f84d534a83449b6292d8e90d74911e8b08e6d94183b5c385d1bf5c51468f8682"
+    },
+    {
+      "path": "backend/src/system-submission.ts",
+      "sha256CanonicalLf": "370a7c46f16e0d10697a93b1354ce6ca487d1d3c4ee17dad05be56f7ceaf2bba"
+    },
+    {
+      "path": "frontend/package-lock.json",
+      "sha256CanonicalLf": "20b0974076ef2d22f66d01a04b3baeafa1ec4b250d9236d54385dd2fe930928c"
+    },
+    {
+      "path": "frontend/package.json",
+      "sha256CanonicalLf": "a66d98519e0ff7549c05b5f445ccaf96fc4769c206db04f9a76ac18add03220d"
     },
     {
       "path": "frontend/scripts/verify-data-management-browser.ts",
@@ -543,24 +474,98 @@
       "sha256CanonicalLf": "8308d2e8a489ed84d94dec5a90ce8e912e325461e398a1df1a877045d75e9559"
     },
     {
-      "path": "backend/package.json",
-      "sha256CanonicalLf": "791d8a09f89da76bda42b08b33923c48492300a581c68820930430ba59bb3f66"
+      "path": "frontend/scripts/verify-undo-role-browser.ts",
+      "sha256CanonicalLf": "0399dacaad2db591f65ef12a6ce70d763834eee01d09c32293d3979cc9f124ca"
     },
     {
-      "path": "backend/package-lock.json",
-      "sha256CanonicalLf": "2f28df064c68cc5fcfd926e9b67a70bc5e6c8aa6a3ff8980f2f463eb247de2f9"
+      "path": "frontend/src/App.tsx",
+      "sha256CanonicalLf": "db3ee4c66dfdb40cebe7148db65f32b3984e5f0dc85241dedf53beff75282bd5"
     },
     {
-      "path": "frontend/package.json",
-      "sha256CanonicalLf": "ffa709b767d463c701f351ad4d6278bd39bfd7863dc3ac8e141fa2b5664d5057"
+      "path": "frontend/src/Assessment.tsx",
+      "sha256CanonicalLf": "dfcfae6c3099852e04b537904e54a079252f6dea66901aebc24030dfd9915220"
     },
     {
-      "path": "frontend/package-lock.json",
-      "sha256CanonicalLf": "20b0974076ef2d22f66d01a04b3baeafa1ec4b250d9236d54385dd2fe930928c"
+      "path": "frontend/src/DataManagementPage.tsx",
+      "sha256CanonicalLf": "b4fd44da0cf183aa4b80c11fa3d13148f37127c3c9c7854b007d420907d04c1d"
     },
     {
-      "path": ".github/workflows/stage1-prototype.yml",
-      "sha256CanonicalLf": "dfbd7f8a959d1b5047fbca5610c6f53da8d69799be31560fd9be69fe35a4ce52"
+      "path": "frontend/src/DeliveryStatus.tsx",
+      "sha256CanonicalLf": "9d23dd6c8eb1788137d0f89a93a2165c408e44d9ce079aca01ac92c2151d4c1d"
+    },
+    {
+      "path": "frontend/src/EventExportPage.tsx",
+      "sha256CanonicalLf": "fd82fb94330c89be04b02ca0eca4c49babf57ca1160b009d729d7aa3796e6d80"
+    },
+    {
+      "path": "frontend/src/EventTimeline.tsx",
+      "sha256CanonicalLf": "06505acc8e07d7350f1d80427bd6f559bb4fb456fa2018922a3a7a3dbb87879d"
+    },
+    {
+      "path": "frontend/src/HomePage.tsx",
+      "sha256CanonicalLf": "8a10aa403f58da7d318a2d2dbdf6d4bda6fb2ab9c188406b9edc0677a880eebe"
+    },
+    {
+      "path": "frontend/src/MapPage.tsx",
+      "sha256CanonicalLf": "d29838055d8a5fe83795c88db145e11185af9e3ee555ea445fb2eec8a3bbcdb3"
+    },
+    {
+      "path": "frontend/src/SessionFlowPage.tsx",
+      "sha256CanonicalLf": "6a18cee3600c31e00331936436a000f2b2ccf7e8aa685138cdf2cc96a91a917d"
+    },
+    {
+      "path": "frontend/src/Stage1AnalysisPage.tsx",
+      "sha256CanonicalLf": "079c310eee12aabda6fd0041754d7e581e0347216bb218ab74531871ebd723f8"
+    },
+    {
+      "path": "frontend/src/Stage1GoalMapsPage.tsx",
+      "sha256CanonicalLf": "4741158baf928efd55e888f22abfd1c95e03636f350529d9b8830ad497ef3700"
+    },
+    {
+      "path": "frontend/src/Stage1NewSessionPage.tsx",
+      "sha256CanonicalLf": "ae0f93753413b6d0088a1f5ad46764ea1f72ca5a85175c38e4fd7ff7c8dc739e"
+    },
+    {
+      "path": "frontend/src/Survey.tsx",
+      "sha256CanonicalLf": "261576c73e09d4c54374bce562bb7f4abe493d4bf26f1ce725950f4518a8d64d"
+    },
+    {
+      "path": "frontend/src/TutorialPage.tsx",
+      "sha256CanonicalLf": "8fdf969ef630b96fad62a11aeb6bfea15dbdf26c812d0b9acaf548b7ea0ee613"
+    },
+    {
+      "path": "frontend/src/assessment-drafts.ts",
+      "sha256CanonicalLf": "8f8e472739ec4b07919519847b066633b34799e580bf89901f8411af655c920f"
+    },
+    {
+      "path": "frontend/src/auth-client.ts",
+      "sha256CanonicalLf": "dbe9d6177ed06e597d5b44607a358e74e9ec13b48bd79d2652d4f01c606e0a5a"
+    },
+    {
+      "path": "frontend/src/client-identity.ts",
+      "sha256CanonicalLf": "2cd9f7106ee59c10a25539680ec0de5516b57698daeda442e12e9f2ae09d7fad"
+    },
+    {
+      "path": "frontend/src/learning-events.ts",
+      "sha256CanonicalLf": "4cf084bd63a996b9a7742b22b60f85da312846724ebe3f1f7b4f0d725063fa9c"
+    },
+    {
+      "path": "frontend/src/main.tsx",
+      "sha256CanonicalLf": "c9aa42a90ec7e4c679422d7fadaef718d70362769ec5dea87226ec35b9ad5c8c"
+    },
+    {
+      "path": "frontend/src/observation-outbox.ts",
+      "sha256CanonicalLf": "503adad6ed8f7d54d7857f63a34142b4b12166ed3b5dde7037f269900af05bb8"
+    },
+    {
+      "path": "frontend/src/operation-client.ts",
+      "sha256CanonicalLf": "7f67eb45c4c51c9d6fd958172587ec0c527293f7f8591875fa46374dd22a9c44"
+    },
+    {
+      "path": "frontend/src/vite-env.d.ts",
+      "sha256CanonicalLf": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5"
     }
-  ]
+  ],
+  "initialBase": "3284a408f21e6ba28ca71135efe2da0dd969c731",
+  "integratedMain": "bc6c07b8a84f3fa7f7ecf1c3f65eee0743c95f4e"
 }

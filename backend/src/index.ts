@@ -1,4 +1,4 @@
-import { registerSurveyRoutes, validSurveyQuestions, saveSurveyQuestions, seedLearnerMap, seededConceptGuard } from "./surveys.js";
+import { registerSurveyRoutes, SeedValidationError, validSurveyQuestions, saveSurveyQuestions, seedLearnerMap, seededConceptGuard } from "./surveys.js";
 import { respondToMapFailure } from "./map-failure-response.js";
 import { validateMapStateV5, validMapCoordinate } from "./research-event-map-v5.js";
 import {EventExportService} from "./event-export-service.js";
@@ -3026,6 +3026,7 @@ app.post(
         return response.status(201).json(outcome.map);
       return sessionStageMapResponse(response, outcome);
     } catch (error) {
+      if(error instanceof SeedValidationError) return response.status(400).json({error:"invalid_seed_label",message:"初期概念の名前にURL・認証情報や上限を超える内容が含まれています。研究者に確認してください。"});
       if (isPostgresErrorCode(error, "23505")) {
         return sessionStageMapResponse(response, {
           kind: "session_stage_already_assigned",

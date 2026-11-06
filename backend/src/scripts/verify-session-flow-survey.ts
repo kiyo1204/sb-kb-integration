@@ -83,6 +83,10 @@ try {
       ...payload,
       ...patch,
     });
+  const goalId=(await pool.query("SELECT goal_map_id FROM kit_definitions WHERE id=$1",[kit])).rows[0].goal_map_id;
+  const foreignKit=await api("/maps/"+goalId+"/kits",201,"POST",{name:"MOCK foreign Kit "+randomUUID(),conceptIds:[parts[0].source_concept_id],linkIds:[]});
+  const foreignPart=(await api("/kits/"+foreignKit.id)).concepts[0].kitConceptItemId;
+  await api("/research/stage1/sessions",400,"POST",{...payload,seedConceptIds:[foreignPart]});
   const s = (await api(
     "/research/stage1/sessions",
     201,
@@ -132,6 +136,10 @@ try {
     {},
   );
   await start("PRIOR_MAP");
+  const legacySource=parts[0].source_concept_id;
+  const sourceLabel=(await pool.query("SELECT label FROM concepts WHERE id=$1",[legacySource])).rows[0].label;
+  await pool.query("UPDATE concepts SET label=$2 WHERE id=$1",[legacySource,researcher]);
+  try{const rejected=await call("/session-stages/"+stage("PRIOR_MAP").id+"/prior-map",400,"POST",{});assert.equal(rejected.error,"invalid_seed_label");assert.ok(!JSON.stringify(rejected).includes(researcher));assert.equal(Number((await pool.query("SELECT count(*) n FROM maps WHERE session_stage_id=$1",[stage("PRIOR_MAP").id])).rows[0].n),0);}finally{await pool.query("UPDATE concepts SET label=$2 WHERE id=$1",[legacySource,sourceLabel]);}
   const prior = await call(
     "/session-stages/" + stage("PRIOR_MAP").id + "/prior-map",
     201,
@@ -238,6 +246,8 @@ try {
     outcome: "SUCCESS",
     clientTimeQuality: "NOT_APPLICABLE",
   });
+  const foreignQuestion=(await api("/research/stage1/sessions/"+other.id+"/survey")).questions[0].id;
+  for(const answer of [{questionId:foreignQuestion,value:"模擬"},{questionId:q[1].id,value:"選択肢にない模擬値"},{questionId:q[2].id,value:4},{questionId:q[2].id,value:1.5}])await call(surveyPath+"/save",400,"POST",{answers:[answer]});
   const save = surveyPath + "/save",
     key = randomUUID();
   await call(save, 200, "POST", { answers }, key);

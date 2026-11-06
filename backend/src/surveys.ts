@@ -138,6 +138,7 @@ export async function saveSurveyQuestions(
       ],
     );
 }
+export class SeedValidationError extends Error {}
 export async function seedLearnerMap(
   c: PoolClient,
   sessionId: string,
@@ -153,6 +154,10 @@ export async function seedLearnerMap(
       [sessionId],
     )
   ).rows;
+  // Old Goal data may predate today's label policy. Validate the entire selection
+  // before initialization, including configured credentials, without logging it.
+  if(items.some(item=>!validMapLabel(item.label)))throw new SeedValidationError();
+  try {await safeText(c,items.map(item=>item.label));}catch{throw new SeedValidationError();}
   for (const [i, item] of items.entries()) {
     if (!validMapLabel(item.label)) throw new Error("invalid_seed_label");
     const id = (
