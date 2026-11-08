@@ -20,7 +20,9 @@
     "test:session-flow-survey-browser": "tsx scripts/verify-session-flow-survey-browser.ts",
     "test:stage1-analysis-layout-browser": "tsx scripts/verify-stage1-analysis-layout-browser.ts",
     "test:five-flow-features-browser": "tsx scripts/verify-five-flow-features-browser.ts",
-    "test:undo-role-browser": "tsx scripts/verify-undo-role-browser.ts"
+    "test:undo-role-browser": "tsx scripts/verify-undo-role-browser.ts",
+    "test:link-operations-browser": "tsx scripts/verify-link-operations-browser.ts",
+    "test:link-operations-api-browser": "tsx scripts/verify-link-operations-api-browser.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",

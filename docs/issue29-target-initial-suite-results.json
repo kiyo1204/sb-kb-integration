@@ -1,0 +1,12 @@
+[
+  {
+    "test": "test:link-operations-browser",
+    "exitCode": 0,
+    "elapsedMs": 13177
+  },
+  {
+    "test": "test:link-operations-api-browser",
+    "exitCode": 1,
+    "elapsedMs": 3278
+  }
+]

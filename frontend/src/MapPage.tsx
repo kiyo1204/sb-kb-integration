@@ -5014,7 +5014,12 @@ export function ConceptCanvas({
                 <g key={edge.id} className={historyHighlightClass(!!highlightedLinkIds?.has(edge.id), historyLinkChangeKinds?.get(edge.id)) || undefined}>
                   <path
                     className="concept-edge-hit-target"
-                    d={geometry.path}
+                    d={endpoints ? [
+                      !(connectionPreview?.kind === "saved" && connectionPreview.id === edge.id && connectionPreview.endpoint === "source")
+                        ? `M ${endpoints.source.x} ${endpoints.source.y} L ${center.x - 10} ${center.y}` : "",
+                      !(connectionPreview?.kind === "saved" && connectionPreview.id === edge.id && connectionPreview.endpoint === "target")
+                        ? `M ${center.x + 10} ${center.y} L ${endpoints.target.x} ${endpoints.target.y}` : "",
+                    ].join(" ") : geometry.path}
                     role="button"
                     tabIndex={0}
                     aria-label={`Link ${edge.id}: ${sourceLabel} → ${edge.label} → ${targetLabel}`}
@@ -5132,6 +5137,7 @@ export function ConceptCanvas({
                 className={`link-connector${selectedLinkId === edge.id ? " is-selected" : ""}${historyHighlightClass(!!highlightedLinkIds?.has(edge.id), historyLinkChangeKinds?.get(edge.id))}`}
                 key={`${edge.id}-connector`}
                 data-connector-id={edge.id}
+                onClick={(event) => { if (event.target === event.currentTarget) selectLink(link); }}
                 ref={element => { if (element) connectorElementsRef.current.set(edge.id, element); else connectorElementsRef.current.delete(edge.id); }}
                 style={{
                   left: `${center.x}px`,

@@ -1,0 +1,232 @@
+[
+  {
+    "test": "test:test-target-guards",
+    "exitCode": 0,
+    "elapsedMs": 1570
+  },
+  {
+    "test": "test:event-catalog",
+    "exitCode": 0,
+    "elapsedMs": 2658
+  },
+  {
+    "test": "test:research-event-schema",
+    "exitCode": 0,
+    "elapsedMs": 1467
+  },
+  {
+    "test": "test:undo-redo:unit",
+    "exitCode": 0,
+    "elapsedMs": 1438
+  },
+  {
+    "test": "test:merge-release",
+    "exitCode": 0,
+    "elapsedMs": 1456
+  },
+  {
+    "test": "test:five-flow-features",
+    "exitCode": 0,
+    "elapsedMs": 1578
+  },
+  {
+    "test": "test:map-mixed-history",
+    "exitCode": 0,
+    "elapsedMs": 1467
+  },
+  {
+    "test": "test:research-events",
+    "exitCode": 0,
+    "elapsedMs": 3771
+  },
+  {
+    "test": "test:event-export-samples",
+    "exitCode": 0,
+    "elapsedMs": 1627
+  },
+  {
+    "test": "test:event-export",
+    "exitCode": 0,
+    "elapsedMs": 19983
+  },
+  {
+    "test": "test:data-management",
+    "exitCode": 0,
+    "elapsedMs": 3865
+  },
+  {
+    "test": "test:research-note-safety",
+    "exitCode": 0,
+    "elapsedMs": 58025
+  },
+  {
+    "test": "test:stage1:integration",
+    "exitCode": 0,
+    "elapsedMs": 18772
+  },
+  {
+    "test": "test:session-flow-survey",
+    "exitCode": 0,
+    "elapsedMs": 7180
+  },
+  {
+    "test": "test:session-cleanup",
+    "exitCode": 0,
+    "elapsedMs": 6054
+  },
+  {
+    "test": "test:five-flow-composite",
+    "exitCode": 0,
+    "elapsedMs": 20544
+  },
+  {
+    "test": "test:five-flow-feature-maps",
+    "exitCode": 0,
+    "elapsedMs": 3235
+  },
+  {
+    "test": "test:goal-map-transfer",
+    "exitCode": 0,
+    "elapsedMs": 3521
+  },
+  {
+    "test": "test:map-api-v2",
+    "exitCode": 0,
+    "elapsedMs": 5595
+  },
+  {
+    "test": "test:map-failure-retry",
+    "exitCode": 0,
+    "elapsedMs": 5779
+  },
+  {
+    "test": "test:parent-followup",
+    "exitCode": 0,
+    "elapsedMs": 8509
+  },
+  {
+    "test": "test:map-auto-submit-v2",
+    "exitCode": 0,
+    "elapsedMs": 2514
+  },
+  {
+    "test": "test:learning-activity-events",
+    "exitCode": 0,
+    "elapsedMs": 4007
+  },
+  {
+    "test": "test:assessment-events",
+    "exitCode": 0,
+    "elapsedMs": 5462
+  },
+  {
+    "test": "test:server-audit",
+    "exitCode": 0,
+    "elapsedMs": 7388
+  },
+  {
+    "test": "test:audit-routing",
+    "exitCode": 0,
+    "elapsedMs": 1982
+  },
+  {
+    "test": "test:integrated-streams",
+    "exitCode": 0,
+    "elapsedMs": 5492
+  },
+  {
+    "test": "test:integration-invariants",
+    "exitCode": 0,
+    "elapsedMs": 2029
+  },
+  {
+    "test": "test:safe-server-error",
+    "exitCode": 0,
+    "elapsedMs": 1846
+  },
+  {
+    "test": "test:server-recovery",
+    "exitCode": 0,
+    "elapsedMs": 7297
+  },
+  {
+    "test": "test:autosubmit-deadlock",
+    "exitCode": 0,
+    "elapsedMs": 6252
+  },
+  {
+    "test": "test:delivery-reliability",
+    "exitCode": 0,
+    "elapsedMs": 8384
+  },
+  {
+    "test": "test:event-scale",
+    "exitCode": 0,
+    "elapsedMs": 11872
+  },
+  {
+    "test": "test:research-log-ui",
+    "exitCode": 0,
+    "elapsedMs": 10673
+  },
+  {
+    "test": "test:stage1-analysis-layout-browser",
+    "exitCode": 0,
+    "elapsedMs": 16394
+  },
+  {
+    "test": "test:link-position-browser",
+    "exitCode": 0,
+    "elapsedMs": 11668
+  },
+  {
+    "test": "test:link-operations-browser",
+    "exitCode": 0,
+    "elapsedMs": 11120
+  },
+  {
+    "test": "test:link-operations-api-browser",
+    "exitCode": 0,
+    "elapsedMs": 29997
+  },
+  {
+    "test": "test:session-flow-survey-browser",
+    "exitCode": 0,
+    "elapsedMs": 11628
+  },
+  {
+    "test": "test:five-flow-feedback-browser",
+    "exitCode": 0,
+    "elapsedMs": 11380
+  },
+  {
+    "test": "test:five-flow-features-browser",
+    "exitCode": 0,
+    "elapsedMs": 10654
+  },
+  {
+    "test": "test:undo-role-browser",
+    "exitCode": 0,
+    "elapsedMs": 9830
+  },
+  {
+    "test": "test:delivery-browser",
+    "exitCode": 0,
+    "elapsedMs": 16456
+  },
+  {
+    "test": "test:event-export-browser",
+    "exitCode": 0,
+    "elapsedMs": 26812
+  },
+  {
+    "test": "test:data-management-browser",
+    "exitCode": 0,
+    "elapsedMs": 12324
+  },
+  {
+    "test": "test:session-cleanup-browser",
+    "exitCode": 0,
+    "elapsedMs": 9600
+  }
+]
