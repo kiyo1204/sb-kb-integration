@@ -13,6 +13,16 @@ export function getAccessToken() { return sessionStorage.getItem(key); }
 export function setAccessToken(token: string) { sessionStorage.setItem(key, token.trim()); }
 export function clearAccessToken() { sessionStorage.removeItem(key); }
 
+export async function apiErrorMessage(response: Response, fallback: string) {
+  const payload = await response.clone().json().catch(() => null);
+  // Only fixed safety codes select these messages; never render exception details.
+  if (payload?.error === "safety_budget_exceeded")
+    return "安全確認の処理量上限を超えました。入力を短くするか出力範囲を絞ってください。範囲を変更できない場合は管理者に連絡してください。";
+  if (payload?.error === "safety_lookup_unavailable")
+    return "安全確認を行えませんでした。時間をおいて再度お試しください。改善しない場合は管理者に連絡してください。";
+  return fallback;
+}
+
 export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const token = getAccessToken();
   const headers = new Headers(init.headers);
@@ -25,7 +35,7 @@ export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
 
 export async function downloadApiFile(path: string) {
   const response = await apiFetch(path);
-  if (!response.ok) throw new Error("ファイルを取得できませんでした。");
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "ファイルを取得できませんでした。"));
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

@@ -1,4 +1,4 @@
-import {redactResearchOutput} from "./research-output-safety.js";
+import {redactResearchOutput, respondResearchSafetyError} from "./research-output-safety.js";
 import {csvCell} from "./csv.js";
 import { operationCommitted,reliableOperation } from "./delivery-reliability.js";
 import { safeServerErrorCode } from "./safe-server-error.js";
@@ -115,7 +115,7 @@ export function registerAssessmentRoutes(app: Express, pool: Pool) {
       const assessment = await assessmentSnapshot(client, req.params.sessionId);
       await client.query("COMMIT");
       return res.json({ session: session.rows[0], ...assessment });
-    } catch (err) { await client.query("ROLLBACK"); console.error("assessment_processing_failed", safeServerErrorCode(err)); return error(res, 500, "assessment_fetch_failed", "評価を取得できませんでした。"); }
+    } catch (err) { await client.query("ROLLBACK").catch(() => undefined); if (respondResearchSafetyError(res, err)) return; console.error("assessment_processing_failed", safeServerErrorCode(err)); return error(res, 500, "assessment_fetch_failed", "評価を取得できませんでした。"); }
     finally { client.release(); }
   });
 
@@ -247,7 +247,7 @@ export function registerAssessmentRoutes(app: Express, pool: Pool) {
 
       const csv = [cols.join(","), ...(await redactResearchOutput(output,client)).map(row => cols.map(col => csvCell(row[col])).join(","))].join("\r\n") + "\r\n";
       return res.set("Content-Type", "text/csv; charset=utf-8").set("Content-Disposition", `attachment; filename="stage1-${req.params.sessionId}-assessment-answers.csv"`).send("\uFEFF" + csv);
-    } catch (err) { await client.query("ROLLBACK"); console.error("assessment_processing_failed", safeServerErrorCode(err)); return error(res, 500, "assessment_csv_failed", "CSVを出力できませんでした。"); }
+    } catch (err) { await client.query("ROLLBACK").catch(() => undefined); if (respondResearchSafetyError(res, err)) return; console.error("assessment_processing_failed", safeServerErrorCode(err)); return error(res, 500, "assessment_csv_failed", "CSVを出力できませんでした。"); }
     finally { client.release(); }
   });
 }

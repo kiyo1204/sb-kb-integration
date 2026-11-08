@@ -14,7 +14,7 @@ import {
 import { lockSessionStageProgress, assertStageIsCurrent } from "./sessions.js";
 import { validAnswerText } from "./research-event-assessment-v3.js";
 import { validMapLabel } from "./research-event-map-v2.js";
-import { redactResearchOutput } from "./research-output-safety.js";
+import { redactResearchOutput, respondResearchSafetyError } from "./research-output-safety.js";
 import { csvCell } from "./csv.js";
 import type { SurveyStateV7 } from "./research-event-survey-v7.js";
 export type SurveyQuestion = {
@@ -276,7 +276,8 @@ export function registerSurveyRoutes(app: Express, pool: Pool) {
       return r.json(
         await tx(pool, (c) => surveySnapshot(c, q.params.sessionId)),
       );
-    } catch {
+    } catch (error) {
+      if (respondResearchSafetyError(r, error)) return;
       return r.status(503).json({ error: "survey_fetch_failed" });
     }
   });
@@ -352,7 +353,8 @@ export function registerSurveyRoutes(app: Express, pool: Pool) {
       return data
         ? r.json(data)
         : r.status(409).json({ error: "survey_not_current" });
-    } catch {
+    } catch (error) {
+      if (respondResearchSafetyError(r, error)) return;
       return r.status(503).json({ error: "survey_fetch_failed" });
     }
   });
@@ -623,7 +625,8 @@ export function registerSurveyRoutes(app: Express, pool: Pool) {
               ].join("\r\n") +
               "\r\n",
           );
-      } catch {
+      } catch (error) {
+        if (respondResearchSafetyError(r, error)) return;
         return r.status(503).json({ error: "survey_export_failed" });
       }
     },

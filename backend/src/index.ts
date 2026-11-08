@@ -1,3 +1,4 @@
+import { researchSafetyBudget, respondResearchSafetyError } from "./research-output-safety.js";
 import { registerSurveyRoutes, SeedValidationError, validSurveyQuestions, saveSurveyQuestions, seedLearnerMap, seededConceptGuard } from "./surveys.js";
 import { respondToMapFailure } from "./map-failure-response.js";
 import { validateMapStateV5, validMapCoordinate } from "./research-event-map-v5.js";
@@ -1707,6 +1708,7 @@ async function applyHistoryStateDelta(
   }
 }
 
+app.use(researchSafetyBudget);
 app.use((request, response, next) => {
   const limit = request.path === "/api/research/goal-maps/import" ? MAX_MAP_STATE_BYTES : "100kb";
   express.json({ limit })(request, response, next);
@@ -2631,6 +2633,7 @@ app.get(
         .json(result.value);
     } catch (error) {
       if (client) await client.query("ROLLBACK").catch(() => undefined);
+      if (respondResearchSafetyError(response, error)) return;
       console.error("Failed to export Session research data", safeServerErrorCode(error));
       return response.status(500).json({
         error: "session_export_failed",

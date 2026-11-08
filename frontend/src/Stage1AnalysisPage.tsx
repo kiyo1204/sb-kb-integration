@@ -1,7 +1,7 @@
 import {ResearchDeliveryStatus} from "./DeliveryStatus";
 import {FiveFlowFeatures} from "./FiveFlowFeatures";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { apiFetch, downloadApiFile, uiText } from "./auth-client";
+import { apiFetch, downloadApiFile, uiText, apiErrorMessage } from "./auth-client";
 import { ReadOnlyMapSnapshot, type HistoricalMapSnapshot } from "./MapPage";
 
 type Operation = {
@@ -159,7 +159,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
   const [status,setStatus]=useState("");
   const reload=useCallback(async()=>{
     const response=await apiFetch(`/api/research/stage1/sessions/${sessionId}/analysis`);
-    if(!response.ok)throw new Error("完了した活動 1 セッションの分析データを取得できませんでした。");
+    if(!response.ok)throw new Error(await apiErrorMessage(response,"完了した活動 1 セッションの分析データを取得できませんでした。"));
     const next=(await response.json()) as Analysis;
     setData(next);
     if(!selectedMapId) {
@@ -170,7 +170,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
   useEffect(()=>{
     let mounted=true;
     apiFetch(`/api/research/stage1/sessions/${sessionId}/analysis`)
-      .then(async(r)=>{if(!r.ok)throw new Error("分析データを取得できませんでした。セッションが完了しているか確認してください。");return (await r.json()) as Analysis;})
+      .then(async(r)=>{if(!r.ok)throw new Error(await apiErrorMessage(r,"分析データを取得できませんでした。セッションが完了しているか確認してください。"));return (await r.json()) as Analysis;})
       .then(d=>{if(mounted){setData(d);const first=d.maps.find(m=>m.type==="PRIOR"||m.type==="KB"||m.type==="INTEGRATION");if(first)setSelectedMapId(current=>current||first.id);}})
       .catch(e=>{if(mounted)setError(String(e instanceof Error?e.message:e));});
     return()=>{mounted=false;};
@@ -219,7 +219,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify(body),
       });
-      if(!response.ok)throw new Error("保存に失敗しました。対象IDと入力内容を確認してください。");
+      if(!response.ok)throw new Error(await apiErrorMessage(response,"保存に失敗しました。対象IDと入力内容を確認してください。"));
       await reload();
       setStatus("保存しました。");
     }catch(e){setError(e instanceof Error?e.message:String(e));}
@@ -261,10 +261,10 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
           <p>セッション：{sessionId} 参加者コード：{data?.session.participantCode??"—"}</p>
         </div>
         <div className="stage1-analysis-exports" role="group" aria-label="データ出力">
-          <button type="button" onClick={() => void downloadApiFile(`/api/research/sessions/${sessionId}/export`).catch(() => setError("JSONを取得できませんでした。"))}>生データJSON</button>
-          <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/operations.csv`).catch(() => setError("CSVを取得できませんでした。"))}>操作イベントCSV</button>
-          {data?.session.protocolKey === "STAGE1_4" && <><button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/evaluations.csv`).catch(() => setError("CSVを取得できませんでした。"))}>命題評価CSV</button>
-          <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/reflections.csv`).catch(() => setError("CSVを取得できませんでした。"))}>振り返りCSV</button></>}
+          <button type="button" onClick={() => void downloadApiFile(`/api/research/sessions/${sessionId}/export`).catch(e => setError(e instanceof Error ? e.message : "JSONを取得できませんでした。"))}>生データJSON</button>
+          <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/operations.csv`).catch(e => setError(e instanceof Error ? e.message : "CSVを取得できませんでした。"))}>操作イベントCSV</button>
+          {data?.session.protocolKey === "STAGE1_4" && <><button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/evaluations.csv`).catch(e => setError(e instanceof Error ? e.message : "CSVを取得できませんでした。"))}>命題評価CSV</button>
+          <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/reflections.csv`).catch(e => setError(e instanceof Error ? e.message : "CSVを取得できませんでした。"))}>振り返りCSV</button></>}
           <a href={`/research/event-exports?sessionId=${sessionId}`}>研究イベントの絞り込み出力</a>
           <a href={`/sessions/${sessionId}`}>セッションへ戻る</a>
         </div>
@@ -366,7 +366,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
             <h2>記述的特徴量（v2）</h2>
             <p>「引き継ぎ」はSTEP 2に外化された知識であり、授業前の既有知識を意味しません。
               出現時点に基づいた操作的分類です。操作数を学習の質とみなしません。</p>
-            <p><button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/features.csv`).catch(() => setError("CSVを取得できませんでした。"))}>
+            <p><button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/features.csv`).catch(e => setError(e instanceof Error ? e.message : "CSVを取得できませんでした。"))}>
               特徴量CSVを出力</button></p>
             <div className="stage1-analysis-stats">
               {Object.entries(data.features).map(([key,value])=>(

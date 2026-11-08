@@ -75,6 +75,7 @@ try {
     "test:event-export-samples",
     "test:event-export",
     "test:data-management",
+    "test:research-note-safety",
   ])
     await run(test);
   await start();

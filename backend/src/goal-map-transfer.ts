@@ -1,6 +1,7 @@
 import type { Express, Response } from "express";
-import type { Pool, PoolClient } from "pg";
-import { principalOf, tokenHash } from "./access-control.js";
+import type { Pool } from "pg";
+import { principalOf } from "./access-control.js";
+import { loadResearchTextSafety, respondResearchSafetyError } from "./research-output-safety.js";
 import { MAX_MAP_STATE_BYTES, validMapLabel } from "./research-event-map-v2.js";
 import { validMapCoordinate } from "./research-event-map-v5.js";
 
@@ -106,25 +107,6 @@ function statusError(
   return response.status(status).json({ error, message });
 }
 
-async function hasLearnerCredential(client: Pick<PoolClient, "query">, textValues: string[]) {
-  const result = await client.query<{ learner_access_token_hash: string }>(
-    "SELECT learner_access_token_hash FROM sessions WHERE learner_access_token_hash IS NOT NULL",
-  );
-  const hashes = new Set(result.rows.map(row => row.learner_access_token_hash));
-  const matches = (text: string) => hashes.has(tokenHash(text));
-  for (const value of textValues) {
-    if (matches(value) || value.split(/\s+/).some(matches)) return true;
-    for (const run of value.match(/[A-Za-z0-9_-]{32,}/g) ?? []) {
-      if (matches(run)) return true;
-      // Current learner codes are 32 random bytes encoded as 43 base64url
-      // characters. Also detect them inside old labels with no separator.
-      for (let i = 0; i + 43 <= run.length; i++)
-        if (matches(run.slice(i, i + 43))) return true;
-    }
-  }
-  return false;
-}
-
 export function registerGoalMapTransferRoutes(app: Express, pool: Pool) {
   app.get(
     "/api/research/goal-maps/:mapId/export",
@@ -202,8 +184,8 @@ export function registerGoalMapTransferRoutes(app: Express, pool: Pool) {
           },
         };
         const textValues = [document.goalMap.title, ...document.goalMap.concepts.map(item => item.label), ...document.goalMap.links.map(item => item.label)];
-        const researcher = process.env.RESEARCHER_API_TOKEN;
-        if ((researcher && textValues.some(text => text.includes(researcher))) || await hasLearnerCredential(pool, textValues))
+        const safety = await loadResearchTextSafety(pool);
+        if (textValues.some(safety.containsKnownSecret))
           return statusError(response, 409, "sensitive_text_rejected", "認証情報を含むためゴールマップを書き出せません。");
         if (!validateGoalMapJson(document))
           return statusError(
@@ -219,7 +201,8 @@ export function registerGoalMapTransferRoutes(app: Express, pool: Pool) {
           `attachment; filename="${filename}"`,
         );
         return response.json(document);
-      } catch {
+      } catch (error) {
+        if (respondResearchSafetyError(response, error)) return;
         return statusError(
           response,
           500,
@@ -263,7 +246,7 @@ export function registerGoalMapTransferRoutes(app: Express, pool: Pool) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      if (await hasLearnerCredential(client, textValues)) {
+      if (textValues.some((await loadResearchTextSafety(client)).containsKnownSecret)) {
         await client.query("ROLLBACK");
         return statusError(
           response,
@@ -341,8 +324,9 @@ export function registerGoalMapTransferRoutes(app: Express, pool: Pool) {
           title: map.title,
           kitDefinitionId: kit.rows[0]!.id,
         });
-    } catch {
+    } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
+      if (respondResearchSafetyError(response, error)) return;
       return statusError(
         response,
         500,

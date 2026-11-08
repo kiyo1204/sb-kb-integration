@@ -1,0 +1,47 @@
+[
+  {
+    "test": "test:test-target-guards",
+    "exitCode": 0,
+    "elapsedMs": 1367
+  },
+  {
+    "test": "test:event-catalog",
+    "exitCode": 0,
+    "elapsedMs": 2287
+  },
+  {
+    "test": "test:research-event-schema",
+    "exitCode": 0,
+    "elapsedMs": 1190
+  },
+  {
+    "test": "test:undo-redo:unit",
+    "exitCode": 0,
+    "elapsedMs": 1204
+  },
+  {
+    "test": "test:merge-release",
+    "exitCode": 0,
+    "elapsedMs": 1186
+  },
+  {
+    "test": "test:five-flow-features",
+    "exitCode": 0,
+    "elapsedMs": 1300
+  },
+  {
+    "test": "test:map-mixed-history",
+    "exitCode": 0,
+    "elapsedMs": 1191
+  },
+  {
+    "test": "test:research-events",
+    "exitCode": 0,
+    "elapsedMs": 3336
+  },
+  {
+    "test": "test:event-export-samples",
+    "exitCode": 1,
+    "elapsedMs": 1348
+  }
+]
