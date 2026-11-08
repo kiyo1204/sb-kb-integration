@@ -9,502 +9,502 @@
     {
       "path": "/research/stage1/sessions/synthetic-0-STAGE1_4/analysis",
       "status": 200,
-      "ms": 263.21
+      "ms": 258.85
     },
     {
       "path": "/research/stage1/sessions/synthetic-0-STAGE1_4/operations.csv",
       "status": 200,
-      "ms": 235.07
+      "ms": 232.82
     },
     {
       "path": "/research/sessions/synthetic-0-STAGE1_4/export",
       "status": 200,
-      "ms": 192.14
+      "ms": 197.79
     },
     {
       "path": "/research/stage1/sessions/synthetic-0-STAGE1_4/evaluations.csv",
       "status": 200,
-      "ms": 167.41
+      "ms": 175.85
     },
     {
       "path": "/research/stage1/sessions/synthetic-0-STAGE1_4/reflections.csv",
       "status": 200,
-      "ms": 149.94
+      "ms": 146.28
     },
     {
       "path": "/research/stage1/sessions/synthetic-1-STAGE1_5/analysis",
       "status": 200,
-      "ms": 207.54
+      "ms": 215.96
     },
     {
       "path": "/research/stage1/sessions/synthetic-1-STAGE1_5/operations.csv",
       "status": 200,
-      "ms": 192.75
+      "ms": 232.83
     },
     {
       "path": "/research/sessions/synthetic-1-STAGE1_5/export",
       "status": 200,
-      "ms": 163.18
+      "ms": 168.14
     },
     {
       "path": "/research/stage1/sessions/synthetic-1-STAGE1_5/survey",
       "status": 200,
-      "ms": 20.69
+      "ms": 18.99
     },
     {
       "path": "/research/stage1/sessions/synthetic-1-STAGE1_5/survey-answers.csv",
       "status": 200,
-      "ms": 36.32
+      "ms": 33.8
     },
     {
       "path": "/research/stage1/sessions/synthetic-2-STAGE1_6/analysis",
       "status": 200,
-      "ms": 143.38
+      "ms": 148.23
     },
     {
       "path": "/research/stage1/sessions/synthetic-2-STAGE1_6/operations.csv",
       "status": 200,
-      "ms": 162.58
+      "ms": 164.33
     },
     {
       "path": "/research/sessions/synthetic-2-STAGE1_6/export",
       "status": 200,
-      "ms": 178.84
+      "ms": 145.62
     },
     {
       "path": "/research/stage1/sessions/synthetic-2-STAGE1_6/assessment",
       "status": 200,
-      "ms": 34.11
+      "ms": 22.15
     },
     {
       "path": "/research/stage1/sessions/synthetic-2-STAGE1_6/assessment-answers.csv",
       "status": 200,
-      "ms": 34.04
+      "ms": 41.4
     },
     {
       "path": "/research/stage1/sessions/synthetic-3-STAGE1_4/analysis",
       "status": 200,
-      "ms": 198.42
+      "ms": 162.91
     },
     {
       "path": "/research/stage1/sessions/synthetic-3-STAGE1_4/operations.csv",
       "status": 200,
-      "ms": 157.6
+      "ms": 154.37
     },
     {
       "path": "/research/sessions/synthetic-3-STAGE1_4/export",
       "status": 200,
-      "ms": 151.65
+      "ms": 152.13
     },
     {
       "path": "/research/stage1/sessions/synthetic-3-STAGE1_4/evaluations.csv",
       "status": 200,
-      "ms": 147.74
+      "ms": 167.53
     },
     {
       "path": "/research/stage1/sessions/synthetic-3-STAGE1_4/reflections.csv",
       "status": 200,
-      "ms": 148.31
+      "ms": 185.68
     },
     {
       "path": "/research/stage1/sessions/synthetic-4-STAGE1_5/analysis",
       "status": 200,
-      "ms": 204.41
+      "ms": 229.16
     },
     {
       "path": "/research/stage1/sessions/synthetic-4-STAGE1_5/operations.csv",
       "status": 200,
-      "ms": 182.2
+      "ms": 171.17
     },
     {
       "path": "/research/sessions/synthetic-4-STAGE1_5/export",
       "status": 200,
-      "ms": 181.78
+      "ms": 162.07
     },
     {
       "path": "/research/stage1/sessions/synthetic-4-STAGE1_5/survey",
       "status": 200,
-      "ms": 17.41
+      "ms": 20.03
     },
     {
       "path": "/research/stage1/sessions/synthetic-4-STAGE1_5/survey-answers.csv",
       "status": 200,
-      "ms": 37.22
+      "ms": 32.95
     },
     {
       "path": "/research/stage1/sessions/synthetic-5-STAGE1_6/analysis",
       "status": 200,
-      "ms": 140.87
+      "ms": 148.47
     },
     {
       "path": "/research/stage1/sessions/synthetic-5-STAGE1_6/operations.csv",
       "status": 200,
-      "ms": 144.04
+      "ms": 140.4
     },
     {
       "path": "/research/sessions/synthetic-5-STAGE1_6/export",
       "status": 200,
-      "ms": 136.45
+      "ms": 141.31
     },
     {
       "path": "/research/stage1/sessions/synthetic-5-STAGE1_6/assessment",
       "status": 200,
-      "ms": 21.52
+      "ms": 28.49
     },
     {
       "path": "/research/stage1/sessions/synthetic-5-STAGE1_6/assessment-answers.csv",
       "status": 200,
-      "ms": 34.51
+      "ms": 34.86
     },
     {
       "path": "/research/stage1/sessions/synthetic-6-STAGE1_4/analysis",
       "status": 200,
-      "ms": 181.59
+      "ms": 161.84
     },
     {
       "path": "/research/stage1/sessions/synthetic-6-STAGE1_4/operations.csv",
       "status": 200,
-      "ms": 166.88
+      "ms": 152.26
     },
     {
       "path": "/research/sessions/synthetic-6-STAGE1_4/export",
       "status": 200,
-      "ms": 157.76
+      "ms": 145.43
     },
     {
       "path": "/research/stage1/sessions/synthetic-6-STAGE1_4/evaluations.csv",
       "status": 200,
-      "ms": 137.63
+      "ms": 134.36
     },
     {
       "path": "/research/stage1/sessions/synthetic-6-STAGE1_4/reflections.csv",
       "status": 200,
-      "ms": 140.34
+      "ms": 134.69
     },
     {
       "path": "/research/stage1/sessions/synthetic-7-STAGE1_5/analysis",
       "status": 200,
-      "ms": 205.04
+      "ms": 217.82
     },
     {
       "path": "/research/stage1/sessions/synthetic-7-STAGE1_5/operations.csv",
       "status": 200,
-      "ms": 166.92
+      "ms": 165.07
     },
     {
       "path": "/research/sessions/synthetic-7-STAGE1_5/export",
       "status": 200,
-      "ms": 155.64
+      "ms": 164.04
     },
     {
       "path": "/research/stage1/sessions/synthetic-7-STAGE1_5/survey",
       "status": 200,
-      "ms": 18.02
+      "ms": 16.13
     },
     {
       "path": "/research/stage1/sessions/synthetic-7-STAGE1_5/survey-answers.csv",
       "status": 200,
-      "ms": 31.96
+      "ms": 30.8
     },
     {
       "path": "/research/stage1/sessions/synthetic-8-STAGE1_6/analysis",
       "status": 200,
-      "ms": 137.54
+      "ms": 152.1
     },
     {
       "path": "/research/stage1/sessions/synthetic-8-STAGE1_6/operations.csv",
       "status": 200,
-      "ms": 147.92
+      "ms": 143.35
     },
     {
       "path": "/research/sessions/synthetic-8-STAGE1_6/export",
       "status": 200,
-      "ms": 181.59
+      "ms": 138.52
     },
     {
       "path": "/research/stage1/sessions/synthetic-8-STAGE1_6/assessment",
       "status": 200,
-      "ms": 21.46
+      "ms": 21.19
     },
     {
       "path": "/research/stage1/sessions/synthetic-8-STAGE1_6/assessment-answers.csv",
       "status": 200,
-      "ms": 37.17
+      "ms": 33.27
     },
     {
       "path": "/research/stage1/sessions/synthetic-9-STAGE1_4/analysis",
       "status": 200,
-      "ms": 193.49
+      "ms": 154.14
     },
     {
       "path": "/research/stage1/sessions/synthetic-9-STAGE1_4/operations.csv",
       "status": 200,
-      "ms": 162.69
+      "ms": 176.37
     },
     {
       "path": "/research/sessions/synthetic-9-STAGE1_4/export",
       "status": 200,
-      "ms": 167.45
+      "ms": 136.91
     },
     {
       "path": "/research/stage1/sessions/synthetic-9-STAGE1_4/evaluations.csv",
       "status": 200,
-      "ms": 161.21
+      "ms": 141.14
     },
     {
       "path": "/research/stage1/sessions/synthetic-9-STAGE1_4/reflections.csv",
       "status": 200,
-      "ms": 182.31
+      "ms": 136.71
     },
     {
       "path": "/research/stage1/sessions/synthetic-10-STAGE1_5/analysis",
       "status": 200,
-      "ms": 238.48
+      "ms": 202.69
     },
     {
       "path": "/research/stage1/sessions/synthetic-10-STAGE1_5/operations.csv",
       "status": 200,
-      "ms": 175
+      "ms": 165.2
     },
     {
       "path": "/research/sessions/synthetic-10-STAGE1_5/export",
       "status": 200,
-      "ms": 167.58
+      "ms": 153.27
     },
     {
       "path": "/research/stage1/sessions/synthetic-10-STAGE1_5/survey",
       "status": 200,
-      "ms": 17.94
+      "ms": 16.45
     },
     {
       "path": "/research/stage1/sessions/synthetic-10-STAGE1_5/survey-answers.csv",
       "status": 200,
-      "ms": 37.64
+      "ms": 30.49
     },
     {
       "path": "/research/stage1/sessions/synthetic-11-STAGE1_6/analysis",
       "status": 200,
-      "ms": 148.11
+      "ms": 130.51
     },
     {
       "path": "/research/stage1/sessions/synthetic-11-STAGE1_6/operations.csv",
       "status": 200,
-      "ms": 143.16
+      "ms": 136.71
     },
     {
       "path": "/research/sessions/synthetic-11-STAGE1_6/export",
       "status": 200,
-      "ms": 145.84
+      "ms": 135.8
     },
     {
       "path": "/research/stage1/sessions/synthetic-11-STAGE1_6/assessment",
       "status": 200,
-      "ms": 21.75
+      "ms": 21.16
     },
     {
       "path": "/research/stage1/sessions/synthetic-11-STAGE1_6/assessment-answers.csv",
       "status": 200,
-      "ms": 35.01
+      "ms": 31.96
     },
     {
       "path": "/research/stage1/sessions/synthetic-12-STAGE1_4/analysis",
       "status": 200,
-      "ms": 199.76
+      "ms": 160.25
     },
     {
       "path": "/research/stage1/sessions/synthetic-12-STAGE1_4/operations.csv",
       "status": 200,
-      "ms": 156.44
+      "ms": 261.24
     },
     {
       "path": "/research/sessions/synthetic-12-STAGE1_4/export",
       "status": 200,
-      "ms": 161.37
+      "ms": 194.58
     },
     {
       "path": "/research/stage1/sessions/synthetic-12-STAGE1_4/evaluations.csv",
       "status": 200,
-      "ms": 146.65
+      "ms": 161.96
     },
     {
       "path": "/research/stage1/sessions/synthetic-12-STAGE1_4/reflections.csv",
       "status": 200,
-      "ms": 137.93
+      "ms": 126.96
     },
     {
       "path": "/research/stage1/sessions/synthetic-13-STAGE1_5/analysis",
       "status": 200,
-      "ms": 208.64
+      "ms": 206.1
     },
     {
       "path": "/research/stage1/sessions/synthetic-13-STAGE1_5/operations.csv",
       "status": 200,
-      "ms": 194.61
+      "ms": 168.52
     },
     {
       "path": "/research/sessions/synthetic-13-STAGE1_5/export",
       "status": 200,
-      "ms": 160.72
+      "ms": 143.33
     },
     {
       "path": "/research/stage1/sessions/synthetic-13-STAGE1_5/survey",
       "status": 200,
-      "ms": 15.42
+      "ms": 16.02
     },
     {
       "path": "/research/stage1/sessions/synthetic-13-STAGE1_5/survey-answers.csv",
       "status": 200,
-      "ms": 31.57
+      "ms": 39.01
     },
     {
       "path": "/research/stage1/sessions/synthetic-14-STAGE1_6/analysis",
       "status": 200,
-      "ms": 144.15
+      "ms": 158.63
     },
     {
       "path": "/research/stage1/sessions/synthetic-14-STAGE1_6/operations.csv",
       "status": 200,
-      "ms": 146.28
+      "ms": 146.07
     },
     {
       "path": "/research/sessions/synthetic-14-STAGE1_6/export",
       "status": 200,
-      "ms": 140.43
+      "ms": 136.04
     },
     {
       "path": "/research/stage1/sessions/synthetic-14-STAGE1_6/assessment",
       "status": 200,
-      "ms": 20.85
+      "ms": 19.1
     },
     {
       "path": "/research/stage1/sessions/synthetic-14-STAGE1_6/assessment-answers.csv",
       "status": 200,
-      "ms": 35.26
+      "ms": 31.55
     },
     {
       "path": "/research/stage1/sessions/synthetic-15-STAGE1_4/analysis",
       "status": 200,
-      "ms": 166.91
+      "ms": 158.47
     },
     {
       "path": "/research/stage1/sessions/synthetic-15-STAGE1_4/operations.csv",
       "status": 200,
-      "ms": 157.6
+      "ms": 146.23
     },
     {
       "path": "/research/sessions/synthetic-15-STAGE1_4/export",
       "status": 200,
-      "ms": 193.45
+      "ms": 146.49
     },
     {
       "path": "/research/stage1/sessions/synthetic-15-STAGE1_4/evaluations.csv",
       "status": 200,
-      "ms": 173.31
+      "ms": 169.07
     },
     {
       "path": "/research/stage1/sessions/synthetic-15-STAGE1_4/reflections.csv",
       "status": 200,
-      "ms": 150.78
+      "ms": 155.05
     },
     {
       "path": "/research/stage1/sessions/synthetic-16-STAGE1_5/analysis",
       "status": 200,
-      "ms": 207.82
+      "ms": 184.75
     },
     {
       "path": "/research/stage1/sessions/synthetic-16-STAGE1_5/operations.csv",
       "status": 200,
-      "ms": 159.98
+      "ms": 158.92
     },
     {
       "path": "/research/sessions/synthetic-16-STAGE1_5/export",
       "status": 200,
-      "ms": 165.24
+      "ms": 143.54
     },
     {
       "path": "/research/stage1/sessions/synthetic-16-STAGE1_5/survey",
       "status": 200,
-      "ms": 17.06
+      "ms": 15.01
     },
     {
       "path": "/research/stage1/sessions/synthetic-16-STAGE1_5/survey-answers.csv",
       "status": 200,
-      "ms": 32.26
+      "ms": 39.59
     },
     {
       "path": "/research/stage1/sessions/synthetic-17-STAGE1_6/analysis",
       "status": 200,
-      "ms": 134.98
+      "ms": 146.21
     },
     {
       "path": "/research/stage1/sessions/synthetic-17-STAGE1_6/operations.csv",
       "status": 200,
-      "ms": 135.45
+      "ms": 141.19
     },
     {
       "path": "/research/sessions/synthetic-17-STAGE1_6/export",
       "status": 200,
-      "ms": 149.11
+      "ms": 141.25
     },
     {
       "path": "/research/stage1/sessions/synthetic-17-STAGE1_6/assessment",
       "status": 200,
-      "ms": 22.73
+      "ms": 21.08
     },
     {
       "path": "/research/stage1/sessions/synthetic-17-STAGE1_6/assessment-answers.csv",
       "status": 200,
-      "ms": 34.14
+      "ms": 34.44
     },
     {
       "path": "/research/stage1/sessions/synthetic-18-STAGE1_4/analysis",
       "status": 200,
-      "ms": 162.91
+      "ms": 164.6
     },
     {
       "path": "/research/stage1/sessions/synthetic-18-STAGE1_4/operations.csv",
       "status": 200,
-      "ms": 170.98
+      "ms": 178.72
     },
     {
       "path": "/research/sessions/synthetic-18-STAGE1_4/export",
       "status": 200,
-      "ms": 141.51
+      "ms": 139.52
     },
     {
       "path": "/research/stage1/sessions/synthetic-18-STAGE1_4/evaluations.csv",
       "status": 200,
-      "ms": 135.04
+      "ms": 134.82
     },
     {
       "path": "/research/stage1/sessions/synthetic-18-STAGE1_4/reflections.csv",
       "status": 200,
-      "ms": 132.48
+      "ms": 130.45
     },
     {
       "path": "/research/stage1/sessions/synthetic-19-STAGE1_5/analysis",
       "status": 200,
-      "ms": 181.5
+      "ms": 182.39
     },
     {
       "path": "/research/stage1/sessions/synthetic-19-STAGE1_5/operations.csv",
       "status": 200,
-      "ms": 179.41
+      "ms": 157.8
     },
     {
       "path": "/research/sessions/synthetic-19-STAGE1_5/export",
       "status": 200,
-      "ms": 150
+      "ms": 158.44
     },
     {
       "path": "/research/stage1/sessions/synthetic-19-STAGE1_5/survey",
       "status": 200,
-      "ms": 16.88
+      "ms": 16.13
     },
     {
       "path": "/research/stage1/sessions/synthetic-19-STAGE1_5/survey-answers.csv",
       "status": 200,
-      "ms": 41.39
+      "ms": 30.61
     }
   ]
 }

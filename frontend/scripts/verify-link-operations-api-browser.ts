@@ -47,7 +47,17 @@ try {
  try {await drag(35,20,500);await page.waitForFunction(({id,x})=>document.querySelector(`[data-connector-id=\"${id}\"]`)?.getAttribute('style')?.includes(`left: ${x}px`),{id:link.id,x:beforeFailure.labelPositionX});assert.equal((await api(`/maps/${map.id}`)).links.find((x:{id:string})=>x.id===link.id).labelPositionX,beforeFailure.labelPositionX);}finally{await pool.query('DROP TRIGGER mock_link_position_fail ON links; DROP FUNCTION mock_link_position_fail()');}
  await open();
  // Endpoint reconnection is a real mouse drag, preserving direction.
- const handle=connector.locator('.is-target'), target=page.locator(`[data-concept-id="${nodes[2].id}"]`);const h=await handle.boundingBox(),t=await target.boundingBox();assert.ok(h&&t);const reconnected=page.waitForResponse(r=>r.url().endsWith(`/links/${link.id}/reconnect`)&&r.request().method()==='PATCH');await page.mouse.move(h.x+h.width/2,h.y+h.height/2);await page.mouse.down();await page.mouse.move(t.x+t.width/2,t.y+t.height/2,{steps:12});await page.mouse.up();assert.equal((await reconnected).status(),200);
+ const handle=connector.locator('.is-target'), target=page.locator(`[data-concept-id="${nodes[2].id}"]`);
+ await handle.scrollIntoViewIfNeeded();const h=await handle.boundingBox();assert.ok(h);
+ await page.mouse.move(h.x+h.width/2,h.y+h.height/2);await page.mouse.down();
+ // The connection guidance is inserted above Canvas on pointerdown. Measure
+ // the actual drop target after that layout change, as a mouse user sees it.
+ await page.getByText('「矢印の先」を接続するConceptへドラッグしてください。',{exact:true}).waitFor();
+ await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+ await target.scrollIntoViewIfNeeded();const t=await target.boundingBox();assert.ok(t);
+ assert.equal(await page.evaluate(({x,y})=>document.elementFromPoint(x,y)?.closest<HTMLElement>('[data-concept-id]')?.dataset.conceptId,{x:t.x+t.width/2,y:t.y+t.height/2}),nodes[2].id,'drop point must hit the current target Concept');
+ const reconnected=page.waitForResponse(r=>r.url().endsWith(`/links/${link.id}/reconnect`)&&r.request().method()==='PATCH');
+ await page.mouse.move(t.x+t.width/2,t.y+t.height/2,{steps:12});await page.mouse.up();assert.equal((await reconnected).status(),200);
  await open();assert.equal((await api(`/maps/${map.id}`)).links.find((x:{id:string})=>x.id===link.id).targetConceptId,nodes[2].id);await selectLine();
  for(const action of ['UNDO','REDO']){const state=await api(`/maps/${map.id}/undo-redo`);await api(`/maps/${map.id}/undo-redo`,'POST',{action,expectedSequenceNumber:state.sequenceNumber,idempotencyKey:randomUUID(),clientTimestamp:new Date().toISOString()});await open();await selectLine();}
  await page.locator(`[data-connector-id="${other.id}"] .link-connector-label`).click();

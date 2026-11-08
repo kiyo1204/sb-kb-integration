@@ -63,3 +63,13 @@ backend/frontendのtypecheck・lint・buildを実行。scopeはMapPage.tsx、fro
 対象3/3、全体46/46（追加2件を含むブラウザー13検証）、backend/frontendのtypecheck/lint/build全6件がPASS。全体子プロセス集計 431,155ms。全体suite内でも新しい実APIリンク回帰がPASS。過去の試行失敗と最終成功は区別する。生成済みの既存辞書/サンプル/旧検証結果は内容を保持し、今回の結果だけをissue29-*で保存した。
 
 後片付け: 今回の専用DB2件をmanifestの名前・ID・nonce・目的ラベルで照合して、コンテナー/volumeと専用manifest/Exportキャッシュを削除済み。テスト子プロセス・Vite・ブラウザーはfinallyで終了し、生成PNGも除去した。他worktree、既存DB、PR #21、Issueの状態は変更していない。
+
+## 初回CIでの待機競合と修正
+
+初回head d08dcdeではPR用run 42476498718が成功したが、push用run 42476472300は実APIブラウザーの再接続で30秒タイムアウトした。製品のヒット領域修正と別に、テストがpointerdown前に測ったConcept座標へドロップしていた。接続案内がCanvasの上に挿入される実装のため、表示後のConceptは別位置になり得る。
+
+テストは接続案内の表示と描画を待ってからドロップ先を測り直し、elementFromPointが対象Conceptであることもassertする。固定秒数の待機や成功要求の再送で隠さない。接続開始時の位置変化自体はIssue #30の対象として残し、製品側のレイアウトは変更しない。修正後、新しいstage1_mock_issue29_recheck_targetで対象3/3が成功。backend/frontendのtypecheck・lint・buildも全6件成功。
+
+CI待機競合修正後の最終再検証: stage1_mock_issue29_recheck_fullで全体46/46（ブラウザー13件）PASS、子プロセス合計418,797ms。対象3/3、静的検査/ビルド6件もPASS。結果集計はissue29-target-*とissue29-full-*を今回の実行で更新した。
+
+再検証用2件もmanifest/目的ラベル/nonceを照合してコンテナー・volume・専用manifest/cacheを削除済み。初回の2件と合わせて、今回作成した4環境はすべて後片付け済み。

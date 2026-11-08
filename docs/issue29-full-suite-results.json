@@ -2,231 +2,231 @@
   {
     "test": "test:test-target-guards",
     "exitCode": 0,
-    "elapsedMs": 1570
+    "elapsedMs": 1419
   },
   {
     "test": "test:event-catalog",
     "exitCode": 0,
-    "elapsedMs": 2658
+    "elapsedMs": 2523
   },
   {
     "test": "test:research-event-schema",
     "exitCode": 0,
-    "elapsedMs": 1467
+    "elapsedMs": 1333
   },
   {
     "test": "test:undo-redo:unit",
     "exitCode": 0,
-    "elapsedMs": 1438
+    "elapsedMs": 1402
   },
   {
     "test": "test:merge-release",
     "exitCode": 0,
-    "elapsedMs": 1456
+    "elapsedMs": 1488
   },
   {
     "test": "test:five-flow-features",
     "exitCode": 0,
-    "elapsedMs": 1578
+    "elapsedMs": 1405
   },
   {
     "test": "test:map-mixed-history",
     "exitCode": 0,
-    "elapsedMs": 1467
+    "elapsedMs": 1274
   },
   {
     "test": "test:research-events",
     "exitCode": 0,
-    "elapsedMs": 3771
+    "elapsedMs": 3538
   },
   {
     "test": "test:event-export-samples",
     "exitCode": 0,
-    "elapsedMs": 1627
+    "elapsedMs": 1726
   },
   {
     "test": "test:event-export",
     "exitCode": 0,
-    "elapsedMs": 19983
+    "elapsedMs": 21226
   },
   {
     "test": "test:data-management",
     "exitCode": 0,
-    "elapsedMs": 3865
+    "elapsedMs": 3740
   },
   {
     "test": "test:research-note-safety",
     "exitCode": 0,
-    "elapsedMs": 58025
+    "elapsedMs": 55634
   },
   {
     "test": "test:stage1:integration",
     "exitCode": 0,
-    "elapsedMs": 18772
+    "elapsedMs": 18756
   },
   {
     "test": "test:session-flow-survey",
     "exitCode": 0,
-    "elapsedMs": 7180
+    "elapsedMs": 7309
   },
   {
     "test": "test:session-cleanup",
     "exitCode": 0,
-    "elapsedMs": 6054
+    "elapsedMs": 5911
   },
   {
     "test": "test:five-flow-composite",
     "exitCode": 0,
-    "elapsedMs": 20544
+    "elapsedMs": 19562
   },
   {
     "test": "test:five-flow-feature-maps",
     "exitCode": 0,
-    "elapsedMs": 3235
+    "elapsedMs": 2940
   },
   {
     "test": "test:goal-map-transfer",
     "exitCode": 0,
-    "elapsedMs": 3521
+    "elapsedMs": 3250
   },
   {
     "test": "test:map-api-v2",
     "exitCode": 0,
-    "elapsedMs": 5595
+    "elapsedMs": 5547
   },
   {
     "test": "test:map-failure-retry",
     "exitCode": 0,
-    "elapsedMs": 5779
+    "elapsedMs": 5467
   },
   {
     "test": "test:parent-followup",
     "exitCode": 0,
-    "elapsedMs": 8509
+    "elapsedMs": 8240
   },
   {
     "test": "test:map-auto-submit-v2",
     "exitCode": 0,
-    "elapsedMs": 2514
+    "elapsedMs": 2736
   },
   {
     "test": "test:learning-activity-events",
     "exitCode": 0,
-    "elapsedMs": 4007
+    "elapsedMs": 3760
   },
   {
     "test": "test:assessment-events",
     "exitCode": 0,
-    "elapsedMs": 5462
+    "elapsedMs": 5468
   },
   {
     "test": "test:server-audit",
     "exitCode": 0,
-    "elapsedMs": 7388
+    "elapsedMs": 7295
   },
   {
     "test": "test:audit-routing",
     "exitCode": 0,
-    "elapsedMs": 1982
+    "elapsedMs": 1855
   },
   {
     "test": "test:integrated-streams",
     "exitCode": 0,
-    "elapsedMs": 5492
+    "elapsedMs": 4802
   },
   {
     "test": "test:integration-invariants",
     "exitCode": 0,
-    "elapsedMs": 2029
+    "elapsedMs": 1794
   },
   {
     "test": "test:safe-server-error",
     "exitCode": 0,
-    "elapsedMs": 1846
+    "elapsedMs": 1163
   },
   {
     "test": "test:server-recovery",
     "exitCode": 0,
-    "elapsedMs": 7297
+    "elapsedMs": 5032
   },
   {
     "test": "test:autosubmit-deadlock",
     "exitCode": 0,
-    "elapsedMs": 6252
+    "elapsedMs": 5212
   },
   {
     "test": "test:delivery-reliability",
     "exitCode": 0,
-    "elapsedMs": 8384
+    "elapsedMs": 8054
   },
   {
     "test": "test:event-scale",
     "exitCode": 0,
-    "elapsedMs": 11872
+    "elapsedMs": 11846
   },
   {
     "test": "test:research-log-ui",
     "exitCode": 0,
-    "elapsedMs": 10673
+    "elapsedMs": 9610
   },
   {
     "test": "test:stage1-analysis-layout-browser",
     "exitCode": 0,
-    "elapsedMs": 16394
+    "elapsedMs": 15429
   },
   {
     "test": "test:link-position-browser",
     "exitCode": 0,
-    "elapsedMs": 11668
+    "elapsedMs": 11052
   },
   {
     "test": "test:link-operations-browser",
     "exitCode": 0,
-    "elapsedMs": 11120
+    "elapsedMs": 10883
   },
   {
     "test": "test:link-operations-api-browser",
     "exitCode": 0,
-    "elapsedMs": 29997
+    "elapsedMs": 30755
   },
   {
     "test": "test:session-flow-survey-browser",
     "exitCode": 0,
-    "elapsedMs": 11628
+    "elapsedMs": 11315
   },
   {
     "test": "test:five-flow-feedback-browser",
     "exitCode": 0,
-    "elapsedMs": 11380
+    "elapsedMs": 10626
   },
   {
     "test": "test:five-flow-features-browser",
     "exitCode": 0,
-    "elapsedMs": 10654
+    "elapsedMs": 9737
   },
   {
     "test": "test:undo-role-browser",
     "exitCode": 0,
-    "elapsedMs": 9830
+    "elapsedMs": 9740
   },
   {
     "test": "test:delivery-browser",
     "exitCode": 0,
-    "elapsedMs": 16456
+    "elapsedMs": 16855
   },
   {
     "test": "test:event-export-browser",
     "exitCode": 0,
-    "elapsedMs": 26812
+    "elapsedMs": 28079
   },
   {
     "test": "test:data-management-browser",
     "exitCode": 0,
-    "elapsedMs": 12324
+    "elapsedMs": 13341
   },
   {
     "test": "test:session-cleanup-browser",
     "exitCode": 0,
-    "elapsedMs": 9600
+    "elapsedMs": 8668
   }
 ]
