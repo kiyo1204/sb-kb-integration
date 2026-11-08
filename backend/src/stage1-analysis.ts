@@ -1,4 +1,4 @@
-import { loadResearchTextSafety, redactResearchOutput } from "./research-output-safety.js";
+import { loadResearchTextSafety, redactResearchOutput, respondResearchSafetyError } from "./research-output-safety.js";
 import {csvCell} from "./csv.js";
 import { safeServerErrorCode } from "./safe-server-error.js";
 import { auditCurrent, auditCommitted } from "./server-audit.js";
@@ -152,6 +152,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         ],
       });
     } catch(error) {
+      if (respondResearchSafetyError(res, error)) return;
       console.error("Stage1 analysis failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_analysis_failed"});
     }
@@ -332,6 +333,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-operations.csv"`);
       return res.send("\uFEFF"+csv(operations,columns));
     } catch(error) {
+      if (respondResearchSafetyError(res, error)) return;
       console.error("Stage1 CSV export failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_csv_failed"});
     }
@@ -356,6 +358,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-evaluations.csv"`);
       return res.send("\uFEFF"+csv(await redactResearchOutput(rows.rows,pool),cols));
     } catch(error) {
+      if (respondResearchSafetyError(res, error)) return;
       console.error("Stage1 evaluation CSV failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_evaluations_csv_failed"});
     }
@@ -379,6 +382,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-reflections.csv"`);
       return res.send("\uFEFF"+csv(await redactResearchOutput(rows.rows,pool),cols));
     } catch(error) {
+      if (respondResearchSafetyError(res, error)) return;
       console.error("Stage1 reflection CSV failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_reflections_csv_failed"});
     }
@@ -397,6 +401,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-features.csv"`);
       return res.send("\uFEFF"+csv([row],Object.keys(row)));
     }catch(error){
+      if (respondResearchSafetyError(res, error)) return;
       console.error("Stage1 feature export failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_features_csv_failed"});
     }
@@ -482,8 +487,9 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       await client.query("COMMIT");
       auditCommitted();
       return res.status(201).json(result.rows[0]);
-    } catch {
+    } catch (error) {
       await client.query("ROLLBACK").catch(()=>undefined);
+      if (respondResearchSafetyError(res, error)) return;
       console.error("evaluation_save_failed");
       return res.status(500).json({error:"evaluation_save_failed"});
     } finally {client.release();}
@@ -543,8 +549,9 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       await client.query("COMMIT");
       auditCommitted();
       return res.status(201).json(result.rows[0]);
-    } catch {
+    } catch (error) {
       await client.query("ROLLBACK").catch(()=>undefined);
+      if (respondResearchSafetyError(res, error)) return;
       console.error("reflection_save_failed");
       return res.status(500).json({error:"reflection_save_failed"});
     } finally {client.release();}

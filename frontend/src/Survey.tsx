@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiFetch } from "./auth-client";
+import { apiFetch, apiErrorMessage } from "./auth-client";
 export type SurveyQuestion = {
   id?: string;
   kind: "TEXT" | "CHOICE" | "RATING";
@@ -212,7 +212,7 @@ export function Survey({
     let active = true;
     void apiFetch(`/api/session-stages/${stageId}/survey`)
       .then(async (r) => {
-        if (!r.ok) throw Error();
+        if (!r.ok) throw new Error(await apiErrorMessage(r, "アンケートを取得できませんでした。"));
         const data = await r.json();
         if (active) {
           setQuestions(data.questions);
@@ -382,7 +382,7 @@ export function ResearchSurvey({
     let active = true;
     void apiFetch(`/api/research/stage1/sessions/${sessionId}/survey`)
       .then(async (r) => {
-        if (!r.ok) throw Error();
+        if (!r.ok) throw new Error(await apiErrorMessage(r, "アンケートを取得できませんでした。"));
         return r.json();
       })
       .then((d) => {
@@ -390,8 +390,8 @@ export function ResearchSurvey({
           id:q.id,kind:q.kind,prompt:q.prompt,required:q.required,config:q.config,
         })));
       })
-      .catch(() => {
-        if (active) setStatus("アンケートを取得できませんでした。");
+      .catch(error => {
+        if (active) setStatus(error instanceof Error ? error.message : "アンケートを取得できませんでした。");
       });
     return () => {
       active = false;
@@ -447,15 +447,15 @@ function SurveyDownload({ sessionId }: { sessionId: string }) {
               const r = await apiFetch(
                 `/api/research/stage1/sessions/${sessionId}/survey-answers.csv`,
               );
-              if (!r.ok) throw Error();
+              if (!r.ok) throw new Error(await apiErrorMessage(r, "アンケートを取得できませんでした。"));
               const url = URL.createObjectURL(await r.blob()),
                 a = document.createElement("a");
               a.href = url;
               a.download = "survey-answers.csv";
               a.click();
               setTimeout(() => URL.revokeObjectURL(url), 1000);
-            } catch {
-              setError("出力できませんでした。");
+            } catch (error) {
+              setError(error instanceof Error ? error.message : "出力できませんでした。");
             }
           })()
         }

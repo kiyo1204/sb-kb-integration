@@ -11,6 +11,8 @@ import { Pool } from "pg";
 import { parse } from "csv-parse/sync";
 import { createLearnerToken, tokenHash } from "../access-control.js";
 import { verifyMockTestUrl } from "./mock-db.js";
+import { checkNormalOutput } from "./research-safety-normal-output.js";
+import { checkSafetyBudget } from "./research-safety-budget-checks.js";
 import { loadResearchTextSafety } from "../research-output-safety.js";
 
 await verifyMockTestUrl(process.env.DATABASE_URL!);
@@ -101,7 +103,7 @@ async function fixture(protocol = "STAGE1_4") {
         "SELF_STUDY",
         "POST_ASSESSMENT",
       ]
-    : ["LESSON", "PRIOR_MAP", "KB_MAP", "INTEGRATION_MAP"]
+    : protocol === "STAGE1_5" ? ["LESSON", "PRIOR_MAP", "KB_MAP", "INTEGRATION_MAP", "SURVEY"] : ["LESSON", "PRIOR_MAP", "KB_MAP", "INTEGRATION_MAP"]
   ).entries()) {
     await pool.query(
       `INSERT INTO session_stages(session_id,stage_type,order_index,status,started_at,completed_at)
@@ -184,6 +186,14 @@ try {
     "INSERT INTO research_identity.revocations(token_hash,queue_key,receipt_id) VALUES($1,$2,$3)",
     [revoked.hash, `deleted:${randomUUID()}`, receipt],
   );
+  const legacyLong = "y".repeat(128);
+  secrets.push(legacyLong);
+  await pool.query("INSERT INTO research_identity.revocations(token_hash,queue_key,receipt_id) VALUES($1,$2,$3)", [tokenHash(legacyLong), `deleted:${randomUUID()}`, receipt]);
+  markers.push("x".repeat(100));
+  await checkNormalOutput(pool, base, researcher, fixture);
+  const budgetSession = await fixture();
+  const budgetFive = await fixture("STAGE1_5");
+  await checkSafetyBudget(pool, base, researcher, budgetSession, answerSession, budgetFive, noSecrets, [revoked.token, legacyCode, legacyLong]);
   const prefix = `/research/stage1/sessions/${a.id}`;
   const good = {
     rationale: "テスト専用：根拠を再確認。\nhttps://example.invalid/synthetic",
@@ -245,6 +255,8 @@ try {
       assert.deepEqual(await rows(a.id), before, "rejected text stored");
     }
   }
+  await request(prefix + "/evaluations", 400, evaluation(`prefix${legacyLong}suffix`));
+  await request(prefix + "/reflections", 400, note(`prefix${legacyLong}suffix`));
   await request(prefix + "/evaluations", 400, {
     ...evaluation("テスト専用"),
     evaluatorCode: a.token,
@@ -418,16 +430,16 @@ try {
       "operations.csv",
       "features.csv",
     ])
-      await request(prefix + "/" + suffix, 500);
-    await request(`/research/sessions/${a.id}/export`, 500);
+      await request(prefix + "/" + suffix, 503);
+    await request(`/research/sessions/${a.id}/export`, 503);
     await request(
       prefix + "/evaluations",
-      500,
+      503,
       evaluation("synthetic-lookup-failure"),
     );
     await request(
       prefix + "/reflections",
-      500,
+      503,
       note("synthetic-lookup-failure"),
     );
   } finally {
@@ -514,6 +526,9 @@ try {
     await pool.query(`DELETE FROM ${table} WHERE session_id=ANY($1::uuid[])`, [
       ids,
     ]);
+  await pool.query("DELETE FROM map_operation_logs WHERE map_id IN (SELECT m.id FROM maps m JOIN session_stages st ON st.id=m.session_stage_id WHERE st.session_id=ANY($1::uuid[]))", [ids]);
+  await pool.query("DELETE FROM survey_answers WHERE session_id=ANY($1::uuid[])", [ids]);
+  await pool.query("DELETE FROM survey_questions WHERE session_id=ANY($1::uuid[])", [ids]);
   await pool.query(
     "DELETE FROM maps WHERE session_stage_id IN(SELECT id FROM session_stages WHERE session_id=ANY($1::uuid[]))",
     [ids],

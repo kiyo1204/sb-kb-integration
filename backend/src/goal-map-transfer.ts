@@ -1,7 +1,7 @@
 import type { Express, Response } from "express";
 import type { Pool } from "pg";
 import { principalOf } from "./access-control.js";
-import { loadResearchTextSafety } from "./research-output-safety.js";
+import { loadResearchTextSafety, respondResearchSafetyError } from "./research-output-safety.js";
 import { MAX_MAP_STATE_BYTES, validMapLabel } from "./research-event-map-v2.js";
 import { validMapCoordinate } from "./research-event-map-v5.js";
 
@@ -201,7 +201,8 @@ export function registerGoalMapTransferRoutes(app: Express, pool: Pool) {
           `attachment; filename="${filename}"`,
         );
         return response.json(document);
-      } catch {
+      } catch (error) {
+        if (respondResearchSafetyError(response, error)) return;
         return statusError(
           response,
           500,
@@ -323,8 +324,9 @@ export function registerGoalMapTransferRoutes(app: Express, pool: Pool) {
           title: map.title,
           kitDefinitionId: kit.rows[0]!.id,
         });
-    } catch {
+    } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
+      if (respondResearchSafetyError(response, error)) return;
       return statusError(
         response,
         500,
