@@ -80,7 +80,15 @@ try {
  await api("/concepts/"+concept.rows[0].id,200,"DELETE");
  assert.equal((await pool.query("SELECT count(*)::int AS n FROM concepts WHERE id=$1",[concept.rows[0].id])).rows[0].n,0);
  assert.equal((await pool.query("SELECT count(*)::int AS n FROM research_events WHERE target_id=$1 AND schema_version=4 AND event_type='DELETE_CONCEPT' AND outcome='SUCCESS'",[concept.rows[0].id])).rows[0].n,1);
- const completed=await pool.query("SELECT id FROM sessions WHERE protocol_key='STAGE1_4' AND status='COMPLETED' LIMIT 1");
+ // Annotation fixtures may intentionally contain only one historical stage.
+ // Select a complete four-activity fixture for the successful analysis/export audit.
+ const completed=await pool.query(`SELECT s.id FROM sessions s
+   WHERE s.protocol_key='STAGE1_4' AND s.status='COMPLETED'
+     AND (SELECT array_agg(st.stage_type ORDER BY st.order_index) FROM session_stages st WHERE st.session_id=s.id)
+       = ARRAY['LESSON','PRIOR_MAP','KB_MAP','INTEGRATION_MAP']::text[]
+     AND NOT EXISTS(SELECT 1 FROM session_stages st WHERE st.session_id=s.id
+       AND (st.status<>'COMPLETED' OR st.started_at IS NULL OR st.completed_at IS NULL))
+   ORDER BY s.created_at,s.id LIMIT 1`);
  assert.ok(completed.rows[0],"Run Stage1 integration first to provide a completed legacy fixture");
  const id=completed.rows[0].id;
  await api("/research/stage1/sessions/"+id+"/analysis",200);

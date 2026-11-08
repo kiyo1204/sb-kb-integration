@@ -32,6 +32,7 @@
     "test:event-export": "tsx src/scripts/verify-event-export.ts",
     "samples:event-export": "tsx src/scripts/generate-event-export-samples.ts",
     "test:event-export-samples": "tsx src/scripts/verify-event-export-samples.ts",
+    "test:research-note-safety": "tsx src/scripts/verify-research-note-safety.ts",
     "test:data-management": "tsx src/scripts/verify-data-management.ts",
     "db:mock": "tsx src/scripts/mock-db.ts",
     "test:mock-reset-new-stream": "tsx src/scripts/verify-mock-reset-new-stream.ts",

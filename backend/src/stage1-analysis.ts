@@ -1,3 +1,4 @@
+import { loadResearchTextSafety, redactResearchOutput } from "./research-output-safety.js";
 import {csvCell} from "./csv.js";
 import { safeServerErrorCode } from "./safe-server-error.js";
 import { auditCurrent, auditCommitted } from "./server-audit.js";
@@ -141,8 +142,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         ...(raw.session.protocolKey === "STAGE1_5" ? {descriptiveFeatures:(await loadFiveFlowFeatures(pool,req.params.sessionId)).value} : {}),
         maps: analysisMaps,
         operations, operationCounts: counts,
-        propositionEvaluations: evals.rows,
-        reflectionNotes: notes.rows,
+        ...await redactResearchOutput({propositionEvaluations: evals.rows, reflectionNotes: notes.rows}, pool),
         ...(raw.survey ? {survey:raw.survey}:{}),
         limitations: [
           "Counts indicate operations, not learning quality.",
@@ -354,7 +354,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         "subjectSnapshot","evaluatorCode","category","rationale","createdAt","eventId"];
       res.setHeader("Content-Type","text/csv; charset=utf-8");
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-evaluations.csv"`);
-      return res.send("\uFEFF"+csv(rows.rows,cols));
+      return res.send("\uFEFF"+csv(await redactResearchOutput(rows.rows,pool),cols));
     } catch(error) {
       console.error("Stage1 evaluation CSV failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_evaluations_csv_failed"});
@@ -377,7 +377,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         "reportedByCode","noteText","createdAt","eventId"];
       res.setHeader("Content-Type","text/csv; charset=utf-8");
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-reflections.csv"`);
-      return res.send("\uFEFF"+csv(rows.rows,cols));
+      return res.send("\uFEFF"+csv(await redactResearchOutput(rows.rows,pool),cols));
     } catch(error) {
       console.error("Stage1 reflection CSV failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_reflections_csv_failed"});
@@ -418,6 +418,11 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
     const client=await pool.connect();
     try {
       await client.query("BEGIN");
+      const safety = await loadResearchTextSafety(client);
+      if ([b.rationale,b.evaluatorCode].some(value => typeof value === "string" && safety.containsSecret(value))) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({error:"sensitive_text_rejected"});
+      }
       if(!await assertSessionCompleted(client,id)) {await client.query("ROLLBACK");return res.status(409).json({error:"session_not_completed"});}
       const belongs=await client.query(
         `SELECT 1 FROM maps m JOIN session_stages ss ON ss.id=m.session_stage_id
@@ -500,6 +505,11 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
     const client=await pool.connect();
     try {
       await client.query("BEGIN");
+      const safety = await loadResearchTextSafety(client);
+      if ([b.noteText,b.reportedByCode].some(value => typeof value === "string" && safety.containsSecret(value))) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({error:"sensitive_text_rejected"});
+      }
       if(!await assertSessionCompleted(client,id)) {await client.query("ROLLBACK");return res.status(409).json({error:"session_not_completed"});}
       if(b.mapId!=null) {
         const map=await client.query(
