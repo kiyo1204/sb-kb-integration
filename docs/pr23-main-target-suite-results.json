@@ -1,0 +1,12 @@
+[
+  {
+    "test": "test:session-cleanup",
+    "exitCode": 0,
+    "elapsedMs": 6975
+  },
+  {
+    "test": "test:session-cleanup-browser",
+    "exitCode": 0,
+    "elapsedMs": 13497
+  }
+]

@@ -246,6 +246,20 @@ function ResearchSessions() {
   const [sessions, setSessions] = useState<ResearchSession[] | null>(null);
   const [error, setError] = useState(false);
   const [reload, setReload] = useState(0);
+  const [deleting,setDeleting]=useState<string|null>(null);
+  const [cleanupMessage,setCleanupMessage]=useState("");
+  async function cleanup(session:ResearchSession) {
+    if(!window.confirm(`未開始セッション ${session.participantCode || "参加者コードなし"}\nID: ${session.id}\nこのセッションの設定・設問・未使用の初期マップを削除します。共有Goal Map・教師用Kitは残ります。開始や学習者データがある場合は削除しません。続行しますか？`)) return;
+    setDeleting(session.id);setCleanupMessage("");
+    try {
+      const response=await apiFetch("/api/research/data-management/cleanup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:session.id,confirm:"DELETE_UNSTARTED"})});
+      const result=await response.json();
+      if(!response.ok) {setCleanupMessage(result.error==="confirmed_deletion_required"?"開始済み、または記録があるため簡易削除できません。確認付きデータ削除を使用してください。":"削除は確定していません。一覧を更新して再確認してください。");return;}
+      setSessions(current=>current?.filter(item=>item.id!==session.id)??null);
+      setCleanupMessage("未開始セッションを削除しました。");
+    } catch {setCleanupMessage("削除結果を確認できません。一覧を更新して再確認してください。");}
+    finally {setDeleting(null);}
+  }
   useEffect(() => {
     const controller = new AbortController();
     apiFetch("/api/research/stage1/sessions", { signal: controller.signal }).then(async response => {
@@ -258,6 +272,7 @@ function ResearchSessions() {
   return <section className="home-card research-session-list" aria-labelledby="research-sessions-heading">
     <div className="home-card-heading-row"><div><h2 id="research-sessions-heading">セッション一覧</h2><p>新しいセッションから表示します。</p></div>
       <button type="button" className="home-refresh-button" onClick={() => setReload(value => value + 1)}>更新</button></div>
+    {cleanupMessage && <p role="status">{cleanupMessage} <a href="/research/data-management">確認付きデータ削除</a></p>}
     {error && <p className="home-action-error" role="alert">一覧を取得できませんでした。接続を確認して更新してください。</p>}
     {!sessions && !error && <p role="status">セッションを読み込んでいます…</p>}
     {sessions?.length === 0 && <p>セッションはまだありません。</p>}
@@ -268,7 +283,7 @@ function ResearchSessions() {
         <td>{session.status === "NOT_STARTED" ? "未開始" : session.status === "IN_PROGRESS" ? "進行中" : "完了"}</td>
         <td>{session.status === "IN_PROGRESS" && session.currentStageType ? `STEP ${(session.currentStageOrder ?? 0) + 1}：${stageNames[session.currentStageType] ?? session.currentStageType}` : "—"}</td>
         <td>{session.startedAt ? formatDate(session.startedAt) : "—"}</td><td>{session.completedAt ? formatDate(session.completedAt) : "—"}</td>
-        <td><a className="home-secondary-button" href={`/sessions/${session.id}`} aria-label={`${session.participantCode || "参加者コードなし"}のセッションを開く`}>開く</a></td>
+        <td><a className="home-secondary-button" href={`/sessions/${session.id}`} aria-label={`${session.participantCode || "参加者コードなし"}のセッションを開く`}>開く</a>{session.status==="NOT_STARTED"?<button type="button" disabled={deleting!==null} onClick={()=>void cleanup(session)} aria-label={`${session.participantCode || "参加者コードなし"}の未開始セッションを削除`}>未開始セッションを削除</button>:<a href="/research/data-management">確認付きデータ削除</a>}</td>
       </tr>)}</tbody>
     </table></div>}
   </section>;

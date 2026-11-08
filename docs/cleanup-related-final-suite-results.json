@@ -1,0 +1,32 @@
+[
+  {
+    "test": "test:stage1:integration",
+    "exitCode": 0,
+    "elapsedMs": 25185
+  },
+  {
+    "test": "test:session-flow-survey",
+    "exitCode": 0,
+    "elapsedMs": 9103
+  },
+  {
+    "test": "test:session-cleanup",
+    "exitCode": 0,
+    "elapsedMs": 6107
+  },
+  {
+    "test": "test:goal-map-transfer",
+    "exitCode": 0,
+    "elapsedMs": 4293
+  },
+  {
+    "test": "test:delivery-reliability",
+    "exitCode": 0,
+    "elapsedMs": 10185
+  },
+  {
+    "test": "test:session-cleanup-browser",
+    "exitCode": 0,
+    "elapsedMs": 11202
+  }
+]
