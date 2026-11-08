@@ -1,0 +1,91 @@
+{
+  "check": "request-safety-budget",
+  "node": "v22.23.4",
+  "platform": "win32",
+  "cpu": "AMD Ryzen 7 7730U with Radeon Graphics         ",
+  "method": "performance.now wall ms; 5 current/3 historical sequential samples; parallel batches 8 accepted / 4 refused; API includes audit and disposable PostgreSQL; function fake lookup",
+  "timings": {
+    "function_japanese_1000x10": [
+      0.72,
+      0.33,
+      0.55,
+      0.47,
+      0.3
+    ],
+    "function_ascii_1000": [
+      49.04,
+      77.71,
+      48.09,
+      45.19,
+      58.59
+    ],
+    "function_ascii_10000": [
+      75.51,
+      43.4,
+      44.91,
+      75.75,
+      43.33
+    ],
+    "function_ascii_1000x10": [
+      46.26,
+      74.18,
+      45.78,
+      51.69,
+      79.2
+    ],
+    "historical_function_ascii_1000": [
+      215.28,
+      210.73,
+      229.65
+    ],
+    "historical_function_ascii_10000": [
+      2321.88,
+      2375.92,
+      2201.96
+    ],
+    "historical_function_ascii_1000x10": [
+      2030.93,
+      2024.59,
+      2038.23
+    ],
+    "historical_function_japanese_1000x10": [
+      0.45,
+      0.24,
+      0.26
+    ],
+    "api_note_ascii_10000": [
+      167.27,
+      101.84,
+      75.86,
+      75.53,
+      130.09
+    ],
+    "api_evaluation_ascii_5000": [
+      81.38,
+      71.91,
+      100.96,
+      81.84,
+      101.99
+    ],
+    "api_japanese_1000": [
+      33.07,
+      35.43,
+      28.61,
+      48.25,
+      27.09
+    ],
+    "api_parallel_8_independent": [
+      385.53
+    ],
+    "api_parallel_4_exceeded": [
+      246.7
+    ],
+    "api_multiple_rows": [
+      95.7,
+      130.18,
+      99.37,
+      101.14,
+      123.17
+    ]
+  }
+}
