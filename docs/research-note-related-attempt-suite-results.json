@@ -1,0 +1,57 @@
+[
+  {
+    "test": "test:five-flow-features",
+    "exitCode": 0,
+    "elapsedMs": 1967
+  },
+  {
+    "test": "test:event-export",
+    "exitCode": 0,
+    "elapsedMs": 29109
+  },
+  {
+    "test": "test:data-management",
+    "exitCode": 0,
+    "elapsedMs": 4938
+  },
+  {
+    "test": "test:research-note-safety",
+    "exitCode": 0,
+    "elapsedMs": 6981
+  },
+  {
+    "test": "test:stage1:integration",
+    "exitCode": 0,
+    "elapsedMs": 26031
+  },
+  {
+    "test": "test:session-flow-survey",
+    "exitCode": 0,
+    "elapsedMs": 9390
+  },
+  {
+    "test": "test:five-flow-composite",
+    "exitCode": 0,
+    "elapsedMs": 27238
+  },
+  {
+    "test": "test:five-flow-feature-maps",
+    "exitCode": 0,
+    "elapsedMs": 4142
+  },
+  {
+    "test": "test:goal-map-transfer",
+    "exitCode": 0,
+    "elapsedMs": 4293
+  },
+  {
+    "test": "test:assessment-events",
+    "exitCode": 0,
+    "elapsedMs": 6773
+  },
+  {
+    "test": "test:server-audit",
+    "exitCode": 1,
+    "elapsedMs": 7394
+  }
+]

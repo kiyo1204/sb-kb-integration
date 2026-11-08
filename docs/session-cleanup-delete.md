@@ -45,3 +45,7 @@ Idempotency-Key付き学習者要求は、認証と保存の間にSessionが消�
 - 成功集計はcleanup-target-final-suite-results.json、cleanup-related-final-suite-results.json。既存data-managementは最初の関連実行で成功したが、その直後に親NodeプロセスがWindows 0xC0000409で終了したため、残りの6検証を別実行で完了した。対象suiteも一度テスト開始前に同じWindows異常終了があり、再実行は成功。途中停止を一括成功とは扱っていない。
 
 全体suiteはGitHub Actionsの新規隔離DBで実行する。チュートリアル専用アクセスコードはこのPRの範囲に含まない。
+
+## 最新mainへの追従検証
+
+PR #36を含むmainへのmerge、#21との差分、追加した回答競合/旧4活動回帰、今回の対象/全体suite結果は [main追従記録](session-cleanup-main-update.md) を参照。上記の旧HEADでの記録とは別の実行である。

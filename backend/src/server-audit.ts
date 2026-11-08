@@ -63,7 +63,7 @@ export function registerAudit(app:Express,pool:Pool) {
    if(!uuid.test(match[1]!))return next();
    let eventType:EventType|undefined;
    if(req.method==="GET"&&(/\/export$|\.csv$/.test(req.path)))eventType="RESEARCH_EXPORT";
-   else if(req.method==="GET"&&/\/analysis$|\/history$/.test(req.path))eventType="RESEARCH_ANALYSIS_VIEW";
+   else if(req.method==="GET"&&/\/analysis$|\/history$|\/descriptive-features$/.test(req.path))eventType="RESEARCH_ANALYSIS_VIEW";
    else if(req.method==="POST"&&/\/learner-token$/.test(req.path))eventType="SESSION_SETTINGS_CHANGE";
    else if((req.method==="POST"&&/\/(evaluations|reflections)$/.test(req.path))||(req.method==="PUT"&&/\/assessment\/questions$/.test(req.path)))eventType="RESEARCH_ASSESSMENT_CHANGE";
    if(eventType) {

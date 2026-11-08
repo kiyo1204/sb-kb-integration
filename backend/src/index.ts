@@ -1,3 +1,4 @@
+import { researchSafetyBudget, respondResearchSafetyError } from "./research-output-safety.js";
 import { registerSurveyRoutes, SeedValidationError, validSurveyQuestions, saveSurveyQuestions, seedLearnerMap, seededConceptGuard } from "./surveys.js";
 import { respondToMapFailure } from "./map-failure-response.js";
 import { validateMapStateV5, validMapCoordinate } from "./research-event-map-v5.js";
@@ -42,6 +43,7 @@ import { registerAudit, auditCurrent, auditCommitted, recordAudit } from "./serv
 import { observeExpiredStages } from "./system-submission.js";
 import { MAX_MAP_STATE_BYTES } from "./research-event-map-v2.js";
 import { registerGoalMapTransferRoutes } from "./goal-map-transfer.js";
+import { releaseMerge, MergeReleaseUnavailableError } from "./merge-release.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -287,6 +289,9 @@ function readOnlyMapResponse(response: Response, error: unknown) {
       error: "concept_merge_result_protected",
       message: "Merge lineageを保持するため、このConceptは削除できません。",
     });
+  }
+  if (error instanceof MergeReleaseUnavailableError) {
+    return response.status(409).json({ error: "merge_release_unavailable", message: "Merge直前の状態または参照を確認できないため、解除できません。マップは変更されていません。" });
   }
 
   if (error instanceof ConceptMergeConflictError) {
@@ -1703,6 +1708,7 @@ async function applyHistoryStateDelta(
   }
 }
 
+app.use(researchSafetyBudget);
 app.use((request, response, next) => {
   const limit = request.path === "/api/research/goal-maps/import" ? MAX_MAP_STATE_BYTES : "100kb";
   express.json({ limit })(request, response, next);
@@ -2627,6 +2633,7 @@ app.get(
         .json(result.value);
     } catch (error) {
       if (client) await client.query("ROLLBACK").catch(() => undefined);
+      if (respondResearchSafetyError(response, error)) return;
       console.error("Failed to export Session research data", safeServerErrorCode(error));
       return response.status(500).json({
         error: "session_export_failed",
@@ -6454,6 +6461,18 @@ app.delete("/api/concepts/:conceptId", async (request, response) => {
         [conceptId],
       );
       if (mergeChildren.rows[0]?.isReferenced) {
+        const owner = map.sessionStageId && (await client.query<{ protocolKey: string }>(
+          "SELECT s.protocol_key AS \"protocolKey\" FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid", [map.sessionStageId],
+        )).rows[0];
+        if (map.mapType === "INTEGRATION" && owner && owner.protocolKey === "STAGE1_5") {
+          const context = await readUndoRedoContext(client, mapId);
+          if (context.status !== "AVAILABLE" || !context.initial || !context.current) throw new MergeReleaseUnavailableError();
+          const desired = releaseMerge(context.initial, context.operations, context.current, conceptId);
+          const delta = historyStateDelta(context.current, desired, conceptId, "DELETE_CONCEPT");
+          await applyHistoryStateDelta(client, mapId, delta, desired);
+          await appendMapOperationLog(client, { mapId, operationType: "DELETE_CONCEPT", targetType: "CONCEPT", targetId: conceptId, before: context.current, after: desired, clientTimestamp: timestamp.value });
+          return { id: conceptId, mapId, mergeReleased: true };
+        }
         throw new MergeResultProtectedError();
       }
 
@@ -6527,7 +6546,7 @@ app.delete("/api/concepts/:conceptId", async (request, response) => {
       });
     }
 
-    return response.json({ id: deletedConcept.id });
+    return response.json(deletedConcept);
   } catch (error) {
     const readOnlyResponse = readOnlyMapResponse(response, error);
     if (readOnlyResponse) return readOnlyResponse;

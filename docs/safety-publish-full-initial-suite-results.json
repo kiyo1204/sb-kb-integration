@@ -1,0 +1,12 @@
+[
+  {
+    "test": "test:test-target-guards",
+    "exitCode": 0,
+    "elapsedMs": 1573
+  },
+  {
+    "test": "test:event-catalog",
+    "exitCode": 1,
+    "elapsedMs": 2546
+  }
+]

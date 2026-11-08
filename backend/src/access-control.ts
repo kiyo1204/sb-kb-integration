@@ -162,6 +162,14 @@ export function accessControl(pool: Pool) {
         if (await learnerMayAccessMap(pool, kind, id, principal.sessionId, request.method)) return permit(client=>learnerMayAccessMap(client,kind,id,principal.sessionId,request.method));
       } catch (error) { return next(error); }
       if(await operationGate(pool,request,response,scope,true))return;
+      const receipt = response.locals.operationResult;
+      // A released result no longer has a Concept row. Replay only this exact
+      // committed request, still authorized against its live owning Map/Session.
+      if (kind === "concepts" && request.method === "DELETE" && receipt?.mergeReleased === true && receipt.id === id && typeof receipt.mapId === "string") {
+        try {
+          if (await learnerMayAccessMap(pool,"maps",receipt.mapId,principal.sessionId,request.method)) return permit(client=>learnerMayAccessMap(client,"maps",receipt.mapId,principal.sessionId,request.method));
+        } catch (error) { return next(error); }
+      }
       if(response.locals.operationKnown)return committedReceipt(response);
       return response.status(404).json({ error: "not_found" });
     }

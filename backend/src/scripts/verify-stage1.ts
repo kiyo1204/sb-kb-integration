@@ -6,6 +6,7 @@ import { createLearnerToken, storeLearnerToken } from "../access-control.js";
 import { getSession } from "../sessions.js";
 import { insertResearchEvent } from "../research-events.js";
 import type { MapHistorySnapshot } from "../map-history.js";
+import { parse } from "csv-parse/sync";
 
 const apiBase=process.env.API_BASE_URL ?? "http://127.0.0.1:3000";
 await verifyMockTestUrl(process.env.DATABASE_URL ?? "");
@@ -1137,6 +1138,12 @@ async function run(){
     const featureCsvContent=await featureCsv.text();
     assert.ok(featureCsvContent.includes("retainedScratchPropositions"));
     assert.ok(featureCsvContent.includes("stage1-descriptive-v2"));
+    const featureRow=(parse(featureCsvContent,{columns:true,bom:true}) as Record<string,string>[])[0]!;
+    const frozenFeatureKeys=["featureVersion","ordinaryEditEvents","undoEvents","redoEvents","scratchConcepts","scratchLinks","kbConcepts","kbLinks","integrationActiveConcepts","integrationLinks","retainedScratchPropositions","inheritedToAddedPropositions","mixedMergeEndpointPropositions","kitConceptPartCount","kitLinkPartCount","kitConceptImportEvents","kitLinkImportEvents","currentlyImportedDistinctKitConcepts","currentlyImportedDistinctKitLinks","currentKitConceptUsageRate","currentKitLinkUsageRate","addConceptEvents","editConceptEvents","deleteConceptEvents","moveConceptEvents","addLinkEvents","editLinkEvents","deleteLinkEvents","reconnectLinkEvents","mergeConceptEvents"];
+    assert.deepEqual(Object.keys(featureRow),["sessionId","participantCode",...frozenFeatureKeys]);
+    for(const key of frozenFeatureKeys)assert.equal(featureRow[key],String((analysis.features as unknown as Record<string,unknown>)[key]??""));
+    await api(`/research/stage1/sessions/${created.id}/descriptive-features`,409);
+    await api(`/research/stage1/sessions/${created.id}/descriptive-features.csv`,409);
     assert.ok(analysis.operationCounts.ADD_CONCEPT>=2);
     assert.ok(analysis.operations.some(o=>o.operationType==="IMPORT_KIT_LINK"));
     const currentMap=await api<MapData>(`/maps/${integration.id}`,200);

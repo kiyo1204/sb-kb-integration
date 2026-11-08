@@ -44,7 +44,7 @@ export function ResearchAssessment({ sessionId }: { sessionId: string }) {
   }
   function update(index: number, change: Partial<Question>) { setQuestions(list => list.map((q, i) => i === index ? { ...q, ...change } : q)); }
   function move(index: number, delta: number) { setQuestions(list => { const next = [...list]; const target = index + delta; if (target < 0 || target >= next.length) return list; [next[index], next[target]] = [next[target]!, next[index]!]; return next; }); }
-  async function download(pathname: string) { try { await downloadApiFile(pathname); } catch { setMessage("ファイルを取得できませんでした。"); } }
+  async function download(pathname: string) { try { await downloadApiFile(pathname); } catch (error) { setMessage(error instanceof Error ? error.message : "ファイルを取得できませんでした。"); } }
   if (!data) return <section><h2>評価問題・回答</h2><p role="status">{message || "読み込み中…"}</p></section>;
   const editable = data.session.status === "NOT_STARTED";
   return <section className="session-stage-list research-assessment">

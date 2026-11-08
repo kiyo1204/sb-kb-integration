@@ -14,11 +14,16 @@ async function call(path:string,body:unknown,token=researcher) {
   return {status:r.status,body:await r.json()};
 }
 const cleanup=(id:string,token=researcher)=>call("/api/research/data-management/cleanup",{sessionId:id,confirm:"DELETE_UNSTARTED"},token);
-async function fixture(old=false) {
+async function fixture(old: boolean | "four"=false) {
   const c=await pool.connect();
   try { await c.query("BEGIN");
     const input={participantCode:"MOCK-CLEANUP",lessonVideoUrl:"/mock.mp4",kitDefinitionId:"66666666-6666-4666-8666-666666666662",groupActivitySeconds:60};
     const s=old?await createStage1Session(c,{...input,studyGroup:"CONTROL"}):await createFiveActivitySession(c,input);
+    if(old === "four") {
+      await c.query("UPDATE sessions SET protocol_key='STAGE1_4',study_group=NULL,group_activity_seconds=NULL WHERE id=$1",[s.id]);
+      await c.query("DELETE FROM session_stages WHERE session_id=$1 AND stage_type IN ('PRE_ASSESSMENT','POST_ASSESSMENT')",[s.id]);
+      await c.query("UPDATE session_stages SET stage_type='INTEGRATION_MAP',order_index=3 WHERE session_id=$1 AND stage_type='SELF_STUDY'",[s.id]);
+    }
     const token=createLearnerToken();await storeLearnerToken(c,s.id,token.hash);
     await c.query("COMMIT");return {...s,token:token.token};
   } finally {c.release();}
@@ -26,8 +31,9 @@ async function fixture(old=false) {
 const exists=async(id:string)=>(await pool.query("SELECT * FROM sessions WHERE id=$1",[id])).rows[0];
 async function reject(id:string) {const result=await cleanup(id);assert.equal(result.status,409);assert.equal(result.body.error,"confirmed_deletion_required");assert.equal(result.body.managementUrl,"/research/data-management");assert.ok(await exists(id));}
 try {
+  const kitsBefore=(await pool.query("SELECT id,goal_map_id,name FROM kit_definitions ORDER BY id")).rows;
   const keep=await fixture();const shared=await pool.query("SELECT id,title FROM maps WHERE type='GOAL' ORDER BY id");
-  for(const old of [false,true]) {
+  for(const old of [false,true,"four"] as const) {
     const s=await fixture(old);const stage=s.stages.find(x=>x.stageType==='PRIOR_MAP')!;
     const map=(await pool.query("INSERT INTO maps(type,session_stage_id) VALUES('PRIOR',$1) RETURNING id",[stage.id])).rows[0].id;
     const concept=(await pool.query("INSERT INTO concepts(map_id,label,position_x,position_y) VALUES($1,'initial',0,0) RETURNING id",[map])).rows[0].id;
@@ -71,6 +77,35 @@ try {
     assert.ok(observed,'cleanup must wait for concurrent start transaction');await lock.query("COMMIT");
     assert.equal((await waiting).body.error,'confirmed_deletion_required');assert.equal((await exists(locked.id)).status,'IN_PROGRESS');
   } finally {await lock.query("ROLLBACK");lock.release();}
+  // Answer-first: observe cleanup waiting behind the answer write, then commit.
+  const answerFirst=await fixture();const answerStage=answerFirst.stages.find(x=>x.stageType==='SURVEY')!.id;
+  const answerQuestion=(await pool.query("INSERT INTO survey_questions(session_id,kind,prompt,required,display_order,config) VALUES($1,'TEXT','MOCK race',false,0,'{}') RETURNING id",[answerFirst.id])).rows[0].id;
+  const writer=await pool.connect();await writer.query("BEGIN");
+  await writer.query("INSERT INTO survey_answers(session_id,stage_id,question_id,answer) VALUES($1,$2,$3,'\"MOCK answer\"'::jsonb)",[answerFirst.id,answerStage,answerQuestion]);
+  const answerWaiting=cleanup(answerFirst.id);
+  try {
+    const deadline=Date.now()+5000;let observed=false;
+    while(Date.now()<deadline){if((await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'LOCK TABLE %'")).rowCount){observed=true;break;}await new Promise(r=>setTimeout(r,20));}
+    assert.ok(observed);await writer.query("COMMIT");assert.equal((await answerWaiting).body.error,'confirmed_deletion_required');
+    assert.equal((await pool.query("SELECT 1 FROM survey_answers WHERE session_id=$1",[answerFirst.id])).rowCount,1);
+  } finally {await writer.query("ROLLBACK");writer.release();}
+  // Delete-first: pause inside DELETE while its table locks are held, then start
+  // an answer insertion. No fixed sleep decides which transaction wins.
+  const deleteFirst=await fixture();const deleteStage=deleteFirst.stages.find(x=>x.stageType==='SURVEY')!.id;
+  const deleteQuestion=(await pool.query("INSERT INTO survey_questions(session_id,kind,prompt,required,display_order,config) VALUES($1,'TEXT','MOCK race',false,0,'{}') RETURNING id",[deleteFirst.id])).rows[0].id;
+  const barrier=await pool.connect();await barrier.query("SELECT pg_advisory_lock(882319)");
+  await pool.query(`CREATE FUNCTION mock_cleanup_barrier() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.id='${deleteFirst.id}'::uuid THEN PERFORM pg_advisory_xact_lock(882319); END IF; RETURN OLD; END $$; CREATE TRIGGER mock_cleanup_barrier BEFORE DELETE ON sessions FOR EACH ROW EXECUTE FUNCTION mock_cleanup_barrier()`);
+  try {
+    const deleting=cleanup(deleteFirst.id);
+    const deadline=Date.now()+5000;let observed=false;
+    while(Date.now()<deadline){if((await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory' AND query LIKE 'DELETE FROM sessions%'")).rowCount){observed=true;break;}await new Promise(r=>setTimeout(r,20));}
+    assert.ok(observed);
+    const lateAnswer=pool.query("INSERT INTO survey_answers(session_id,stage_id,question_id,answer) VALUES($1,$2,$3,'\"MOCK late\"'::jsonb)",[deleteFirst.id,deleteStage,deleteQuestion]).then(()=>"unexpected_success",(e: {code:string})=>e.code);
+    await barrier.query("SELECT pg_advisory_unlock(882319)");
+    assert.equal((await deleting).status,200);assert.equal(await lateAnswer,'23503');
+    assert.equal(await exists(deleteFirst.id),undefined);
+    assert.equal((await pool.query("SELECT 1 FROM survey_answers WHERE session_id=$1",[deleteFirst.id])).rowCount,0);
+  } finally {await barrier.query("SELECT pg_advisory_unlock(882319)");barrier.release();await pool.query("DROP TRIGGER mock_cleanup_barrier ON sessions; DROP FUNCTION mock_cleanup_barrier()");}
   // Real API races: either cleanup wins before start, or the started Session survives.
   for(let i=0;i<6;i++) {const s=await fixture();const [d,start]=await Promise.all([cleanup(s.id),call(`/api/sessions/${s.id}/start`,{},s.token)]);const saved=await exists(s.id);if(start.status===200){assert.ok(saved);assert.equal(saved.status,'IN_PROGRESS');assert.notEqual(d.status,200);}if(d.status===200){assert.equal(saved,undefined);assert.notEqual(start.status,200);}}
   for(let i=0;i<4;i++) {
@@ -78,6 +113,7 @@ try {
     const [d]=await Promise.all([cleanup(s.id),call(`/api/session-stages/${st.id}/start`,{},s.token)]);
     if(d.status===200) assert.equal((await pool.query("SELECT 1 FROM operation_receipts WHERE principal_scope=$1",['LEARNER:'+s.id])).rowCount,0);
   }
+  assert.deepEqual((await pool.query("SELECT id,goal_map_id,name FROM kit_definitions ORDER BY id")).rows,kitsBefore);
   assert.deepEqual((await pool.query("SELECT id,title FROM maps WHERE type='GOAL' ORDER BY id")).rows,shared.rows);assert.ok(await exists(keep.id));
   assert.equal((await pool.query("SELECT 1 FROM session_stages st LEFT JOIN sessions s ON s.id=st.session_id WHERE s.id IS NULL")).rowCount,0);
   console.log("Session cleanup: old/new pristine resources, audit receipt, list removal, started/events/answers/history/submission/delivery rejection, auth, rollback, start races and shared resources: PASS");
