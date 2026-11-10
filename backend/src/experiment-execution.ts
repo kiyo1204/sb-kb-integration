@@ -164,10 +164,18 @@ export function registerExperimentExecutionRoutes(app: Express, pool: Pool) {
       key = req.header("Idempotency-Key");
     if (!isUuid(id) || !isUuid(key) || Object.keys(req.body ?? {}).length)
       return res.status(400).json({ error: "invalid_start" });
-    const c = await pool.connect();
+    let c: PoolClient | null = null;
+    const rollbackAndRelease = async () => {
+      if (!c) return;
+      const held = c;
+      c = null;
+      try { await held.query("ROLLBACK"); held.release(); }
+      catch { held.release(true); }
+    };
     let status = 200,
       code = "ok";
     try {
+      c = await pool.connect();
       await c.query("BEGIN");
       await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         "experiment-start:" + key.toLowerCase(),
@@ -215,11 +223,12 @@ export function registerExperimentExecutionRoutes(app: Express, pool: Pool) {
         code = "participants_required";
       }
       if (status !== 200) {
-        await c.query("ROLLBACK");
+        await rollbackAndRelease();
         await pool.query(
           "INSERT INTO experiment_start_audit(run_id,http_status,outcome,reason_code) VALUES($1,$2,'REJECTED',$3)",
           [id, status, code],
         );
+        res.set("X-Experiment-Start-Audit-Saved", "true");
         return res
           .status(status)
           .json({
@@ -245,13 +254,14 @@ export function registerExperimentExecutionRoutes(app: Express, pool: Pool) {
       await c.query("COMMIT");
       return res.json(result);
     } catch {
-      await c.query("ROLLBACK").catch(() => undefined);
-      await pool
+      await rollbackAndRelease();
+      const auditSaved = await pool
         .query(
           "INSERT INTO experiment_start_audit(run_id,http_status,outcome,reason_code) VALUES($1,503,'FAILURE','start_unavailable')",
           [id],
         )
-        .catch(() => undefined);
+        .then(() => true, () => false);
+      res.set("X-Experiment-Start-Audit-Saved", String(auditSaved));
       return res
         .status(503)
         .json({
@@ -259,7 +269,7 @@ export function registerExperimentExecutionRoutes(app: Express, pool: Pool) {
           message: "開始状態を確認できません。同じ要求で再試行してください。",
         });
     } finally {
-      c.release();
+      c?.release();
     }
   });
 }

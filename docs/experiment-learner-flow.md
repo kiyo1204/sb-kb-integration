@@ -299,3 +299,24 @@ Windows/Node v22.23.4/PostgreSQL17/Edge headless/loopback/ONLY_SYNTHETICの専�
 最終結果: `export-review-target`対象2/2成功。`export-review-full`全体55/55成功（741,780ms）。接続数1の並行404/409/503・各監査・後続正常要求、UUID3表記、別実施Sessionの混入拒否、撮影失敗時の元例外保持も全体内で成功。ソース指紋B89B4C0C6DAB65620720E08FC2096821C28C517591BFEFB479029F43848F62EDが開始/終了で一致。初回fixture失敗、修正前503再現、修正後成功は別の記録とした。過去のUIタイムアウト原因は未特定のまま。
 
 変更: experiment-research.ts、追加migration179115、experiment-export-pool-checks.ts、既存experiment-research-checks.ts、failure-screenshot.ts、verify-failure-screenshot.ts、旧分析ブラウザー診断呼出し、本書/結果。schema制約を緩めたのは監査理由コードの追加だけで、認可やMap/履歴/教材/参加者所有制約は不変。今回作成した専用2コンテナー/volume/cache/manifestは用途/ID/nonce/DB名/bind/パスを確認して削除済み。開始時cleanのsurvey生成結果だけを復元し、今回生成mobile一時画像を削除。先行バックアップ/差分/A/B文書は保持。実DB/LAN/本番/20端末同時利用は未検証。コミット/push/PR/Issue/通常公開なし。
+
+
+## PR38 実施開始APIの接続待ち修正
+
+開始時HEADはe09e751e2a0800c6f4c71894b383812d3be80559、追跡済み差分なし、未追跡268件。既存バックアップと単位A/B文書は保持した。
+
+開始ルートの接続取得をtry内へ移し、拒否・例外時はrollbackとreleaseを完了してから別接続で監査する。rollback失敗接続は破棄し、二重releaseを防ぐ。監査も失敗した場合は固定503とX-Experiment-Start-Audit-Saved:falseを返す。開始条件・受付票・所属・公開ゲートは変更しない。
+
+新規experiment-start-pool-checks.tsを既存learner検証から実行する。製品の開始ルート、既存accessControl、実PostgreSQL17、max:1/接続待機上限1000msのPool、検証用HTTPサーバーを使う。404と参加者0件409は実DB状態。書込み障害は状態UPDATE後の受付票INSERTを実SQLエラーへ置き換え、監査障害は監査INSERTを実SQLエラーへ置き換える。通常サーバー全体をmax:1で動かす検証ではない。
+
+各4並行の404/409/503、HTTPと監査outcome/reason_code、監査不能ヘッダー、秘密値・SQL本文非露出、PREPARINGと受付票0件へのrollback、各ケース後の正常開始、同一キー4並行200と成功監査/受付票1件、再開始409、未認証拒否を確認した。既存の所属・固定教材・学習者分離・開始競合検証は維持する。
+
+失敗経過: 修正前は404要求が接続待ちで503となり再現した(start-pool-repro)。修正後の初回はテストの監査障害注入がcallback接続へ届かず失敗したため、Pool.query経路も注入するようfixtureを修正した(start-pool-target)。その後の対象learnerは成功(start-pool-fixed)。関連run-management/participant-accessも成功。
+
+Node24.15.0/Windows/Edgeの最初の全体は53件成功後、2回目の学習者ブラウザーのパレットドラッグ待機で停止。単独の実API・ブラウザー再実行は期待値変更なしで成功したが原因は未特定。次の全体はNode24ネイティブ終了3221226505で停止した。Node22への切替時にDB再利用による固定fixture件数不一致も発生し、これは準備の誤りとして分離した。これらを最終成功扱いしない。
+
+最終検証: 公式配布物のSHA-256照合済みNode22.23.4、Windows、PostgreSQL17.11、Edge、loopback、ONLY_SYNTHETIC、新規stage1_mock_start_node22で全体55/55成功(start-pool-clean22-suite-results.json)。backend typecheck/lint/buildもNode22で全て成功。frontendソース・設定は変更せず、関連ブラウザーは全体で実行した。過去の55/55記録とは別の今回の結果。
+
+専用DBは既存db:mockのcreate/migrate/safety/seed/checkを使用し、suiteは対象をRESEARCH_SUITE_ONLY=test:experiment-learner（関連はtest:run-management,test:participant-access）、全体は同変数を解除してRESEARCH_BROWSER_CHECKS=1/BROWSER_CHANNEL=msedgeで実行した。各結果prefixは上記のとおり。生の中間記録はローカルだけに保持しコミットしない。
+
+今回作成した専用DB4件はcontainer ID/名前/用途/nonce/DB名/loopback bind/volume/cacheパス/リンクなしを確認して後片付けした。今回の一時Node配布物も削除した。生成された開始時cleanのsurvey結果だけを復元し、先行未追跡ファイルは保持。既存DB適用、実機LAN、複数端末、本番運用、旧分析UIと今回パレット待機の根本原因は未確認。通常公開は無効のまま。

@@ -1,3 +1,4 @@
+import {checkStartPool} from "./experiment-start-pool-checks.js";
 import {checkExperimentResearch} from "./experiment-research-checks.js";
 import type { Request, Response } from "express";
 import {
@@ -217,6 +218,7 @@ try {
       expectedRevision: s.editRevision,
     })
   ).data;
+  await checkStartPool(base, mat.id);
   const run = (
     await call(
       root,
