@@ -147,7 +147,7 @@ export async function seedLearnerMap(
   const s = (
     await c.query("SELECT protocol_key FROM sessions WHERE id=$1", [sessionId])
   ).rows[0];
-  if (s?.protocol_key !== "STAGE1_5") return false;
+  if (!["STAGE1_5","SBKB_INTEGRATION_V1"].includes(s?.protocol_key)) return false;
   const items = (
     await c.query<{ id: string; source: string; label: string }>(
       `SELECT item.id,item.source_concept_id AS source,g.label FROM session_seed_concepts seed JOIN kit_concept_items item ON item.id=seed.kit_concept_item_id JOIN sessions s ON s.id=seed.session_id AND s.research_kit_definition_id=item.kit_definition_id JOIN concepts g ON g.id=item.source_concept_id WHERE seed.session_id=$1 ORDER BY item.id FOR SHARE OF item,g`,

@@ -1,3 +1,5 @@
+import {guardExperimentTransaction} from "./experiment-execution.js";
+import {ParticipantAccessError} from "./experiment-participant-access.js";
 import type { Express } from "express";
 import type { Pool, PoolClient } from "pg";
 import { principalOf } from "./access-control.js";
@@ -60,15 +62,20 @@ export function registerDeliveryReports(app: Express, pool: Pool) {
       ].includes(b.lastResponse)
     )
       return res.status(400).json({ error: "invalid_delivery_report" });
+    const client=p.experiment ? await pool.connect() : undefined;
     try {
-      await pool.query(
+      if(client){await client.query("BEGIN");await guardExperimentTransaction(client);}
+      await (client??pool).query(
         "INSERT INTO client_delivery_reports(session_id,client_id,report_sequence,pending,retrying,acknowledged,capacity_lost,expired_lost,rejected_lost,storage_lost,attempts,last_response) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(session_id,client_id) DO UPDATE SET report_sequence=EXCLUDED.report_sequence,pending=EXCLUDED.pending,retrying=EXCLUDED.retrying,acknowledged=EXCLUDED.acknowledged,capacity_lost=EXCLUDED.capacity_lost,expired_lost=EXCLUDED.expired_lost,rejected_lost=EXCLUDED.rejected_lost,storage_lost=EXCLUDED.storage_lost,attempts=EXCLUDED.attempts,last_response=EXCLUDED.last_response,received_at=clock_timestamp() WHERE client_delivery_reports.report_sequence<EXCLUDED.report_sequence",
         [id, b.clientId, ...numbers.map((k) => b[k]), b.lastResponse],
       );
+      if(client)await client.query("COMMIT");
       return res.json({ reportSaved: true });
-    } catch {
+    } catch(error) {
+      if(client)await client.query("ROLLBACK").catch(()=>undefined);
+      if(error instanceof ParticipantAccessError)return res.status(error.status).json({error:error.code});
       return res.status(503).json({ error: "delivery_report_unavailable" });
-    }
+    } finally {client?.release();}
   });
   app.get(
     "/api/research/sessions/:sessionId/delivery-status",

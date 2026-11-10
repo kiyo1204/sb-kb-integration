@@ -50,7 +50,10 @@ export async function loadResearchTextSafety(
   try {
     result = await client.query<{ hash: string }>(
       `SELECT learner_access_token_hash AS hash FROM sessions WHERE learner_access_token_hash IS NOT NULL
-       UNION SELECT token_hash AS hash FROM research_identity.revocations`,
+       UNION SELECT token_hash AS hash FROM research_identity.revocations
+       UNION SELECT code_hash AS hash FROM experiment_participant_access
+       UNION SELECT token_hash AS hash FROM experiment_retired_credentials
+       UNION SELECT client_hash AS hash FROM experiment_client_candidates`,
     );
   } catch {
     throw new ResearchSafetyError("safety_lookup_unavailable");

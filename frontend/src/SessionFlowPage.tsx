@@ -94,22 +94,29 @@ export default function SessionFlowPage({
   sessionId,
   requestedStageSlug,
   isLearner = false,
+  navigate = (path:string) => window.location.assign(path),
+  instructions,
 }: {
   sessionId: string;
   requestedStageSlug?: string;
   isLearner?: boolean;
+  navigate?: (path:string)=>void;
+  instructions?: Record<string,string>;
 }) {
   return (
     <SessionDashboard
       key={sessionId}
       sessionId={sessionId}
       requestedStageSlug={requestedStageSlug}
+      navigate={navigate}
+      instructions={instructions}
       isLearner={isLearner}
     />
   );
 }
 
 function SessionDashboard({
+  navigate, instructions,
   sessionId,
   requestedStageSlug,
   isLearner,
@@ -117,6 +124,8 @@ function SessionDashboard({
   sessionId: string;
   requestedStageSlug?: string;
   isLearner: boolean;
+  navigate: (path:string)=>void;
+  instructions?: Record<string,string>;
 }) {
   const [flow, setFlow] = useState<SessionFlow | null>(null);
   const [serverOffset, setServerOffset] = useState(0);
@@ -137,14 +146,14 @@ function SessionDashboard({
   const currentStageType = flow?.currentStage?.stageType;
   useObservedLearningScreen(sessionId, currentStageId, undefined, isLearner && currentStageStatus === "IN_PROGRESS", noteActivityLogFailure);
   const studyExpired = flow?.session.protocolKey === "STAGE1_6" && currentStageType === "SELF_STUDY" && !!flow.currentStage?.startedAt && flow.session.groupActivitySeconds !== null && clock + serverOffset >= Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000;
-  const integrationExpired = !!flow && ["STAGE1_6","STAGE1_5"].includes(flow?.session.protocolKey??"") && (flow?.session.protocolKey==="STAGE1_5" || flow?.session.studyGroup === "EXPERIMENTAL") && currentStageType === "INTEGRATION_MAP" && currentStageStatus === "IN_PROGRESS" && !!flow.currentStage?.startedAt && flow.session.groupActivitySeconds !== null && clock + serverOffset >= Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000;
+  const integrationExpired = !!flow && ["STAGE1_6","STAGE1_5","SBKB_INTEGRATION_V1"].includes(flow?.session.protocolKey??"") && (["STAGE1_5","SBKB_INTEGRATION_V1"].includes(flow?.session.protocolKey??"") || flow?.session.studyGroup === "EXPERIMENTAL") && currentStageType === "INTEGRATION_MAP" && currentStageStatus === "IN_PROGRESS" && !!flow.currentStage?.startedAt && flow.session.groupActivitySeconds !== null && clock + serverOffset >= Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000;
 
   const reload = useCallback(async () => {
     const requestedAt = performance.now();
     const nextFlow = await requestJson<SessionFlow>(
       `/api/sessions/${sessionId}/flow`,
     );
-    if (!["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(nextFlow.session.protocolKey)) {
+    if (!["STAGE1_4", "STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(nextFlow.session.protocolKey)) {
       throw new Error("このセッションは活動 1の学習フローではありません。");
     }
     setServerOffset(Date.parse(nextFlow.serverNow) - requestedAt);
@@ -158,7 +167,7 @@ function SessionDashboard({
     requestJson<SessionFlow>(`/api/sessions/${sessionId}/flow`)
       .then((nextFlow) => {
         if (!active) return;
-        if (!["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(nextFlow.session.protocolKey)) {
+        if (!["STAGE1_4", "STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(nextFlow.session.protocolKey)) {
           throw new Error("このセッションは活動 1の学習フローではありません。");
         }
         setServerOffset(Date.parse(nextFlow.serverNow) - requestedAt);
@@ -189,7 +198,7 @@ function SessionDashboard({
 
   useEffect(() => {
     const stage = flow?.currentStage;
-    if (!flow || !["STAGE1_6","STAGE1_5"].includes(flow.session.protocolKey) || !stage?.startedAt || stage.status !== "IN_PROGRESS" || !["SELF_STUDY", "INTEGRATION_MAP"].includes(stage.stageType) || flow.session.groupActivitySeconds === null) return;
+    if (!flow || !["STAGE1_6","STAGE1_5","SBKB_INTEGRATION_V1"].includes(flow.session.protocolKey) || !stage?.startedAt || stage.status !== "IN_PROGRESS" || !["SELF_STUDY", "INTEGRATION_MAP"].includes(stage.stageType) || flow.session.groupActivitySeconds === null) return;
     const deadline = Date.parse(stage.startedAt) + flow.session.groupActivitySeconds * 1000 - serverOffset;
     const timer = window.setTimeout(() => {
       setClock(performance.now());
@@ -334,11 +343,11 @@ function SessionDashboard({
             kitDefinitionId: map.kitDefinitionId,
           });
         }
-        window.location.assign(`/maps/${map.id}`);
+        navigate(`/maps/${map.id}`);
         return;
       }
       if (stage.mapId) {
-        window.location.assign(`/maps/${stage.mapId}`);
+        navigate(`/maps/${stage.mapId}`);
         return;
       }
 
@@ -370,7 +379,7 @@ function SessionDashboard({
           kitDefinitionId: kbMap.kitDefinitionId,
         });
       }
-      window.location.assign(`/maps/${map.id}`);
+      navigate(`/maps/${map.id}`);
     } catch (openError) {
       setError(
         openError instanceof Error
@@ -442,7 +451,7 @@ function SessionDashboard({
       ? `STEP ${stage.orderIndex + 1}：${stage.stageType === "INTEGRATION_MAP" ? "統合マップ" : stageLabels[stage.stageType].replace(/^STEP \d+：/, "")}`
       : stageLabels[stage.stageType];
   };
-  const timed = ["STAGE1_6","STAGE1_5"].includes(flow.session.protocolKey) && (current?.stageType === "SELF_STUDY" || current?.stageType === "INTEGRATION_MAP");
+  const timed = ["STAGE1_6","STAGE1_5","SBKB_INTEGRATION_V1"].includes(flow.session.protocolKey) && (current?.stageType === "SELF_STUDY" || current?.stageType === "INTEGRATION_MAP");
   const remaining = timed && current?.startedAt && flow.session.groupActivitySeconds !== null
     ? Math.max(0, Math.ceil((Date.parse(current.startedAt) + flow.session.groupActivitySeconds * 1000 - (clock + serverOffset)) / 1000)) : null;
 
@@ -456,7 +465,8 @@ function SessionDashboard({
 
         {flow.session.status === "NOT_STARTED" && (
           <div className="session-current-panel">
-            <h2>セッションを開始してください</h2>
+            <h2>{flow.session.protocolKey === "SBKB_INTEGRATION_V1" ? "P02：活動の案内" : "セッションを開始してください"}</h2>
+            {flow.session.protocolKey === "SBKB_INTEGRATION_V1" && <p>授業・動画、Scratch-Build、Kit-Build、統合マップの順に操作します。各画面の案内を確認して進んでください。この操作案内は正式な研究説明・同意取得を代替しません。</p>}
             <p>開始後、最初の活動から順番に進みます。</p>
             {isLearner && <p><a className="session-secondary-button" href="/tutorial">操作の練習</a></p>}
             <button className="session-primary-button" type="button" disabled={busy} onClick={() => void startSession()}>
@@ -469,6 +479,7 @@ function SessionDashboard({
           <div className="session-current-panel">
             <p className="session-current-label">現在の活動</p>
             <h2>{label(current)}</h2>
+            {flow.session.protocolKey === "SBKB_INTEGRATION_V1" && current.stageType!=="LESSON" && <section aria-label="P04 課題説明"><h3>課題説明</h3><p style={{whiteSpace:"pre-wrap"}}>{instructions?.[current.stageType] ?? "説明を読み込めません。開始せず研究者へ連絡してください。"}</p></section>}
             {isLearner && current.status === "PENDING" && <p>{current.stageType === "LESSON" ? "開始後に動画を視聴し、視聴したことを確認してください。" : current.stageType === "SELF_STUDY" ? "開始すると提出済みの2枚のマップを確認できます。" : current.stageType === "PRE_ASSESSMENT" || current.stageType === "POST_ASSESSMENT" || current.stageType === "SURVEY" ? "開始して、表示される問題に回答してください。" : "開始してマップを操作してください。"}</p>}
             {!isLearner && flow.nextStage && (
               <p className="session-next-label">
@@ -502,10 +513,11 @@ function SessionDashboard({
               {current.stageType === "INTEGRATION_MAP" && <p>{integrationSubmitted ? "統合マップは提出済みです。" : remaining === 0 ? flow.currentIntegrationMapExists ? "統合マップの自動提出を確認しています。処理が続く場合は研究者に連絡してください。" : "時間が終了しました。" : "時間内は統合マップを編集できます。時間終了時に自動提出されます。"}</p>}
               {!isLearner && current.stageType === "INTEGRATION_MAP" && flow.currentMapAutoSubmittedAt && <p>自動提出日時: {new Date(flow.currentMapAutoSubmittedAt).toLocaleString()}</p>}
               {current.stageType === "INTEGRATION_MAP" && remaining === 0 && !integrationSubmitted && !flow.currentIntegrationMapExists && <p className="session-error" role="alert">提出する統合マップがありません。研究者に連絡してください。</p>}
-              <button type="button" className={isLearner ? "session-primary-button" : "session-secondary-button"} disabled={busy || remaining !== 0 || (current.stageType === "INTEGRATION_MAP" && !integrationSubmitted)} onClick={() => void completeTimed()}>次へ</button>
+              <button type="button" className={isLearner ? "session-primary-button" : "session-secondary-button"} disabled={busy || (flow.session.protocolKey!=="SBKB_INTEGRATION_V1" && remaining !== 0) || (current.stageType === "INTEGRATION_MAP" && !integrationSubmitted)} onClick={() => void completeTimed()}>次へ</button>
             </div>}
             {current.stageType === "LESSON" && current.status === "IN_PROGRESS" && (
               <>
+                {flow.session.protocolKey==="SBKB_INTEGRATION_V1" && <p>動画参照は教材版に固定されていますが、URL先の内容が変わらないことを保証するものではありません。視聴確認は自己申告です。</p>}
                 <Stage1Video
                   url={flow.session.lessonVideoUrl}
                   stageId={current.id}
@@ -532,10 +544,11 @@ function SessionDashboard({
           </div>
         )}
 
+        {flow.session.protocolKey === "SBKB_INTEGRATION_V1" && flow.session.status === "COMPLETED" && <section aria-label="P08 完了・待機"><h2>活動が完了しました</h2><p>研究者の指示をお待ちください。実施全体の管理終了操作は行っていません。</p></section>}
         {flow.session.status === "IN_PROGRESS" && !current && (
           <div className="session-current-panel"><h2>全活動が完了しています</h2></div>
         )}
-        {!isLearner && ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(flow.session.protocolKey) && flow.session.status === "COMPLETED" && (
+        {!isLearner && ["STAGE1_4", "STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(flow.session.protocolKey) && flow.session.status === "COMPLETED" && (
           <p>
             <a className="back-link" href={`/research/stage1/${flow.session.id}/analysis`}>
               研究者用分析画面を開く
@@ -617,7 +630,7 @@ function SessionDashboard({
   );
 }
 
-function Stage1Video({
+export function Stage1Video({
   url,
   stageId,
   confirmed,

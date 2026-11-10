@@ -1,3 +1,4 @@
+import "./experiment-research.css";
 import {ResearchDeliveryStatus} from "./DeliveryStatus";
 import {FiveFlowFeatures} from "./FiveFlowFeatures";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
@@ -20,12 +21,9 @@ type Operation = {
 type Stage = { id: string; stageType: string; orderIndex: number; status: string; startedAt: string | null; completedAt: string | null };
 type SurveyQuestion = { id: string; kind: "TEXT" | "CHOICE" | "RATING"; prompt: string; required: boolean; displayOrder: number; config: { options?: string[]; min?: number; max?: number; minLabel?: string; maxLabel?: string } };
 type SurveyAnswer = { stageId: string; questionId: string; answer: unknown; updatedAt: string };
-type Link = {
-  id: string; sourceConceptId: string; targetConceptId: string; label: string;
-};
 type MapData = { id: string; type: string; status: string; researchRole: string | null;
-  concepts: { id: string; label: string }[]; links: Link[];
-  historyReplayStatus: "AVAILABLE" | "UNAVAILABLE" | "EXCLUDED" };
+  concepts: HistoricalMapSnapshot["concepts"]; links: HistoricalMapSnapshot["links"];
+  historyReplayStatus: "AVAILABLE" | "UNAVAILABLE" | "EXCLUDED"; basedOnMapId?:string|null; kitDefinitionId?:string|null; conceptProvenance?:unknown[];linkProvenance?:unknown[] };
 type HistoryReplay = {
   status: "REPLAYABLE" | "PARTIAL" | "UNAVAILABLE";
   reason: string | null;
@@ -38,8 +36,11 @@ type HistoryReplay = {
 };
 type Rating = { id: string; mapId: string; linkId: string; category: "U"|"I"|"P"|"V"; rationale: string; createdAt: string; evaluatorCode: string; operationLogId?:string|null;eventId?:string|null };
 type Reflection = { id: string; noteText: string; reportedByCode: string; operationLogId: string | null; eventId?: string | null };
+type RecordedState = {status:"AVAILABLE"|"UNAVAILABLE";reason:string|null;state:HistoricalMapSnapshot|null;capturedAt?:string|null;submittedAt?:string|null;eventId?:string|null};
 type Analysis = {
-  session: { id: string; participantCode: string | null; protocolKey: string; studyGroup?: string | null; groupActivitySeconds?: number | null; startedAt?: string | null; completedAt?: string | null };
+  experiment?: {runId:string;materialVersionId:string;materialTitle:string;materialVersion:number;integrationSeconds:number};
+  integrationStates?: {mapId:string|null;start:RecordedState;submission:RecordedState};
+  session: { id: string; participantCode: string | null; protocolKey: string; studyGroup?: string | null; groupActivitySeconds?: number | null; startedAt?: string | null; completedAt?: string | null; status?:string };
   stages: Stage[];
   survey?: { questions: SurveyQuestion[]; answers: SurveyAnswer[]; events: Array<Record<string, unknown>> };
   maps: MapData[];
@@ -252,13 +253,13 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
     setSelectedOperationId(next?.id??"");
   }
   return (
-    <main className="page stage1-analysis-page">
+    <main className={`page stage1-analysis-page${data?.session.protocolKey==="SBKB_INTEGRATION_V1"?" experiment-analysis":""}`}>
       <section className="session-card stage1-analysis-header">
         <div className="stage1-analysis-heading">
           <p className="eyebrow">研究者用</p>
           <h1>再構成行動の分析</h1>
-          <p>フロー：{!data?"記録確認中":data.session.protocolKey==="STAGE1_5"?"5活動（群なし・アンケート）":data.session.protocolKey==="STAGE1_6"?"6活動（群別・事前事後評価）":"4活動（旧形式）"}</p>
-          <p>セッション：{sessionId} 参加者コード：{data?.session.participantCode??"—"}</p>
+          <p>フロー：{!data?"記録確認中":data.session.protocolKey==="SBKB_INTEGRATION_V1"?"SB/KB統合（アンケートなし）":data.session.protocolKey==="STAGE1_5"?"5活動（群なし・アンケート）":data.session.protocolKey==="STAGE1_6"?"6活動（群別・事前事後評価）":"4活動（旧形式）"}</p>
+          <p>セッション：{sessionId} 仮名ID：{data?.session.participantCode??"—"}</p>
         </div>
         <div className="stage1-analysis-exports" role="group" aria-label="データ出力">
           <button type="button" onClick={() => void downloadApiFile(`/api/research/sessions/${sessionId}/export`).catch(e => setError(e instanceof Error ? e.message : "JSONを取得できませんでした。"))}>生データJSON</button>
@@ -266,15 +267,20 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
           {data?.session.protocolKey === "STAGE1_4" && <><button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/evaluations.csv`).catch(e => setError(e instanceof Error ? e.message : "CSVを取得できませんでした。"))}>命題評価CSV</button>
           <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/reflections.csv`).catch(e => setError(e instanceof Error ? e.message : "CSVを取得できませんでした。"))}>振り返りCSV</button></>}
           <a href={`/research/event-exports?sessionId=${sessionId}`}>研究イベントの絞り込み出力</a>
-          <a href={`/sessions/${sessionId}`}>セッションへ戻る</a>
+          {data?.experiment ? <a href={`/research/experiment-runs/${data.experiment.runId}`}>実施・参加者一覧へ戻る</a> : <a href={`/sessions/${sessionId}`}>セッションへ戻る</a>}
+          {data?.experiment && <button type="button" onClick={()=>void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/map-states.csv`).catch(e=>setError(e instanceof Error?e.message:"CSVを取得できませんでした。"))}>保存Map・開始／提出状態CSV</button>}
         </div>
         {error&&<p className="session-error" role="alert">{error}</p>}
         {status&&<p role="status">{status}</p>}
       </section>
       <ResearchDeliveryStatus sessionId={sessionId}/>
-      {(!data || data.session.protocolKey==="STAGE1_5") && <FiveFlowFeatures key={sessionId} sessionId={sessionId}/>}
+      {(data?.session.protocolKey==="STAGE1_5") && <FiveFlowFeatures key={sessionId} sessionId={sessionId}/>}
       {!data?<p role="status">分析データを読み込んでいます…</p>:(
         <>
+          {data.experiment && <section className="session-card"><h2>実施と固定教材版</h2>
+            <p>実施ID：{data.experiment.runId} · 教材：{data.experiment.materialTitle}（版 {data.experiment.materialVersion}）</p>
+            <p>教材版ID：{data.experiment.materialVersionId} · 固定制限時間：{data.experiment.integrationSeconds}秒</p>
+            <p>Session状態：{statusNames[data.session.status??""]??data.session.status}。編集中の保存状態は完成状態ではありません。以下は記述的な保存記録で、理解・困難・学習成果を示しません。</p></section>}
           <section className="session-card activity-overview">
             <h2>活動概要</h2>
             <p>記録された活動の時系列です。時刻や経過時間は記録上の観測値で、実際の学習時間を示すものではありません。</p>
@@ -287,17 +293,27 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
           </section>
           <section className="session-card">
             <h2>保存されたマップ</h2>
-            <p>既存のマップ Editorを提出後read-onlyとして再利用します。完成形と操作履歴は別の情報です。</p>
+            <p>{data.experiment?"保存時点のMapです。未提出状態も含みます。出所情報は現在の保存行と過去snapshotを区別して確認してください。":"既存のマップ Editorを提出後read-onlyとして再利用します。完成形と操作履歴は別の情報です。"}</p>
             <div className="stage1-analysis-stats">
               {data.maps.map(m=>(
                 <div className="stage1-analysis-stat" key={m.id}>
                   <strong>{mapName(m.type)}</strong>
                   <span>概念：{m.concepts.length} / 命題：{m.links.length}</span>
-                  <a href={`/maps/${m.id}`}>完成マップを表示</a>
+                  {data.experiment ? <details><summary>{mapName(m.type)}の保存状態・出所情報</summary>
+                    <ReadOnlyMapSnapshot snapshot={{snapshotVersion:1,mapId:m.id,mapType:m.type,basedOnMapId:m.basedOnMapId??null,kitDefinitionId:m.kitDefinitionId??null,concepts:m.concepts,links:m.links} as HistoricalMapSnapshot} title={`${mapName(m.type)}：保存時点（${m.status}）`} allowZoom/>
+                    <pre>{JSON.stringify({conceptProvenance:m.conceptProvenance,linkProvenance:m.linkProvenance},null,2)}</pre></details>
+                    : <a href={`/maps/${m.id}`}>完成マップを表示</a>}
                 </div>
               ))}
             </div>
           </section>
+          {data.integrationStates && <section className="session-card"><h2>統合開始時・受理済み提出状態</h2>
+            <div className="map-history-compare">{(["start","submission"] as const).map(point=>{const record=data.integrationStates![point];return <div key={point}>
+              <h3>{point==="start"?"統合開始時":"受理済み提出時"}</h3>
+              <p>記録時刻：{timestamp(record.capturedAt??record.submittedAt)}{record.eventId?` · 提出イベント：${record.eventId}`:""}</p>
+              {record.state?<ReadOnlyMapSnapshot snapshot={record.state} title={point==="start"?"保存された初期snapshot":"受理された提出snapshot"} allowZoom/>:<p>状態記録なし／算出不可：{record.reason==="NOT_SUBMITTED"?"未提出":record.reason}</p>}
+              {record.state&&<details><summary>この時点の出所情報</summary><pre>{JSON.stringify(record.state,null,2)}</pre></details>}
+            </div>;})}</div></section>}
           <section className="session-card map-history-section">
             <h2>マップ操作履歴</h2>
             <p>活動概要とは別に、記録されたマップ操作を時系列で確認できます。行を展開すると記録済みの詳細を表示します。</p>

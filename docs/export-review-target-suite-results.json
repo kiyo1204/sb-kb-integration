@@ -1,0 +1,12 @@
+[
+  {
+    "test": "test:stage1-analysis-layout-browser",
+    "exitCode": 0,
+    "elapsedMs": 20381
+  },
+  {
+    "test": "test:experiment-research",
+    "exitCode": 0,
+    "elapsedMs": 76619
+  }
+]

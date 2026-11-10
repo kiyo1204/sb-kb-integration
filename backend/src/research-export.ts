@@ -1,3 +1,4 @@
+import { integrationResearchStates } from "./experiment-research-states.js";
 import { surveySnapshot } from "./surveys.js";
 import {redactResearchOutput} from "./research-output-safety.js";
 import {deliverySnapshot} from "./delivery-reports.js";
@@ -24,7 +25,10 @@ export type SessionRawExportWarning = {
 };
 
 export type SessionRawExport = {
-  exportVersion: 1 | 2 | 3;
+  exportVersion: 1 | 2 | 3 | 4;
+  outputContract?: "sbkb-integration-research-v1";
+  experiment?: Record<string, unknown>;
+  integrationStates?: Awaited<ReturnType<typeof integrationResearchStates>>;
   exportedAt: string;
   warnings: SessionRawExportWarning[];
   session: {
@@ -150,8 +154,13 @@ export async function buildSessionRawExport(
   );
   const session = sessionResult.rows[0];
   if (!session) return { kind: "not_found" };
-  if (!["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(session.protocolKey)) return { kind: "not_found" };
-  if (session.status !== "COMPLETED") {
+  if (!["STAGE1_4", "STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(session.protocolKey)) return { kind: "not_found" };
+  const isExperiment = session.protocolKey === "SBKB_INTEGRATION_V1";
+  const experiment = isExperiment ? (await client.query(`SELECT r.id AS "runId",r.state AS "runState",r.created_at AS "runCreatedAt",r.material_version_id AS "materialVersionId",v.title AS "materialTitle",v.integration_seconds AS "integrationSeconds",x.catalog_version_id AS "catalogVersionId",cv.version_number AS "materialVersion",r.planned_participants AS "plannedParticipants",p.registered_at AS "registeredAt"
+    FROM experiment_run_sessions p JOIN experiment_runs r ON r.id=p.run_id JOIN experiment_material_versions v ON v.id=r.material_version_id JOIN experiment_run_catalog x ON x.run_id=r.id JOIN material_catalog_versions cv ON cv.id=x.catalog_version_id AND cv.foundation_version_id=v.id
+    JOIN sessions s ON s.id=p.session_id WHERE p.session_id=$1 AND s.research_kit_definition_id=v.kit_id AND s.lesson_video_url=v.video_ref AND s.group_activity_seconds=v.integration_seconds AND s.study_group IS NULL`, [sessionId])).rows[0] : undefined;
+  if (isExperiment && !experiment) return {kind:"inconsistent",detail:"Experiment membership or pinned material is inconsistent."};
+  if (!isExperiment && session.status !== "COMPLETED") {
     return { kind: "not_completed", status: session.status };
   }
 
@@ -169,15 +178,13 @@ export async function buildSessionRawExport(
   if (
     !assertSameSet(
       stages.map((stage) => stage.stageType),
-      session.protocolKey === "STAGE1_4" ? EXPECTED_STAGE_TYPES : session.protocolKey === "STAGE1_5" ? ["LESSON","PRIOR_MAP","KB_MAP","INTEGRATION_MAP","SURVEY"] :
+      (session.protocolKey === "STAGE1_4" || isExperiment) ? EXPECTED_STAGE_TYPES : session.protocolKey === "STAGE1_5" ? ["LESSON","PRIOR_MAP","KB_MAP","INTEGRATION_MAP","SURVEY"] :
         ["LESSON", "PRIOR_MAP", "KB_MAP", "PRE_ASSESSMENT", session.studyGroup === "EXPERIMENTAL" ? "INTEGRATION_MAP" : "SELF_STUDY", "POST_ASSESSMENT"],
     ) ||
     stages.some(
       (stage, index) =>
         stage.orderIndex !== index ||
-        stage.status !== "COMPLETED" ||
-        !stage.startedAt ||
-        !stage.completedAt,
+        (isExperiment ? (stage.status === "COMPLETED" && (!stage.startedAt || !stage.completedAt)) || (stage.status === "IN_PROGRESS" && !stage.startedAt) || (session.status === "COMPLETED" && stage.status !== "COMPLETED") : stage.status !== "COMPLETED" || !stage.startedAt || !stage.completedAt),
     )
   ) {
     return {
@@ -227,6 +234,7 @@ export async function buildSessionRawExport(
       continue;
     }
     if (!map) {
+      if (isExperiment && stage.status !== "COMPLETED") continue;
       warnings.push({
         code: "MISSING_MAP_FOR_STAGE",
         message: `No Map is associated with completed ${stage.stageType} stage.`,
@@ -240,7 +248,7 @@ export async function buildSessionRawExport(
         detail: `Map ${map.id} has type ${map.type}; expected ${expectedMapType}.`,
       };
     }
-    if (map.status !== "SUBMITTED" || !map.submittedAt) {
+    if ((!isExperiment || stage.status === "COMPLETED") && (map.status !== "SUBMITTED" || !map.submittedAt)) {
       return {
         kind: "inconsistent",
         detail: `Map ${map.id} is not submitted although its Session is completed.`,
@@ -248,7 +256,7 @@ export async function buildSessionRawExport(
     }
   }
 
-  const kitIds = unique(sessionMaps.map((map) => map.kitDefinitionId));
+  const kitIds = unique([...sessionMaps.map((map) => map.kitDefinitionId), ...(isExperiment ? [session.researchKitDefinitionId] : [])]);
   const kitResult = kitIds.length
     ? await client.query<{
         id: string;
@@ -554,7 +562,7 @@ export async function buildSessionRawExport(
     kitDefinitionId: map.kitDefinitionId,
     createdAt: iso(map.createdAt),
     submittedAt: iso(map.submittedAt),
-    ...(["STAGE1_6","STAGE1_5"].includes(session.protocolKey) && map.type === "INTEGRATION" ? { autoSubmittedAt: iso(map.autoSubmittedAt) } : {}),
+    ...(["STAGE1_6","STAGE1_5","SBKB_INTEGRATION_V1"].includes(session.protocolKey) && map.type === "INTEGRATION" ? { autoSubmittedAt: iso(map.autoSubmittedAt) } : {}),
     concepts: conceptsByMap.get(map.id) ?? [],
     links: linksByMap.get(map.id) ?? [],
     operationLogs: logsByMap.get(map.id) ?? [],
@@ -660,8 +668,10 @@ export async function buildSessionRawExport(
   return {
     kind: "exported",
     value: await redactResearchOutput({
-      exportVersion: session.protocolKey === "STAGE1_5" ? 3 : session.protocolKey === "STAGE1_6" ? 2 : 1,
+      exportVersion: isExperiment ? 4 : session.protocolKey === "STAGE1_5" ? 3 : session.protocolKey === "STAGE1_6" ? 2 : 1,
       exportedAt: exportedAt.toISOString(),
+      ...(isExperiment ? {outputContract: "sbkb-integration-research-v1" as const, experiment,
+        integrationStates: await integrationResearchStates(client, sessionId, mapsWithProvenance.filter(m=>m.sessionStageId!==null))} : {}),
       warnings,
       session: {
         id: session.id,
@@ -698,6 +708,7 @@ export async function buildSessionRawExport(
       kitDefinitions: kits,
       ...(assessment ? { assessment } : {}),
       ...(session.protocolKey==="STAGE1_5" ? {survey:await surveySnapshot(client,sessionId),seedConcepts:(await client.query('SELECT seed.kit_concept_item_id AS "kitConceptItemId",item.source_concept_id AS "sourceConceptId",placed.concept_id AS "conceptId" FROM session_seed_concepts seed JOIN kit_concept_items item ON item.id=seed.kit_concept_item_id LEFT JOIN seeded_map_concepts placed ON placed.session_id=seed.session_id AND placed.kit_concept_item_id=seed.kit_concept_item_id WHERE seed.session_id=$1 ORDER BY seed.kit_concept_item_id',[sessionId])).rows} : {}),
+      ...(isExperiment ? {seedConcepts:(await client.query('SELECT seed.kit_concept_item_id AS "kitConceptItemId",item.source_concept_id AS "sourceConceptId",placed.concept_id AS "conceptId" FROM session_seed_concepts seed JOIN kit_concept_items item ON item.id=seed.kit_concept_item_id LEFT JOIN seeded_map_concepts placed ON placed.session_id=seed.session_id AND placed.kit_concept_item_id=seed.kit_concept_item_id WHERE seed.session_id=$1 ORDER BY seed.kit_concept_item_id',[sessionId])).rows} : {}),
       delivery: await deliverySnapshot(client,sessionId),
     },client),
   };

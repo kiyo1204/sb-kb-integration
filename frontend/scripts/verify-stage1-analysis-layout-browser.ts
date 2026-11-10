@@ -1,3 +1,6 @@
+import {withFailureScreenshot} from "./failure-screenshot";
+import {verifyFailureScreenshot} from "./verify-failure-screenshot";
+await verifyFailureScreenshot();
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { createServer } from "vite";
@@ -90,7 +93,7 @@ try {
   const url = vite.resolvedUrls!.local[0]!;
   await page.goto(`${url}research/stage1/${sid}/analysis`);
   const featurePanel=page.getByRole("region",{name:"新5活動の記述的特徴量"});
-  await featurePanel.waitFor();
+  await withFailureScreenshot(()=>featurePanel.waitFor(),path=>page.screenshot({path,fullPage:true}));
   assert.match(await featurePanel.innerText(),/stage1-5-descriptive-v1/);
   assert.deepEqual(await featurePanel.locator('[data-feature-point="completion"] td').allTextContents(),["2","2","3","算出済み"]);
   assert.deepEqual(await featurePanel.locator('[data-feature-point="delta"] td').allTextContents(),["-1","2","1","算出済み"]);

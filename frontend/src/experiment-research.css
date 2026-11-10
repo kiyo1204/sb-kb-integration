@@ -1,0 +1,27 @@
+/* New saved-map/provenance panels only; legacy analysis layout stays intact. */
+.experiment-analysis {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  overflow-wrap: anywhere;
+}
+.experiment-analysis > *,
+.experiment-analysis details,
+.experiment-analysis .stage1-analysis-stat,
+.experiment-analysis .map-history-compare > div {
+  min-width: 0;
+  max-width: 100%;
+}
+.experiment-analysis .stage1-analysis-stats {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.experiment-analysis pre {
+  max-width: 100%;
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.experiment-analysis select {
+  max-width: 100%;
+}

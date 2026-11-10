@@ -1,0 +1,8 @@
+{
+  "status": "PASS",
+  "scope": "real R05 API and optional browser",
+  "manual": true,
+  "automatic": true,
+  "rollback": true,
+  "isolation": true
+}

@@ -1,0 +1,17 @@
+{
+  "status": "PASS",
+  "scope": "internal storage only; no R05 API/UI",
+  "checks": [
+    "researcher role",
+    "published version",
+    "parallel same key",
+    "live run conflict",
+    "confirmation",
+    "rollback/retry",
+    "cascade history deletion",
+    "new run after incomplete deletion",
+    "acceptance prerequisites",
+    "retained acceptance blocks completed retest",
+    "research rows unchanged"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "syntheticOnly": true,
+  "checks": [
+    "incomplete drafts persist without defaults; required fields/time refusal and audit 422 REJECTED/VALIDATION",
+    "foreign/duplicate seeds rejected for completion; optimistic concurrent writes and same-key saves create once",
+    "secret/budget/lookup failures never save input; fixed HTTP codes match administrative audit without text",
+    "seed/audit injected failures roll back foundation/seeds/catalog/receipt; retry publishes once atomically",
+    "published metadata and referenced Goal/Kit/parts immutable through API/SQL; import creates new IDs, never overwrites",
+    "next draft/version preserves original run binding, one draft per series, unused assets and existing Session rows unchanged"
+  ],
+  "publicExperimentExecutionEnabled": false,
+  "testRunAvailable": "PUBLISHED_ONLY"
+}
