@@ -1,9 +1,11 @@
+import { experimentPreviewEnabled, validateExperimentRequest, experimentRequestContext } from "./experiment-execution.js";
 import { operationGate, committedReceipt } from "./delivery-reliability.js";
+import {authenticateExperimentToken,ParticipantAccessError,experimentFlowMessage,type ExperimentProof} from "./experiment-participant-access.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import type { Pool, PoolClient } from "pg";
 
-type Principal = { role: "researcher" } | { role: "learner"; sessionId: string; kitId: string };
+type Principal = { role: "researcher" } | { role: "learner"; sessionId: string; kitId: string; experiment?:ExperimentProof };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const configuredResearcherToken = process.env.RESEARCHER_API_TOKEN;
 if (!configuredResearcherToken || configuredResearcherToken.length < 32) {
@@ -22,7 +24,7 @@ export function createLearnerToken(): { token: string; hash: string } {
 
 export async function storeLearnerToken(client: PoolClient, sessionId: string, hash: string) {
   await client.query(
-    "UPDATE sessions SET learner_access_token_hash=$2 WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')",
+    "UPDATE sessions SET learner_access_token_hash=$2 WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5', 'SBKB_INTEGRATION_V1')",
     [sessionId, hash],
   );
 }
@@ -75,7 +77,7 @@ export async function learnerMayAccessMap(
        ORDER BY order_index LIMIT 1
      ) current_stage ON true
      WHERE ${lookup.id} = $1::uuid AND s.id = $2::uuid
-       AND s.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5')
+       AND s.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5', 'SBKB_INTEGRATION_V1')
        AND s.status = 'IN_PROGRESS'
        AND (
          (m.status = 'DRAFT' AND st.id = current_stage.id
@@ -83,8 +85,8 @@ export async function learnerMayAccessMap(
           AND ((m.type = 'PRIOR' AND st.stage_type = 'PRIOR_MAP')
             OR (m.type = 'KB' AND st.stage_type = 'KB_MAP')
             OR (m.type = 'INTEGRATION' AND st.stage_type = 'INTEGRATION_MAP'))
-          AND (s.protocol_key NOT IN ('STAGE1_6','STAGE1_5') OR st.stage_type <> 'INTEGRATION_MAP'
-            OR ((s.protocol_key='STAGE1_5' OR s.study_group = 'EXPERIMENTAL') AND clock_timestamp() < st.started_at + s.group_activity_seconds * interval '1 second')))
+          AND (s.protocol_key NOT IN ('STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') OR st.stage_type <> 'INTEGRATION_MAP'
+            OR ((s.protocol_key IN ('STAGE1_5','SBKB_INTEGRATION_V1') OR s.study_group = 'EXPERIMENTAL') AND clock_timestamp() < st.started_at + s.group_activity_seconds * interval '1 second')))
          OR ($3::boolean AND m.status = 'SUBMITTED'
           AND s.protocol_key = 'STAGE1_6' AND s.study_group = 'CONTROL'
           AND current_stage.stage_type = 'SELF_STUDY'
@@ -105,7 +107,7 @@ export function accessControl(pool: Pool) {
     const match = /^Bearer ([A-Za-z0-9_-]{32,128})$/.exec(request.header("authorization") ?? "");
     if (!match) return response.status(401).json({ error: "authentication_required" });
     const hash = tokenHash(match[1]);
-    let principal: Principal;
+    let principal: Principal = {role:"learner",sessionId:"",kitId:""};
     if (timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(researcherHash, "hex"))) {
       principal = { role: "researcher" };
     } else {
@@ -125,14 +127,28 @@ export function accessControl(pool: Pool) {
             }
             return response.status(410).json({error:"research_data_deleted",discardObservationQueue:true,queueKey:deleted.rows[0].queue_key});
           }
-          return response.status(401).json({ error: "authentication_required" });
+          try {
+            const proof=await authenticateExperimentToken(pool,hash);
+            if(proof){
+              principal={role:"learner",sessionId:proof.sessionId,kitId:proof.kitId,experiment:proof};
+              response.locals.principal=principal;
+              if(request.path==="/me"&&request.method==="GET")return response.json({role:"learner",sessionId:proof.sessionId,protocolKey:"SBKB_INTEGRATION_V1",flowAvailable:experimentPreviewEnabled()});
+              if(request.path==="/experiment-client/claim"&&request.method==="POST")return next();
+              if(request.path.startsWith("/research/"))return response.status(403).json({error:"forbidden"});
+              if(!experimentPreviewEnabled())return response.status(409).json({error:"experiment_learner_flow_unavailable",message:experimentFlowMessage});
+              if(!(await validateExperimentRequest(pool,request,response)))return;
+              if(request.path==="/experiment-material"&&request.method==="GET")return next();
+
+            }
+          }catch(error){return response.status(error instanceof ParticipantAccessError?error.status:503).json({error:error instanceof ParticipantAccessError?error.code:"access_storage_unavailable",message:"アクセス状態を確認できません。研究者に確認してください。"});}
+          if(principal.role!=="learner"||!principal.experiment)return response.status(401).json({ error: "authentication_required" });
         }
-        principal = { role: "learner", sessionId: session.id, kitId: session.kitId };
+        if(session)principal = { role: "learner", sessionId: session.id, kitId: session.kitId };
       } catch (error) { return next(error); }
     }
     response.locals.principal = principal;
     const scope=principal.role==="learner"?"LEARNER:"+principal.sessionId:"RESEARCHER";
-    const permit=async(replayAllowed?: (client:PoolClient)=>Promise<boolean>)=>{if(await operationGate(pool,request,response,scope))return;if(response.locals.reliableOperation)response.locals.reliableOperation.replayAllowed=replayAllowed;return next();};
+    const permit=async(replayAllowed?: (client:PoolClient)=>Promise<boolean>)=>{if(await operationGate(pool,request,response,scope))return;if(response.locals.reliableOperation)response.locals.reliableOperation.replayAllowed=replayAllowed;return experimentRequestContext(request,response,next);};
     const stageMapReplay=(stageId:string)=>async(client:PoolClient)=>{
       if(principal.role!=="learner")return true;
       const map=(await client.query("SELECT id FROM maps WHERE session_stage_id=$1 LIMIT 1",[stageId])).rows[0];
@@ -176,7 +192,7 @@ export function accessControl(pool: Pool) {
     if (["sessions", "session-stages"].includes(kind) && id) {
       try {
         const owner = await ownerFor(pool, kind, id);
-        if (owner?.id === principal.sessionId && ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(owner.protocolKey)) return permit(kind==="session-stages"&&["prior-map","integration-map"].includes(parts[2])?stageMapReplay(id):undefined);
+        if (owner?.id === principal.sessionId && ["STAGE1_4", "STAGE1_6", "STAGE1_5","SBKB_INTEGRATION_V1"].includes(owner.protocolKey)) return permit(kind==="session-stages"&&["prior-map","integration-map"].includes(parts[2])?stageMapReplay(id):undefined);
       } catch (error) { return next(error); }
       return response.status(404).json({ error: "not_found" });
     }

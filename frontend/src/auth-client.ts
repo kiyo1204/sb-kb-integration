@@ -1,6 +1,10 @@
 import {discardDeletedQueue} from "./observation-outbox";
 import { reliableFetch } from "./operation-client";
 const key = "stage1-access-token";
+let experimentClient: {secret:string;generation:number;clientId?:string}|null=null;
+export function bindExperimentClient(value:typeof experimentClient){experimentClient=value;}
+export function getExperimentObservationOrigin(){return experimentClient?.clientId ? {clientId:experimentClient.clientId,generation:experimentClient.generation} : null;}
+
 
 export function uiText(value: string) {
   return value.replace(/Integration Map/g, "統合マップ").replace(/Goal Map/g, "ゴールマップ")
@@ -27,6 +31,7 @@ export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const token = getAccessToken();
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  if(experimentClient){headers.set("X-Experiment-Client",experimentClient.secret);headers.set("X-Experiment-Generation",String(experimentClient.generation));}
   return reliableFetch(input, { ...init, headers }).then(async response=>{
     if(response.status===410){const body=await response.clone().json().catch(()=>null);if(body?.error==="research_data_deleted"&&typeof body.queueKey==="string")await discardDeletedQueue(body.queueKey,async(path,options)=>{const h=new Headers(options.headers);if(token)h.set("Authorization",`Bearer ${token}`);return fetch(path,{...options,headers:h});}).catch(()=>undefined);}
     return response;

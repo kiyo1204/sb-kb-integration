@@ -20,7 +20,13 @@
     "test:session-flow-survey-browser": "tsx scripts/verify-session-flow-survey-browser.ts",
     "test:stage1-analysis-layout-browser": "tsx scripts/verify-stage1-analysis-layout-browser.ts",
     "test:five-flow-features-browser": "tsx scripts/verify-five-flow-features-browser.ts",
-    "test:undo-role-browser": "tsx scripts/verify-undo-role-browser.ts"
+    "test:undo-role-browser": "tsx scripts/verify-undo-role-browser.ts",
+    "test:material-catalog-browser": "tsx scripts/verify-material-catalog-browser.ts",
+    "test:run-management-browser": "tsx scripts/verify-run-management-browser.ts",
+    "test:participant-access-browser": "tsx scripts/verify-participant-access-browser.ts",
+    "test:experiment-learner-browser": "tsx scripts/verify-experiment-learner-browser.ts",
+    "test:r05-browser": "tsx scripts/verify-r05-browser.ts",
+    "test:experiment-research-browser": "tsx scripts/verify-experiment-research-browser.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",

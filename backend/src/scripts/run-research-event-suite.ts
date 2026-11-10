@@ -122,6 +122,19 @@ try {
     await run("test:session-cleanup-browser", true);
     await stop();
   }
+  await start();
+  await run("test:experiment-foundation");
+  await run("test:material-catalog");
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:material-catalog-browser", true);
+  await run("test:run-management");
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:run-management-browser", true);
+  await run("test:r05-execution");
+  await run("test:participant-access");
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:participant-access-browser", true);
+  await stop();
+  await run("test:experiment-learner");
+  await run("test:experiment-research");
+  await run("test:r05-storage");
   assert.ok(selected.every(name=>results.some(r=>r.test===name)),"unknown selected verification");
   console.log("Isolated research event suite: PASS");
 } finally {

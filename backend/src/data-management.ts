@@ -1,3 +1,4 @@
+import { EXPERIMENT_PROTOCOL, FoundationError } from "./experiment-foundation.js";
 import type { Express } from "express";
 import type { Pool, PoolClient } from "pg";
 import { parseInstant } from "./event-export-contract.js";
@@ -105,6 +106,7 @@ async function lockDeletionScope(c: PoolClient) {
   await c.query("LOCK TABLE " + Object.keys(scopes).join(",") + ",operation_receipts IN EXCLUSIVE MODE");
 }
 async function deleteSessionData(c: PoolClient, ids: string[], exports: EventExportService) {
+      if ((await c.query("SELECT 1 FROM sessions WHERE id=ANY($1::uuid[]) AND protocol_key=$2 LIMIT 1",[ids,EXPERIMENT_PROTOCOL])).rowCount) throw new FoundationError("experiment_storage_only");
       const receipt = (
         await c.query(
           "INSERT INTO research_deletion_receipts(session_count) VALUES($1) RETURNING id",
@@ -425,8 +427,9 @@ export function registerDataManagement(
         receiptId: receipt,
         deviceDeletion: "PENDING_OR_UNKNOWN",
       });
-    } catch {
+    } catch (error) {
       await c.query("ROLLBACK");
+      if(error instanceof FoundationError)return r.status(409).json({error:error.code,message:"新実験の保存データは、この経路では削除できません。"});
       return r
         .status(409)
         .json({

@@ -18,7 +18,7 @@ export async function insertAudit(client: PoolClient, context: Audit, actor: "RE
   const item=map.rows[0]; if(!item || (sessionId && sessionId!==item.sessionId) || (stageId && stageId!==item.stageId)) throw new Error("invalid_audit_target");
   sessionId=item.sessionId??undefined;stageId=item.stageId??undefined;
  }
- const session=sessionId ? await client.query<{participantCode:string;studyGroup:string|null}>('SELECT participant_code AS "participantCode",study_group AS "studyGroup" FROM sessions WHERE id=$1 AND protocol_key IN (\'STAGE1_4\',\'STAGE1_6\',\'STAGE1_5\')',[sessionId]) : null;
+ const session=sessionId ? await client.query<{participantCode:string;studyGroup:string|null}>('SELECT participant_code AS "participantCode",study_group AS "studyGroup" FROM sessions WHERE id=$1 AND protocol_key IN (\'STAGE1_4\',\'STAGE1_6\',\'STAGE1_5\',\'SBKB_INTEGRATION_V1\')',[sessionId]) : null;
  if(sessionId && !session?.rowCount) throw new Error("invalid_audit_target");
  const participant=session?.rows[0]?.participantCode ?? null;
  if(participant && (participant===process.env.RESEARCHER_API_TOKEN || (await client.query("SELECT 1 FROM sessions WHERE learner_access_token_hash=$1",[tokenHash(participant)])).rowCount)) throw new Error("unsafe_participant");
@@ -67,7 +67,7 @@ export function registerAudit(app:Express,pool:Pool) {
    else if(req.method==="POST"&&/\/learner-token$/.test(req.path))eventType="SESSION_SETTINGS_CHANGE";
    else if((req.method==="POST"&&/\/(evaluations|reflections)$/.test(req.path))||(req.method==="PUT"&&/\/assessment\/questions$/.test(req.path)))eventType="RESEARCH_ASSESSMENT_CHANGE";
    if(eventType) {
-    try {if(!(await pool.query("SELECT 1 FROM sessions WHERE id=$1 AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')",[match[1]])).rowCount)return next();}
+    try {if(!(await pool.query("SELECT 1 FROM sessions WHERE id=$1 AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1')",[match[1]])).rowCount)return next();}
     catch {return unavailable();}
     context={eventType,sessionId:match[1]};
    }

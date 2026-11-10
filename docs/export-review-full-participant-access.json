@@ -1,0 +1,13 @@
+{
+  "syntheticOnly": true,
+  "checks": [
+    "atomic registration/code hash, no replayed plaintext or duplicate Session; fixed 4-stage material, planned count not a cap; researcher authorization and flow gate",
+    "same-page reconnect vs pending second client, explicit researcher switch, stale generations rejected; reissue keeps Session/Stage/map/event state and invalidates old code",
+    "initial issuance for stored code-less Session, parallel registration/reissue and lost one-time responses preserve IDs and rotate exactly once",
+    "mid-write faults roll back identities/Session/stages/access/receipt; row-lock race refuses pre-reissue proof; current/retired/client hashes stay detectable without stored plaintext"
+  ],
+  "learnerFlowEnabled": false,
+  "startEnabled": false,
+  "startSuccessAndPostStartRegistration": "DEFERRED_UNTIL_LEARNER_FLOW_EXISTS",
+  "nonemptyNewProtocolMapReissue": "NOT_TESTABLE_WHILE_MAP_CREATION_IS_GATED"
+}

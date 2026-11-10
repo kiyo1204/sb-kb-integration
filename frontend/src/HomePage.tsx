@@ -146,6 +146,8 @@ export default function HomePage({
                 <a className="home-secondary-link" href="/research/data-management">研究データ・保存期限・明示削除</a>
                 <a className="home-secondary-link" href="/research/events">研究イベントの時系列ログ</a>
                 <a className="home-secondary-link" href="/research/event-exports">研究イベントを絞り込み出力</a>
+                <a className="home-secondary-link" href="/research/materials">教材を作成・管理 <span aria-hidden="true">→</span></a>
+                <a className="home-secondary-link" href="/research/experiment-runs">実施を作成・一覧で確認 <span aria-hidden="true">→</span></a>
                 <a className="home-secondary-link" href="/research/goal-maps">
                   ゴールマップを作成・管理
                   <span aria-hidden="true">→</span>
@@ -279,11 +281,11 @@ function ResearchSessions() {
     {sessions && sessions.length > 0 && <div className="research-session-table-wrap"><table className="research-session-table">
       <thead><tr><th scope="col">参加者コード</th><th scope="col">フロー</th><th scope="col">群</th><th scope="col">状態</th><th scope="col">現在の活動</th><th scope="col">開始日時</th><th scope="col">完了日時</th><th scope="col">操作</th></tr></thead>
       <tbody>{sessions.map(session => <tr key={session.id}>
-        <td>{session.participantCode || "—"}</td><td>{session.protocolKey==="STAGE1_5"?"5活動（群なし）":session.protocolKey==="STAGE1_6"?"6活動（群別）":"4活動（旧形式）"}</td><td>{session.studyGroup === "EXPERIMENTAL" ? "実験群" : session.studyGroup === "CONTROL" ? "統制群" : "—"}</td>
+        <td>{session.participantCode || "—"}</td><td>{session.protocolKey==="SBKB_INTEGRATION_V1"?"SB/KB統合（アンケートなし）":session.protocolKey==="STAGE1_5"?"5活動（群なし）":session.protocolKey==="STAGE1_6"?"6活動（群別）":"4活動（旧形式）"}</td><td>{session.studyGroup === "EXPERIMENTAL" ? "実験群" : session.studyGroup === "CONTROL" ? "統制群" : "—"}</td>
         <td>{session.status === "NOT_STARTED" ? "未開始" : session.status === "IN_PROGRESS" ? "進行中" : "完了"}</td>
         <td>{session.status === "IN_PROGRESS" && session.currentStageType ? `STEP ${(session.currentStageOrder ?? 0) + 1}：${stageNames[session.currentStageType] ?? session.currentStageType}` : "—"}</td>
         <td>{session.startedAt ? formatDate(session.startedAt) : "—"}</td><td>{session.completedAt ? formatDate(session.completedAt) : "—"}</td>
-        <td><a className="home-secondary-button" href={`/sessions/${session.id}`} aria-label={`${session.participantCode || "参加者コードなし"}のセッションを開く`}>開く</a>{session.status==="NOT_STARTED"?<button type="button" disabled={deleting!==null} onClick={()=>void cleanup(session)} aria-label={`${session.participantCode || "参加者コードなし"}の未開始セッションを削除`}>未開始セッションを削除</button>:<a href="/research/data-management">確認付きデータ削除</a>}</td>
+        <td><a className="home-secondary-button" href={session.protocolKey==="SBKB_INTEGRATION_V1"?`/research/stage1/${session.id}/analysis`:`/sessions/${session.id}`} aria-label={`${session.participantCode || "参加者コードなし"}のセッションを開く`}>開く</a>{session.protocolKey==="SBKB_INTEGRATION_V1"?<span>実施・参加者管理の対象</span>:session.status==="NOT_STARTED"?<button type="button" disabled={deleting!==null} onClick={()=>void cleanup(session)} aria-label={`${session.participantCode || "参加者コードなし"}の未開始セッションを削除`}>未開始セッションを削除</button>:<a href="/research/data-management">確認付きデータ削除</a>}</td>
       </tr>)}</tbody>
     </table></div>}
   </section>;

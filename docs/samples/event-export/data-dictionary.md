@@ -51,7 +51,7 @@ CSVのテキストが空白/制御・書式文字の後に =,+,-,@（全角を�
 |legacy_boundary_count|string  /  null|保存済み切替境界の旧件数。未導入はnull。|
 |legacy_boundary_last_id|string  /  null|保存済み境界直前の旧ログUUID。|
 |feedback_match|boolean  /  null|v6 FEEDBACK_CHECK/SUCCESSの一致判定。true=一致、false=学習上の不一致、null=結果未保存/非該当。旧v1はoutcomeを保持し、この列を補完しない。|
-|protocol_key|string  /  null|STAGE1_4=旧4活動、STAGE1_6=旧群別6活動、STAGE1_5=群なし5活動。Sessionなしの監査はnull。|
+|protocol_key|string  /  null|STAGE1_4=旧4活動、STAGE1_6=旧群別6活動、STAGE1_5=群なし5活動、SBKB_INTEGRATION_V1=群なしSB/KB統合（アンケートなし）。Sessionなしの監査はnull。|
 
 ## survey_events.csv
 

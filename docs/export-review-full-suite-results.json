@@ -1,0 +1,277 @@
+[
+  {
+    "test": "test:test-target-guards",
+    "exitCode": 0,
+    "elapsedMs": 1667
+  },
+  {
+    "test": "test:event-catalog",
+    "exitCode": 0,
+    "elapsedMs": 3114
+  },
+  {
+    "test": "test:research-event-schema",
+    "exitCode": 0,
+    "elapsedMs": 1672
+  },
+  {
+    "test": "test:undo-redo:unit",
+    "exitCode": 0,
+    "elapsedMs": 1555
+  },
+  {
+    "test": "test:merge-release",
+    "exitCode": 0,
+    "elapsedMs": 1550
+  },
+  {
+    "test": "test:five-flow-features",
+    "exitCode": 0,
+    "elapsedMs": 1600
+  },
+  {
+    "test": "test:map-mixed-history",
+    "exitCode": 0,
+    "elapsedMs": 1422
+  },
+  {
+    "test": "test:research-events",
+    "exitCode": 0,
+    "elapsedMs": 4347
+  },
+  {
+    "test": "test:event-export-samples",
+    "exitCode": 0,
+    "elapsedMs": 1786
+  },
+  {
+    "test": "test:event-export",
+    "exitCode": 0,
+    "elapsedMs": 26306
+  },
+  {
+    "test": "test:data-management",
+    "exitCode": 0,
+    "elapsedMs": 4785
+  },
+  {
+    "test": "test:research-note-safety",
+    "exitCode": 0,
+    "elapsedMs": 84767
+  },
+  {
+    "test": "test:stage1:integration",
+    "exitCode": 0,
+    "elapsedMs": 26611
+  },
+  {
+    "test": "test:session-flow-survey",
+    "exitCode": 0,
+    "elapsedMs": 9698
+  },
+  {
+    "test": "test:session-cleanup",
+    "exitCode": 0,
+    "elapsedMs": 6425
+  },
+  {
+    "test": "test:five-flow-composite",
+    "exitCode": 0,
+    "elapsedMs": 27024
+  },
+  {
+    "test": "test:five-flow-feature-maps",
+    "exitCode": 0,
+    "elapsedMs": 3831
+  },
+  {
+    "test": "test:goal-map-transfer",
+    "exitCode": 0,
+    "elapsedMs": 4252
+  },
+  {
+    "test": "test:map-api-v2",
+    "exitCode": 0,
+    "elapsedMs": 7315
+  },
+  {
+    "test": "test:map-failure-retry",
+    "exitCode": 0,
+    "elapsedMs": 7346
+  },
+  {
+    "test": "test:parent-followup",
+    "exitCode": 0,
+    "elapsedMs": 11290
+  },
+  {
+    "test": "test:map-auto-submit-v2",
+    "exitCode": 0,
+    "elapsedMs": 2996
+  },
+  {
+    "test": "test:learning-activity-events",
+    "exitCode": 0,
+    "elapsedMs": 4973
+  },
+  {
+    "test": "test:assessment-events",
+    "exitCode": 0,
+    "elapsedMs": 6653
+  },
+  {
+    "test": "test:server-audit",
+    "exitCode": 0,
+    "elapsedMs": 7950
+  },
+  {
+    "test": "test:audit-routing",
+    "exitCode": 0,
+    "elapsedMs": 2421
+  },
+  {
+    "test": "test:integrated-streams",
+    "exitCode": 0,
+    "elapsedMs": 6533
+  },
+  {
+    "test": "test:integration-invariants",
+    "exitCode": 0,
+    "elapsedMs": 2075
+  },
+  {
+    "test": "test:safe-server-error",
+    "exitCode": 0,
+    "elapsedMs": 1495
+  },
+  {
+    "test": "test:server-recovery",
+    "exitCode": 0,
+    "elapsedMs": 6199
+  },
+  {
+    "test": "test:autosubmit-deadlock",
+    "exitCode": 0,
+    "elapsedMs": 7298
+  },
+  {
+    "test": "test:delivery-reliability",
+    "exitCode": 0,
+    "elapsedMs": 10871
+  },
+  {
+    "test": "test:event-scale",
+    "exitCode": 0,
+    "elapsedMs": 15184
+  },
+  {
+    "test": "test:research-log-ui",
+    "exitCode": 0,
+    "elapsedMs": 12509
+  },
+  {
+    "test": "test:stage1-analysis-layout-browser",
+    "exitCode": 0,
+    "elapsedMs": 18962
+  },
+  {
+    "test": "test:link-position-browser",
+    "exitCode": 0,
+    "elapsedMs": 13048
+  },
+  {
+    "test": "test:session-flow-survey-browser",
+    "exitCode": 0,
+    "elapsedMs": 13825
+  },
+  {
+    "test": "test:five-flow-feedback-browser",
+    "exitCode": 0,
+    "elapsedMs": 13254
+  },
+  {
+    "test": "test:five-flow-features-browser",
+    "exitCode": 0,
+    "elapsedMs": 12774
+  },
+  {
+    "test": "test:undo-role-browser",
+    "exitCode": 0,
+    "elapsedMs": 11579
+  },
+  {
+    "test": "test:delivery-browser",
+    "exitCode": 0,
+    "elapsedMs": 19907
+  },
+  {
+    "test": "test:event-export-browser",
+    "exitCode": 0,
+    "elapsedMs": 34383
+  },
+  {
+    "test": "test:data-management-browser",
+    "exitCode": 0,
+    "elapsedMs": 15483
+  },
+  {
+    "test": "test:session-cleanup-browser",
+    "exitCode": 0,
+    "elapsedMs": 10829
+  },
+  {
+    "test": "test:experiment-foundation",
+    "exitCode": 0,
+    "elapsedMs": 4834
+  },
+  {
+    "test": "test:material-catalog",
+    "exitCode": 0,
+    "elapsedMs": 5128
+  },
+  {
+    "test": "test:material-catalog-browser",
+    "exitCode": 0,
+    "elapsedMs": 17231
+  },
+  {
+    "test": "test:run-management",
+    "exitCode": 0,
+    "elapsedMs": 4039
+  },
+  {
+    "test": "test:run-management-browser",
+    "exitCode": 0,
+    "elapsedMs": 16465
+  },
+  {
+    "test": "test:r05-execution",
+    "exitCode": 0,
+    "elapsedMs": 42700
+  },
+  {
+    "test": "test:participant-access",
+    "exitCode": 0,
+    "elapsedMs": 4491
+  },
+  {
+    "test": "test:participant-access-browser",
+    "exitCode": 0,
+    "elapsedMs": 18762
+  },
+  {
+    "test": "test:experiment-learner",
+    "exitCode": 0,
+    "elapsedMs": 58348
+  },
+  {
+    "test": "test:experiment-research",
+    "exitCode": 0,
+    "elapsedMs": 77065
+  },
+  {
+    "test": "test:r05-storage",
+    "exitCode": 0,
+    "elapsedMs": 3153
+  }
+]

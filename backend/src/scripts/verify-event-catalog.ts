@@ -337,7 +337,7 @@ if (process.argv.includes("--write-dictionary"))
   await writeFile("../docs/research-event-test-matrix.md", dictionary);
 else
   assert.equal(
-    await readFile("../docs/research-event-test-matrix.md", "utf8"),
+    (await readFile("../docs/research-event-test-matrix.md", "utf8")).replace(/\r\n/g,"\n"),
     dictionary,
     "Regenerate the reviewed dictionary on catalog change",
   );
