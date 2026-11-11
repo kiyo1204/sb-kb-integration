@@ -19,7 +19,7 @@ export async function checkExportPool(runId: string, foreignSession: string) {
       const sql=args[0];
       if(typeof sql==="string"&&sql.startsWith("SELECT session_id FROM experiment_run_sessions")&&mode==="foreign")
         return query('SELECT $1::uuid AS session_id',[foreignSession]);
-      if(typeof sql==="string"&&sql.startsWith("SELECT id,state,material_version_id")&&mode==="sql-fault")
+      if(typeof sql==="string"&&sql.startsWith("SELECT id,state,")&&mode==="sql-fault")
         return query('SELECT test_only_missing_column FROM experiment_runs');
       return Reflect.apply(query,client,args);
     }) as typeof client.query;

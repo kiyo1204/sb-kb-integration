@@ -1,3 +1,9 @@
+import {checkMapReadEndOrdering} from "./experiment-map-read-checks.js";
+import {mkdtemp,rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join,resolve} from "node:path";
+import {pathToFileURL} from "node:url";
+import {checkExperimentEnd,checkBackgroundEndOrder} from "./experiment-end-checks.js";
 import {checkStartPool} from "./experiment-start-pool-checks.js";
 import {checkExperimentResearch} from "./experiment-research-checks.js";
 import type { Request, Response } from "express";
@@ -22,11 +28,13 @@ const listener = createServer();
 await new Promise<void>((r) => listener.listen(0, "127.0.0.1", r));
 const port = (listener.address() as { port: number }).port;
 await new Promise<void>((r) => listener.close(() => r()));
+const readGateDir=await mkdtemp(join(tmpdir(),"sbkb-end-read-"));
 const base = "http://127.0.0.1:" + port,
-  server = spawn(process.execPath, ["dist/index.js"], {
+  server = spawn(process.execPath, ["--import",pathToFileURL(resolve("src/scripts/experiment-map-read-response-gate.js")).href,"dist/index.js"], {
     env: {
       ...process.env,
       PORT: String(port),
+      EXPERIMENT_READ_TEST_GATE_DIR: readGateDir,
       STAGE1_EXPERIMENT_LEARNER_PREVIEW: "1",
     },
     stdio: "ignore",
@@ -218,6 +226,7 @@ try {
       expectedRevision: s.editRevision,
     })
   ).data;
+  await checkMapReadEndOrdering(pool,base,mat.id,readGateDir);
   await checkStartPool(base, mat.id);
   const run = (
     await call(
@@ -363,6 +372,7 @@ try {
     sessionId: string,
     token: string,
     manual: boolean,
+    endAfterAutomatic = false,
   ) {
     await claim(token);
     const fs = (await call(`/sessions/${sessionId}/flow`)).data;
@@ -651,6 +661,10 @@ try {
         201,
       )
     ).data;
+    if(endAfterAutomatic){
+      await checkBackgroundEndOrder(pool,base,sessionId,int.id);
+      return {sb:sb.id,kb:kb.id,int:int.id};
+    }
     let m = (await call(`/maps/${int.id}`)).data;
     if (!m.kitDefinitionId) {
       await call(`/maps/${int.id}/kit-definition`, "PATCH", {
@@ -755,6 +769,11 @@ try {
   }
   const maps = await buildParticipant(p.sessionId, p.issuedCode, true);
   await buildParticipant(late.sessionId, late.issuedCode, false);
+  const automaticEndRun=(await research(root,"POST",{name:"TEST ONLY automatic end race",catalogVersionId:mat.id,plannedParticipants:0},201)).data;
+  const automaticEndParticipant=(await research(`${root}/${automaticEndRun.id}/participants`,"POST",{participantLabel:"TEST ONLY auto end"},201)).data;
+  await research(`${root}/${automaticEndRun.id}/start`,"POST",{});
+  await buildParticipant(automaticEndParticipant.sessionId,automaticEndParticipant.issuedCode,false,true);
+
   assert.equal(
     (
       await pool.query(
@@ -820,7 +839,15 @@ try {
       },
     );
     assert.equal((await once(child, "exit"))[0], 0, "learner browser");
+    const endParticipant=(await research(`${root}/${browserRun.id}/participants`,"POST",{participantLabel:"TEST ONLY end browser"},201)).data;
+    const bRun=(await research(root,"POST",{name:"TEST ONLY delayed identity",catalogVersionId:mat.id,plannedParticipants:0},201)).data;
+    const bParticipant=(await research(`${root}/${bRun.id}/participants`,"POST",{participantLabel:"TEST ONLY identity B"},201)).data;
+    await research(`${root}/${bRun.id}/start`,"POST",{});
+    const endingBrowser=spawn(process.execPath,[cli,"run","test:experiment-end-browser"],{cwd:"../frontend",env:{...process.env,API_BASE_URL:base,EXPERIMENT_BROWSER_TOKEN:endParticipant.issuedCode,EXPERIMENT_BROWSER_SESSION:endParticipant.sessionId,EXPERIMENT_BROWSER_RUN:browserRun.id,EXPERIMENT_BROWSER_B_TOKEN:bParticipant.issuedCode,EXPERIMENT_BROWSER_B_RUN:bRun.id},stdio:"inherit",windowsHide:true});
+    assert.equal((await once(endingBrowser,"exit"))[0],0,"end browser");
+
   }
+  await checkExperimentEnd(pool,base,run.id);
   await writeFile(
     verificationReportPath("invariants").replace(
       /invariants\.json$/,
@@ -850,4 +877,5 @@ try {
   server.kill();
   await once(server, "exit").catch(() => undefined);
   await pool.end();
+  await rm(readGateDir,{recursive:true,force:true});
 }

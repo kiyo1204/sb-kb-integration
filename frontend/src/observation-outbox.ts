@@ -321,7 +321,9 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
         }
         return false;
       }
-      if (!me.ok || (await me.json()).sessionId !== sessionId) return false;
+      if (!me.ok) return false;
+      const identity=await me.json();
+      if(identity.sessionId!==sessionId || identity.runState==="ENDED")return false;
       let failed = false,
         announced = false;
       for (;;) {
@@ -388,7 +390,7 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
         const payload = await response.json().catch(() => null);
         // Keep stale-origin observations for the separately undecided recovery policy.
         // Never silently relabel them with a replacement device generation.
-        if(payload?.error==="experiment_origin_stale")return false;
+        if(payload?.error==="experiment_origin_stale" || payload?.error==="experiment_ended")return false;
         if(response.status===410 && payload?.error === "research_data_deleted") {
           if(typeof payload.queueKey === "string") await discardDeletedQueue(payload.queueKey,send);
           return false;

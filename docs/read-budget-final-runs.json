@@ -1,0 +1,12 @@
+{
+  "syntheticOnly": true,
+  "checks": [
+    "researcher-only create/list/read; PREPARING run pins published material/time, zero Session/Stage/Map creation",
+    "same-key concurrent retry creates once; changed payload rejected; existing standalone runs never adopted",
+    "only published catalog IDs accepted; no client time/participant injection; technical integer boundary and zero allowed, no business cap",
+    "metadata/audit failure rolls back run/receipt; retry succeeds; lookup errors yield safe 503 FAILURE/SERVER on every new path",
+    "later versions do not replace pin/time; DB immutable; future internal registration exceeds planned count while public start/register/code routes stay unavailable"
+  ],
+  "publicParticipantRegistration": false,
+  "publicRunStart": false
+}

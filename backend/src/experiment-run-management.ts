@@ -71,7 +71,7 @@ export async function writeRunAudit(
 }
 // Time is read via the immutable pinned-version FK, never via the latest catalog
 // version or editable settings. No competing copy of its duration is maintained.
-const select = `SELECT r.id,x.name,x.catalog_version_id AS "catalogVersionId",r.material_version_id AS "materialVersionId",c.series_id AS "seriesId",c.version_number AS "materialVersion",v.title AS "materialTitle",v.integration_seconds AS "integrationSeconds",r.planned_participants AS "plannedParticipants",(SELECT count(*)::int FROM experiment_run_sessions p WHERE p.run_id=r.id) AS "registeredSessions",r.state,r.created_at AS "createdAt"
+const select = `SELECT r.id,x.name,x.catalog_version_id AS "catalogVersionId",r.material_version_id AS "materialVersionId",c.series_id AS "seriesId",c.version_number AS "materialVersion",v.title AS "materialTitle",v.integration_seconds AS "integrationSeconds",r.planned_participants AS "plannedParticipants",(SELECT count(*)::int FROM experiment_run_sessions p WHERE p.run_id=r.id) AS "registeredSessions",r.state,r.ended_at AS "endedAt",r.created_at AS "createdAt"
 FROM experiment_runs r JOIN experiment_run_catalog x ON x.run_id=r.id JOIN material_catalog_versions c ON c.id=x.catalog_version_id JOIN experiment_material_versions v ON v.id=r.material_version_id`;
 async function read(c: DB, id: string) {
   return (await c.query(select + " WHERE r.id=$1", [id])).rows[0] ?? null;

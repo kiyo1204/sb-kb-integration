@@ -132,6 +132,11 @@ export function accessControl(pool: Pool) {
             if(proof){
               principal={role:"learner",sessionId:proof.sessionId,kitId:proof.kitId,experiment:proof};
               response.locals.principal=principal;
+              const run=(await pool.query("SELECT r.state,r.ended_at FROM experiment_runs r JOIN experiment_run_sessions p ON p.run_id=r.id WHERE p.session_id=$1",[proof.sessionId])).rows[0];
+              if(!run)return response.status(409).json({error:"experiment_membership_unavailable"});
+              if(request.path==="/experiment-status"&&request.method==="GET")return response.json({state:run.state,endedAt:run.ended_at});
+              if(run.state==="ENDED" && request.path==="/me" && request.method==="GET")return response.json({role:"learner",sessionId:proof.sessionId,protocolKey:"SBKB_INTEGRATION_V1",flowAvailable:false,runState:"ENDED"});
+              if(run.state==="ENDED")return response.status(409).json({error:"experiment_ended",message:"研究者が実施を終了しました。研究者の指示を待ってください。"});
               if(request.path==="/me"&&request.method==="GET")return response.json({role:"learner",sessionId:proof.sessionId,protocolKey:"SBKB_INTEGRATION_V1",flowAvailable:experimentPreviewEnabled()});
               if(request.path==="/experiment-client/claim"&&request.method==="POST")return next();
               if(request.path.startsWith("/research/"))return response.status(403).json({error:"forbidden"});

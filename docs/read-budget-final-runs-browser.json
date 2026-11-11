@@ -1,0 +1,11 @@
+{
+  "syntheticOnly": true,
+  "realApi": true,
+  "checks": [
+    "R06 no defaults/published-only/time pin/planned integer validation",
+    "lost committed ACK retries same key, no duplicate and input retained",
+    "R07 create/reload/counts/state/JST, no R08/start/register controls",
+    "refresh failure keeps prior rows; desktop/mobile geometry",
+    "mock empty-selection and learner UI gates; backend real authorization checked separately"
+  ]
+}

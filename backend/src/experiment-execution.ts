@@ -62,6 +62,7 @@ export async function guardExperimentTransaction(c: PoolClient) {
     x.secret,
     x.generation,
   );
+  if(row.state==="ENDED")throw new ParticipantAccessError("experiment_ended",409);
   if (!preview || row.state !== "RUNNING")
     throw new Error("experiment_not_running");
 }
@@ -102,6 +103,7 @@ export async function validateExperimentRequest(
       req.header("X-Experiment-Client"),
       Number(req.header("X-Experiment-Generation")),
     );
+    if(row.state==="ENDED")throw new ParticipantAccessError("experiment_ended",409);
     if (row.state !== "RUNNING") throw new ParticipantAccessError("experiment_not_running",409);
     if (
       req.method === "POST" &&

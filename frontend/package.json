@@ -26,7 +26,8 @@
     "test:participant-access-browser": "tsx scripts/verify-participant-access-browser.ts",
     "test:experiment-learner-browser": "tsx scripts/verify-experiment-learner-browser.ts",
     "test:r05-browser": "tsx scripts/verify-r05-browser.ts",
-    "test:experiment-research-browser": "tsx scripts/verify-experiment-research-browser.ts"
+    "test:experiment-research-browser": "tsx scripts/verify-experiment-research-browser.ts",
+    "test:experiment-end-browser": "tsx scripts/verify-experiment-end-browser.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",
