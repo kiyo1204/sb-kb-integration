@@ -222,6 +222,26 @@ try {
     .getByRole("button", { name: "Drawerを閉じる", exact: true })
     .click();
   await page.getByRole("button", { name: "全体表示", exact: true }).click();
+  await page.getByText("初期概念は移動・リンク接続ができます。名前変更・削除はできません。", { exact: true }).waitFor();
+  await page.screenshot({ path: join(dir, "sb-unselected.png"), fullPage: true });
+  // UI-only missing-seed fixture. No persisted seed or DB constraint is changed.
+  const mapGet = /\/api\/maps\/[^/?]+$/;
+  await page.route(mapGet, async route => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const body = JSON.stringify(await response.json(), (key, value) => key === "isSeed" ? false : value);
+    await route.fulfill({ response, body });
+  });
+  await page.getByRole("link", { name: /セッション画面へ戻る/ }).click();
+  await page.getByRole("button", { name: "続ける", exact: true }).click();
+  await page.getByRole("heading", { name: /Scratch-Build/ }).waitFor();
+  await page.locator(".concept-node").first().waitFor();
+  assert.equal(await page.locator(".experiment-seed-guidance").count(), 0);
+  await page.screenshot({ path: join(dir, "sb-no-seed-fixture.png"), fullPage: true });
+  await page.unroute(mapGet);
+  await page.getByRole("link", { name: /セッション画面へ戻る/ }).click();
+  await page.getByRole("button", { name: "続ける", exact: true }).click();
+  await page.locator(".experiment-seed-guidance").waitFor();
   const seedNode = page.locator(".concept-node").first(),
     seedBox = await seedNode.boundingBox();
   assert.ok(seedBox);
@@ -243,6 +263,10 @@ try {
   await page.mouse.up();
   assert.equal((await moved).status(), 200);
   await page.screenshot({ path: join(dir, "p05.png"), fullPage: true });
+  await seedNode.click();
+  assert.ok(await page.locator(".experiment-seed-guidance").isVisible());
+  await page.screenshot({ path: join(dir, "sb-selected.png"), fullPage: true });
+  await page.getByRole("button", { name: "Drawerを閉じる", exact: true }).click();
   await page.context().setOffline(true);
   await page
     .getByText("オフライン：保存・提出はできません。", { exact: false })
@@ -264,6 +288,9 @@ try {
       .getByRole("button", { name: "最終提出", exact: true })
       .isDisabled(),
   );
+  await page.locator("#kb-submission-guidance").filter({hasText:"未確認です"}).waitFor();
+  await page.getByText("最終提出時は、前回の結果にかかわらずサーバーが最新のマップを再判定します。", { exact: true }).waitFor();
+  await page.screenshot({ path: join(dir, "kb-unchecked.png"), fullPage: true });
   await page.getByRole("button", { name: "一時提出", exact: true }).click();
   await page.locator(".kit-feedback-result-heading").waitFor();
   assert.ok(
@@ -287,6 +314,8 @@ try {
       ),
     "independent scrolling palettes",
   );
+  await page.locator("#kb-submission-guidance").filter({hasText:"確認結果：不一致"}).waitFor();
+  await page.screenshot({ path: join(dir, "kb-mismatch.png"), fullPage: true });
   // Native mouse drag of a real palette part, then Undo restores its availability.
   const part = page.locator(".kit-palette-part.is-concept").first(),
     canvas = page.locator(".concept-canvas").first();
@@ -308,6 +337,10 @@ try {
       document.querySelector<HTMLButtonElement>(".kit-palette-part.is-concept")
         ?.disabled === true,
   );
+  await page.waitForFunction(() => !document.querySelector(".kit-feedback-check-button")?.hasAttribute("disabled"));
+  await page.locator("#kb-submission-guidance").filter({hasText:"前回の結果は古く"}).waitFor();
+  assert.ok(await page.getByRole("button", { name: "最終提出", exact: true }).isDisabled());
+  await page.screenshot({ path: join(dir, "kb-stale.png"), fullPage: true });
   await page.getByRole("button", { name: "元に戻す", exact: true }).click();
   await page.waitForFunction(
     () =>
@@ -397,10 +430,13 @@ try {
   await page.getByRole("button", { name: "続ける", exact: true }).click();
   await page.getByRole("button", { name: "一時提出", exact: true }).click();
   await page.getByRole("dialog").getByText("一致", { exact: true }).waitFor();
+  await page.screenshot({ path: join(dir, "kb-match.png"), fullPage: true });
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "閉じる", exact: true })
     .click();
+  await page.locator("#kb-submission-guidance").filter({hasText:"確認結果：一致"}).waitFor();
+  await page.screenshot({ path: join(dir, "kb-confirmed.png"), fullPage: true });
   await page.getByRole("button", { name: "最終提出", exact: true }).click();
   await page.getByRole("region", { name: "P04 課題説明" }).waitFor();
   await page.getByRole("button", { name: "開始する", exact: true }).click();

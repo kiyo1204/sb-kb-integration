@@ -133,3 +133,19 @@
 .is-experiment .map-editor-history-actions {display:flex;position:relative;gap:6px;flex-wrap:nowrap;}
 .is-experiment .map-editor-history-actions > span {position:absolute;top:100%;left:0;font-size:11px;white-space:nowrap;}
 .is-experiment .kit-feedback-summary {order:11;flex-basis:100%;margin:0;}
+
+/* New-protocol SB/KB guidance stays visible before a concept is selected. */
+.is-experiment .experiment-state-guidance {
+  margin: 10px 0 4px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid #557c66;
+  border-radius: var(--radius-md);
+  background: #edf4ef;
+  color: #214d3b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.is-experiment .kit-feedback-summary[hidden] { display: none; }
+.is-experiment .experiment-state-guidance p { margin: 0; }
+.is-experiment .experiment-submission-note { font-size: 12px; margin-top: 4px; }
