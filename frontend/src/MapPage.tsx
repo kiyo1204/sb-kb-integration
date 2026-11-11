@@ -2802,6 +2802,17 @@ function MapEditorShell({
 
   const canvasFitRef=useRef<{fit:()=>void}>(null);
   const experimentLayout=map.sessionProtocolKey==="SBKB_INTEGRATION_V1";
+  const experimentKB = experimentLayout && isLearner && map.type === "KB";
+  const kbSubmissionHint = readOnly ? "提出済みです。内容は変更できません。"
+    : kitFeedbackChecking ? "一致状況を確認中です。完了するまでお待ちください。"
+    : hasSaveError ? "保存状態を確認できません。保存を確認してから一時提出してください。"
+    : isSaving ? "保存中です。保存完了後に確認・提出できます。"
+    : !kitBuildFeedback ? "未確認です。「一時提出」で一致状況を確認してください。"
+    : kitFeedbackFreshness === "stale" ? "構造が変わったため、前回の結果は古くなっています。この画面の最終提出は、「一時提出」で最新の一致を確認すると有効になります。"
+    : kitFeedbackFreshness !== "current" ? "最新の保存状態の確認が必要です。「一時提出」で再確認してください。"
+    : !kitBuildFeedback.result.matched ? "確認結果：不一致。マップを編集し、「一時提出」で再確認してください。"
+    : !canSubmit || drawer.kind !== "closed" || linkCreation !== null ? "確認結果：一致。編集中の操作を完了し、オンラインで保存状態を確認すると最終提出できます。"
+    : "確認結果：一致。「最終提出」でこのマップを提出できます。";
   const creationTools=!interactionLocked && (canCreateConcept || canCreateLink) && (
             <div className="map-editor-tools" aria-label="マップ操作">
               <span>追加</span>
@@ -2823,6 +2834,7 @@ function MapEditorShell({
           <button
             type="button"
             className="kit-feedback-check-button"
+            aria-describedby={experimentKB ? "kb-submission-guidance" : undefined}
             disabled={isSaving || submitting || kitFeedbackChecking}
             onClick={() => void onCheckKitFeedback()}
           >
@@ -2830,7 +2842,7 @@ function MapEditorShell({
           </button>
           {kitBuildFeedback && (
             <>
-              <p className="kit-feedback-summary" role="status">
+              <p className="kit-feedback-summary" role="status" hidden={experimentKB}>
                 前回の結果：{kitBuildFeedback.result.matched ? "一致" : "不一致"}。
                 {kitFeedbackFreshnessText(kitFeedbackFreshness)}
               </p>
@@ -2971,6 +2983,8 @@ function MapEditorShell({
         </p>
       )}
 
+      {experimentKB && <div className="experiment-state-guidance"><p id="kb-submission-guidance" role="status" aria-live="polite">{kbSubmissionHint}</p><p className="experiment-submission-note">最終提出時は、前回の結果にかかわらずサーバーが最新のマップを再判定します。</p></div>}
+      {experimentLayout && isLearner && map.type === "PRIOR" && map.concepts.some(c => c.isSeed) && <p className="experiment-state-guidance experiment-seed-guidance">初期概念は移動・リンク接続ができます。名前変更・削除はできません。</p>}
       {!experimentLayout && feedbackControls}
 
       {supplementalContent}
