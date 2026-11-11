@@ -370,9 +370,11 @@ try {
       [material.foundationVersionId],
     ),
   );
-  for (const suffix of ["/end", "/learner-token"]) {
-    await call(root + "/" + created.id + suffix, "POST", {}, 404);
-  }
+  // End now exists, but requires confirmation and an actually running experiment.
+  await call(root + "/" + created.id + "/end", "POST", {}, 400);
+  await call(root + "/" + created.id + "/end", "POST", {confirmed:true}, 409);
+  assert.equal((await call(root + "/" + created.id)).data.state,"PREPARING");
+  await call(root + "/" + created.id + "/learner-token", "POST", {}, 404);
   // Existing internal-only service proves future registration is not capped.
   for (let n = 0; n < 2; n++)
     await registerExperimentSession(

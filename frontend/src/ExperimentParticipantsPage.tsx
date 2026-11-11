@@ -30,6 +30,7 @@ type View = {
     registeredSessions: number;
     state: string;
     integrationSeconds: number;
+    endedAt?: string | null;
   };
   startAvailable?:boolean;
   participants: Participant[];
@@ -200,18 +201,20 @@ export default function ExperimentParticipantsPage({
                   <a href={`/research/materials/${r.catalogVersionId}`}>
                     {r.materialTitle} v{r.materialVersion}
                   </a>{" "}
-                  / 状態：{r.state==="RUNNING" ? "実施中（模擬）" : "準備中"} / 統合制限時間：{r.integrationSeconds}秒
+                  / 状態：{r.state==="ENDED" ? "終了" : r.state==="RUNNING" ? "実施中（模擬）" : "準備中"} / 統合制限時間：{r.integrationSeconds}秒
                 </p>
               </div>
               <div className="material-actions">
                 <button disabled={busy} onClick={() => void refresh()}>
                   状態を更新
                 </button>
+                <button disabled={busy || r.state!=="RUNNING"} onClick={()=>{if(window.confirm("実施を終了します。活動中の参加者は停止し、未提出マップは未提出のまま保持します。終了後の変更・提出・操作記録は拒否し、参加者は保存済みマップも閲覧できません。研究者の閲覧・出力は残ります。終了しますか？"))void perform(`/${runId}/end`,{confirmed:true});}}>実施を終了</button>
                 <button disabled={!view?.startAvailable || busy || participants.length===0 || r.state!=="PREPARING"} aria-describedby="experiment-start-gate" onClick={()=>void perform(`/${runId}/start`,{})}>
                   {view?.startAvailable ? "実施開始（模擬検証専用）" : "実施開始（未公開）"}
                 </button>
               </div>
             </section>
+            {r.endedAt && <p>終了日時：{new Date(r.endedAt).toLocaleString("ja-JP")}。参加者の完了・離脱・撤回記録は変更していません。</p>}
             <p id="experiment-start-gate" className="participant-flow-gate">
               新しい学習者フローが未公開のため、コードは研究者の模擬検証用です。実参加者への配布・本番利用・開始はできません。
               {participants.length === 0
@@ -223,11 +226,11 @@ export default function ExperimentParticipantsPage({
                 ["参加予定", r.plannedParticipants],
                 ["登録Session", participants.length],
                 [
-                  "未開始",
+                  r.state === "ENDED" ? "終了時に未開始" : "未開始",
                   participants.filter((p) => p.status === "NOT_STARTED").length,
                 ],
                 [
-                  "進行中",
+                  r.state === "ENDED" ? "終了時に進行中" : "進行中",
                   participants.filter((p) => p.status === "IN_PROGRESS").length,
                 ],
                 [
@@ -259,7 +262,7 @@ export default function ExperimentParticipantsPage({
                 </label>
                 <button
                   className="session-primary-button"
-                  disabled={busy || !label.trim()}
+                  disabled={busy || r.state === "ENDED" || !label.trim()}
                 >
                   ＋ 参加者Session・検証用コードを追加
                 </button>
@@ -289,6 +292,7 @@ export default function ExperimentParticipantsPage({
                           p={p}
                           runId={runId}
                           busy={busy}
+                          ended={r.state === "ENDED"}
                           perform={perform}
                         />
                       ))}
@@ -311,11 +315,13 @@ function ParticipantRow({
   p,
   runId,
   busy,
+  ended,
   perform,
 }: {
   p: Participant;
   runId: string;
   busy: boolean;
+  ended: boolean;
   perform: (path: string, body: unknown) => Promise<void>;
 }) {
   const [target, setTarget] = useState("");
@@ -329,7 +335,7 @@ function ParticipantRow({
         <small>学習フロー未公開</small>
       </td>
       <td>
-        {p.status === "NOT_STARTED"
+        {ended && p.status!=="COMPLETED" ? `終了により停止（終了時：${p.status==="IN_PROGRESS" ? "進行中" : "未開始"}）` : p.status === "NOT_STARTED"
           ? "未開始"
           : p.status === "IN_PROGRESS"
             ? "進行中"

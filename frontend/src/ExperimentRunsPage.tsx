@@ -395,7 +395,7 @@ function RunList() {
                           <span className="material-badge">
                             {r.state === "PREPARING"
                               ? "準備中"
-                              : r.state === "RUNNING" ? "実施中（模擬）" : "未対応の状態"}
+                              : r.state === "RUNNING" ? "実施中（模擬）" : r.state === "ENDED" ? "終了" : "未対応の状態"}
                           </span>
                         </td>
                         <td>{date(r.createdAt)}</td>

@@ -119,7 +119,7 @@ export function registerExperimentResearchRoutes(app: Express, pool: Pool) {
           await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
           const run = (
             await client.query(
-              `SELECT id,state,material_version_id AS "materialVersionId",planned_participants AS "plannedParticipants",created_at AS "createdAt" FROM experiment_runs WHERE id=$1`,
+              `SELECT id,state,ended_at AS "endedAt",material_version_id AS "materialVersionId",planned_participants AS "plannedParticipants",created_at AS "createdAt" FROM experiment_runs WHERE id=$1`,
               [runId],
             )
           ).rows[0];

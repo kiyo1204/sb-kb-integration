@@ -1,3 +1,5 @@
+import {withExperimentMapRead} from "./experiment-map-read.js";
+import {registerExperimentEndRoutes} from "./experiment-end.js";
 import {registerExperimentResearchRoutes} from "./experiment-research.js";
 import {readKitBuildFeedbackWithSignature,readKitBuildMapSignature,type KitBuildFeedbackWithSignature} from "./kit-build-feedback.js";
 import {registerR05Routes} from "./r05-routes.js";
@@ -1593,6 +1595,7 @@ registerExperimentResearchRoutes(app,pool);
 registerExperimentRunRoutes(app, pool);
 registerExperimentParticipantRoutes(app, pool);
 registerExperimentExecutionRoutes(app,pool);
+registerExperimentEndRoutes(app,pool);
 app.use("/api", async (request, response, next) => {
   if (!["POST", "PATCH"].includes(request.method) || !/^\/(maps|concepts|links)\//.test(request.path) || !request.body || typeof request.body.label !== "string") return next();
   const label = request.body.label as string;
@@ -6666,7 +6669,8 @@ app.get("/api/maps/:mapId", async (request, response) => {
   }
 
   try {
-    const result = await pool.query<MapConceptRow>(
+    await withExperimentMapRead(pool, request, response, async db => {
+    const result = await db.query<MapConceptRow>(
       `
         SELECT
           m.id AS "mapId",
@@ -6726,7 +6730,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
       });
     }
 
-    const linksResult = await pool.query<MapLinkRow>(
+    const linksResult = await db.query<MapLinkRow>(
       `
         SELECT
           link.id,
@@ -6770,7 +6774,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
       (map.mapType === "KB" || map.mapType === "INTEGRATION") &&
       map.kitDefinitionId !== null
     ) {
-      const kitLinksResult = await pool.query<MapKitLinkRow>(
+      const kitLinksResult = await db.query<MapKitLinkRow>(
         `
           SELECT
             item.id AS "kitLinkItemId",
@@ -6810,7 +6814,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
       (map.mapType === "KB" || map.mapType === "INTEGRATION") &&
       map.kitDefinitionId !== null
     ) {
-      const kitConceptsResult = await pool.query<MapKitConceptRow>(
+      const kitConceptsResult = await db.query<MapKitConceptRow>(
         `
           SELECT
             item.id AS "kitConceptItemId",
@@ -6847,7 +6851,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
 
     let availableKitDefinitions: KitDefinitionOption[] = [];
     if (map.mapType === "INTEGRATION" && map.kitDefinitionId === null) {
-      const kitOptionsResult = await pool.query<KitDefinitionOption>(
+      const kitOptionsResult = await db.query<KitDefinitionOption>(
         `
           SELECT id, name
           FROM kit_definitions
@@ -6896,7 +6900,9 @@ app.get("/api/maps/:mapId", async (request, response) => {
       kitConcepts,
       availableKitDefinitions,
     });
+    });
   } catch (error) {
+    if(response.headersSent || response.destroyed)return;
     if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to fetch Map", safeServerErrorCode(error));
     return response.status(500).json({
@@ -6939,6 +6945,7 @@ async function submitExpiredIntegrationMaps() {
       WHERE m.type='INTEGRATION' AND m.status='DRAFT'
         AND (s.protocol_key IN ('STAGE1_5','SBKB_INTEGRATION_V1') OR (s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL')) AND s.status='IN_PROGRESS'
         AND st.stage_type='INTEGRATION_MAP' AND st.status='IN_PROGRESS' AND st.started_at IS NOT NULL
+        AND (s.protocol_key<>'SBKB_INTEGRATION_V1' OR EXISTS(SELECT 1 FROM experiment_run_sessions p JOIN experiment_runs r ON r.id=p.run_id WHERE p.session_id=s.id AND r.state='RUNNING'))
         AND st.id=(SELECT current_stage.id FROM session_stages current_stage
           WHERE current_stage.session_id=s.id AND current_stage.status <> 'COMPLETED' ORDER BY current_stage.order_index LIMIT 1)
         AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`);
