@@ -988,6 +988,16 @@ textarea:focus {
   box-shadow: 0 0 0 1px var(--success);
 }
 
+.link-connector-handle.is-connecting {
+  outline: 3px solid var(--accent-hover);
+  outline-offset: 4px;
+}
+
+.concept-node.is-connection-target {
+  outline: 3px dashed var(--accent-hover);
+  outline-offset: 3px;
+}
+
 .concept-edge-label {
   fill: #3f5b48;
   stroke: #fbfcfa;

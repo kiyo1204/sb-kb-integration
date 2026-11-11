@@ -3566,6 +3566,7 @@ export function ConceptCanvas({
     kind: "temporary" | "saved";
     id: string;
     endpoint: "source" | "target";
+    hoveredConceptId?: string | null;
   } | null>(null);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -3950,13 +3951,14 @@ export function ConceptCanvas({
         pointerEvent.clientY,
       );
       if (point)
-        setConnectionPreview({ start: connection.start, current: point, kind: connection.kind, id: connection.id, endpoint: connection.endpoint });
+        setConnectionPreview({ start: connection.start, current: point, kind: connection.kind, id: connection.id, endpoint: connection.endpoint, hoveredConceptId: conceptAtPoint(pointerEvent.clientX, pointerEvent.clientY) });
     };
     const finish = (pointerEvent: PointerEvent) => {
       if (pointerEvent.pointerId !== connection.pointerId) return;
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", handleKeyDown);
       if (activeConnectionRef.current === connection) {
         activeConnectionRef.current = null;
         setConnectionPreview(null);
@@ -3969,15 +3971,25 @@ export function ConceptCanvas({
     };
     const cancel = (pointerEvent: PointerEvent) => {
       if (pointerEvent.pointerId !== connection.pointerId) return;
+      cancelConnection();
+    };
+    const handleKeyDown = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== "Escape") return;
+      keyEvent.preventDefault();
+      cancelConnection();
+    };
+    const cancelConnection = () => {
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", handleKeyDown);
       activeConnectionRef.current = null;
       setConnectionPreview(null);
     };
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", handleKeyDown);
   }
 
   async function finishConnectionAt(
@@ -4985,7 +4997,7 @@ export function ConceptCanvas({
       {!readOnly && <div className="canvas-connection-area">
       {showConnectionGuidance && <p className="canvas-direction-hint">関係は「始点のConcept → Link → 矢印の先のConcept」の向きにつながります。</p>}
       <div className="canvas-connection-guidance" role="status" aria-live="polite">
-        {connectionPreview ? <p>「{connectionPreview.endpoint === "source" ? "始点" : "矢印の先"}」を接続するConceptへドラッグしてください。</p> : pendingConnectors.map(connector => <p key={connector.id}>
+        {connectionPreview ? <p>「{connectionPreview.endpoint === "source" ? "始点" : "矢印の先"}」を接続するConceptへドラッグしてください。{connectionPreview.hoveredConceptId ? ` 接続先候補：${conceptsById.get(connectionPreview.hoveredConceptId)?.label ?? "Concept"}。離すと接続します。` : ""} Escでこの接続操作を中止できます。</p> : pendingConnectors.map(connector => <p key={connector.id}>
           「{connector.label}」：始点 {connector.sourceConceptId ? conceptsById.get(connector.sourceConceptId)?.label ?? "接続済み" : "未接続"} → 矢印の先 {connector.targetConceptId ? conceptsById.get(connector.targetConceptId)?.label ?? "接続済み" : "未接続"}。
           {!connector.sourceConceptId || !connector.targetConceptId ? ` ${!connector.sourceConceptId && !connector.targetConceptId ? "始点と矢印の先" : !connector.sourceConceptId ? "始点" : "矢印の先"}のハンドルを対応するConceptへドラッグしてください。` : " 保存中です。"}
         </p>)}
@@ -5187,7 +5199,7 @@ export function ConceptCanvas({
               >
                 <button
                   type="button"
-                  className="link-connector-handle is-source"
+                  className={`link-connector-handle is-source${connectionPreview?.kind === "saved" && connectionPreview.id === edge.id && connectionPreview.endpoint === "source" ? " is-connecting" : ""}`}
                   data-endpoint-label="始点"
                   aria-label={`${edge.label}の始点を再接続`}
                   disabled={readOnly || reconnectingLinkId === edge.id}
@@ -5218,7 +5230,7 @@ export function ConceptCanvas({
                 </button>
                 <button
                   type="button"
-                  className="link-connector-handle is-target"
+                  className={`link-connector-handle is-target${connectionPreview?.kind === "saved" && connectionPreview.id === edge.id && connectionPreview.endpoint === "target" ? " is-connecting" : ""}`}
                   data-endpoint-label="矢印の先"
                   aria-label={`${edge.label}の矢印の先を再接続`}
                   disabled={readOnly || reconnectingLinkId === edge.id}
@@ -5245,7 +5257,7 @@ export function ConceptCanvas({
             >
               <button
                 type="button"
-                className={`link-connector-handle is-source${connector.sourceConceptId ? " is-connected" : ""}`}
+                className={`link-connector-handle is-source${connector.sourceConceptId ? " is-connected" : ""}${connectionPreview?.kind === "temporary" && connectionPreview.id === connector.id && connectionPreview.endpoint === "source" ? " is-connecting" : ""}`}
                 data-endpoint-label="始点"
                 aria-label={`${connector.label}の始点を接続${connector.sourceConceptId ? "済み" : "、未接続"}`}
                 disabled={connector.saving}
@@ -5274,7 +5286,7 @@ export function ConceptCanvas({
               </button>
               <button
                 type="button"
-                className={`link-connector-handle is-target${connector.targetConceptId ? " is-connected" : ""}`}
+                className={`link-connector-handle is-target${connector.targetConceptId ? " is-connected" : ""}${connectionPreview?.kind === "temporary" && connectionPreview.id === connector.id && connectionPreview.endpoint === "target" ? " is-connecting" : ""}`}
                 data-endpoint-label="矢印の先"
                 aria-label={`${connector.label}の矢印の先を接続${connector.targetConceptId ? "済み" : "、未接続"}`}
                 disabled={connector.saving}
@@ -5324,7 +5336,7 @@ export function ConceptCanvas({
 
             return (
               <article
-                className={`concept-node${isDragging ? " is-dragging" : ""}${editingConceptId === concept.id ? " is-editing" : ""}${positionSaving ? " is-position-saving" : ""}${historyHighlightClass(!!highlightedConceptIds?.has(concept.id), historyConceptChangeKinds?.get(concept.id))}`}
+                className={`concept-node${isDragging ? " is-dragging" : ""}${connectionPreview?.hoveredConceptId === concept.id ? " is-connection-target" : ""}${editingConceptId === concept.id ? " is-editing" : ""}${positionSaving ? " is-position-saving" : ""}${historyHighlightClass(!!highlightedConceptIds?.has(concept.id), historyConceptChangeKinds?.get(concept.id))}`}
                 key={concept.id}
                 role="listitem"
                 tabIndex={canOpenConceptDrawer ? 0 : undefined}
