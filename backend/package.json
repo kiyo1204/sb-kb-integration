@@ -56,6 +56,7 @@
     "test:run-management": "tsx src/scripts/verify-run-management.ts",
     "test:participant-access": "tsx src/scripts/verify-participant-access.ts",
     "test:experiment-learner": "tsx src/scripts/verify-experiment-learner.ts",
+    "test:link-direction-api": "tsx src/scripts/verify-link-direction-api.ts",
     "test:r05-storage": "tsx src/scripts/verify-r05-storage.ts",
     "test:r05-execution": "tsx src/scripts/verify-r05-execution.ts",
     "test:experiment-research": "tsx src/scripts/verify-experiment-research.ts"

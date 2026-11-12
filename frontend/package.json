@@ -17,6 +17,8 @@
     "test:five-flow-feedback-browser": "tsx scripts/verify-five-flow-feedback-browser.ts",
     "test:research-log-ui": "tsx scripts/verify-research-log-ui.ts",
     "test:link-position-browser": "tsx scripts/verify-link-position-browser.ts",
+    "test:link-direction-browser": "tsx scripts/verify-link-direction-browser.ts",
+    "test:link-direction-real-browser": "tsx scripts/verify-link-direction-real-browser.ts",
     "test:session-flow-survey-browser": "tsx scripts/verify-session-flow-survey-browser.ts",
     "test:stage1-analysis-layout-browser": "tsx scripts/verify-stage1-analysis-layout-browser.ts",
     "test:five-flow-features-browser": "tsx scripts/verify-five-flow-features-browser.ts",

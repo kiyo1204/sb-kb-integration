@@ -133,6 +133,7 @@ try {
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:participant-access-browser", true);
   await stop();
   await run("test:experiment-learner");
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:link-direction-api");
   await run("test:experiment-research");
   await run("test:r05-storage");
   assert.ok(selected.every(name=>results.some(r=>r.test===name)),"unknown selected verification");
