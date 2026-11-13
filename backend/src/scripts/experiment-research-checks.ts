@@ -7,6 +7,54 @@ import { parse } from "csv-parse/sync";
 import { integrationResearchStates } from "../experiment-research-states.js";
 import type { SessionRawExport } from "../research-export.js";
 import { extractionQuery } from "../event-export-query.js";
+/** Compare actual bulk CSV with JSON and DB at stable points in the synthetic flow. */
+export async function checkMapStateCsv(input: {
+  pool: Pool; base: string; token: string; runId: string; sessionId: string;
+}) {
+  const {pool, base, token, runId, sessionId} = input;
+  const get = async (suffix: string) => {
+    const response = await fetch(`${base}/api/research/experiment-runs/${runId}/research.${suffix}`, {
+      headers: {Authorization: `Bearer ${token}`},
+    });
+    assert.equal(response.status, 200);
+    return response;
+  };
+  const json = await (await get("json")).json();
+  const raw: SessionRawExport = json.sessions.find((s: SessionRawExport) => s.session.id === sessionId);
+  assert.ok(raw);
+  const csv = await (await get("csv")).text();
+  const columns = parse(csv, {bom:true})[0];
+  assert.deepEqual(columns, ["outputContract","protocolKey","runId","materialVersionId","sessionId","pseudonym","sessionStatus","exportedAt","mapId","mapType","point","status","reason","recordedAt","submissionEventId","state","mapStatus","mapSubmittedAt"]);
+  const rows = (parse(csv, {columns:true,bom:true}) as Record<string,string>[]).filter(r=>r.sessionId === sessionId);
+  assert.ok(rows.length);
+  const db = (await pool.query("SELECT m.id,m.status,m.submitted_at FROM maps m JOIN session_stages st ON st.id=m.session_stage_id WHERE st.session_id=$1", [sessionId])).rows;
+  for (const row of rows) {
+    const map = raw.maps.find(m=>m.id === row.mapId);
+    const saved = db.find(m=>m.id === row.mapId);
+    assert.equal(row.mapStatus, map?.status ?? "");
+    assert.equal(row.mapSubmittedAt, map?.submittedAt ?? "");
+    assert.equal(row.mapStatus, saved?.status ?? "");
+    assert.equal(row.mapSubmittedAt, saved?.submitted_at?.toISOString() ?? "");
+    if (row.mapStatus === "DRAFT") assert.equal(row.mapSubmittedAt, "");
+    if (row.mapStatus === "SUBMITTED") assert.ok(row.mapSubmittedAt.endsWith("Z"));
+    if (row.point === "SAVED_AT_READ" && map) assert.equal(row.status, "AVAILABLE");
+    if (row.point !== "SAVED_AT_READ") {
+      const point = row.point === "INTEGRATION_START" ? raw.integrationStates!.start : raw.integrationStates!.submission;
+      assert.equal(row.status, point.status);
+      assert.equal(row.reason, point.reason ?? "");
+      if (!point.state) assert.equal(row.state, "");
+    }
+    if (row.point === "ACCEPTED_SUBMISSION" && map?.status !== "SUBMITTED") {
+      assert.equal(row.status, "UNAVAILABLE");
+      assert.equal(row.reason, "NOT_SUBMITTED");
+      assert.equal(row.state, "");
+    }
+    if (row.point === "INTEGRATION_START" && !map) {
+      assert.equal(row.reason, "INTEGRATION_MAP_MISSING");
+      assert.equal(row.state, "");
+    }
+  }
+}
 export async function checkExperimentResearch(input: {
   pool: Pool;
   base: string;
@@ -95,6 +143,7 @@ export async function checkExperimentResearch(input: {
     { columns: true, bom: true },
   ) as Record<string, string>[];
   for (const id of sessionIds) {
+    await checkMapStateCsv({...input, sessionId:id});
     const raw: SessionRawExport = await (
       await get(`/research/sessions/${id}/export`)
     ).json();
@@ -109,6 +158,7 @@ export async function checkExperimentResearch(input: {
     assert.equal(raw.assessment, undefined);
     assert.equal(raw.experiment?.runId, runId);
     assert.equal(raw.maps.length, 3);
+    assert.ok(raw.maps.every(map=>map.status === "SUBMITTED"));
     assert.deepEqual(analysis.integrationStates, raw.integrationStates);
     assert.deepEqual(analysis.features, {});
     assert.equal(analysis.descriptiveFeatures, undefined);
@@ -225,6 +275,23 @@ export async function checkExperimentResearch(input: {
       client.release();
     }
     await get(`${sessionPath(id)}/features.csv`, 409);
+  }
+  // TEST ONLY: missing snapshot in the guarded disposable DB, restored even on failure.
+  const integrationMapId = all.sessions[0].maps.find((m: {type:string})=>m.type === "INTEGRATION").id;
+  const initial = (await pool.query("SELECT * FROM map_initial_snapshots WHERE map_id=$1",[integrationMapId])).rows[0];
+  assert.ok(initial);
+  try {
+    await pool.query("DELETE FROM map_initial_snapshots WHERE map_id=$1",[integrationMapId]);
+    await checkMapStateCsv({...input, sessionId:sessionIds[0]!});
+    const missingRows = parse(await (await get(`/research/experiment-runs/${runId}/research.csv`)).text(),{columns:true,bom:true}) as Record<string,string>[];
+    for (const row of missingRows.filter(r=>r.mapId === integrationMapId && r.point !== "SAVED_AT_READ")) {
+      assert.equal(row.mapStatus,"SUBMITTED");
+      assert.equal(row.status,"UNAVAILABLE");
+      assert.equal(row.reason,"INITIAL_SNAPSHOT_MISSING_OR_INVALID");
+      assert.equal(row.state,"");
+    }
+  } finally {
+    await pool.query("INSERT INTO map_initial_snapshots(map_id,snapshot_version,snapshot,captured_at) VALUES($1,$2,$3,$4)",[initial.map_id,initial.snapshot_version,initial.snapshot,initial.captured_at]);
   }
   await get(
     `${sessionPath(sessionIds[0])}/maps/${all.sessions.find((s: SessionRawExport) => s.session.id === sessionIds[1]).maps[0].id}/history?sequenceNumber=0`,

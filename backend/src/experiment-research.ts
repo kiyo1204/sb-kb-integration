@@ -36,6 +36,8 @@ export function experimentStateRows(raw: SessionRawExport) {
     recordedAt: raw.exportedAt,
     submissionEventId: null,
     state: savedMapState(map),
+    mapStatus: map.status,
+    mapSubmittedAt: map.submittedAt,
   }));
   if (!rows.length)
     rows.push({
@@ -47,10 +49,14 @@ export function experimentStateRows(raw: SessionRawExport) {
       reason: "MAP_NOT_CREATED",
       recordedAt: raw.exportedAt,
       state: null,
+      mapStatus: null,
+      mapSubmittedAt: null,
     });
   if (raw.integrationStates)
     for (const point of ["start", "submission"] as const) {
       const value = raw.integrationStates[point];
+      // These are current saved Map metadata, not the historical snapshot status.
+      const map = raw.maps.find((m) => m.id === raw.integrationStates?.mapId);
       rows.push({
         ...base,
         mapId: raw.integrationStates.mapId,
@@ -62,6 +68,8 @@ export function experimentStateRows(raw: SessionRawExport) {
           "capturedAt" in value ? value.capturedAt : value.submittedAt,
         submissionEventId: "eventId" in value ? value.eventId : null,
         state: value.state,
+        mapStatus: map?.status ?? null,
+        mapSubmittedAt: map?.submittedAt ?? null,
       });
     }
   return rows;
@@ -84,6 +92,8 @@ export function experimentStatesCsv(rows: Array<Record<string, unknown>>) {
     "recordedAt",
     "submissionEventId",
     "state",
+    "mapStatus",
+    "mapSubmittedAt",
   ];
   return (
     "\uFEFF" +
