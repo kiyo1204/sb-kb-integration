@@ -3,7 +3,7 @@ const descriptions: Record<string, string> = {
   event_id:
     "イベント結合キー。新形式は保存済みUUID、旧ログはlegacy:UUID。全CSVの参照先。",
   source_format: "EVENT / LEGACY。旧ログを新イベントと再解釈しない。",
-  protocol_key: "STAGE1_4=旧4活動、STAGE1_6=旧群別6活動、STAGE1_5=群なし5活動。Sessionなしの監査はnull。",
+  protocol_key: "STAGE1_4=旧4活動、STAGE1_6=旧群別6活動、STAGE1_5=群なし5活動、SBKB_INTEGRATION_V1=群なしSB/KB統合（アンケートなし）。Sessionなしの監査はnull。",
   schema_version: "保存済み1/2/3/4/5/6/7。旧形式は未設定（null）。",
   session_id: "Session UUID。Session未所属監査はnull。",
   learner_id:

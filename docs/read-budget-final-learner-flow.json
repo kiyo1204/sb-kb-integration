@@ -1,0 +1,18 @@
+{
+  "syntheticOnly": true,
+  "protocol": "SBKB_INTEGRATION_V1",
+  "normalPublication": false,
+  "checks": [
+    "start prerequisite/idempotency/late participant/fixed version",
+    "separate Sessions and forbidden researcher access",
+    "seed/provenance/replay/Undo/Redo",
+    "KB mismatch/current match/position signature/structural invalidation/server submit",
+    "integration merge/release/manual and automatic submit/explicit Next/completion",
+    "legacy regression is separate full suite"
+  ],
+  "maps": {
+    "sb": "fee23408-7277-4f8e-a2c9-6d101b461996",
+    "kb": "1abf3e2e-7ccb-4ae9-8f5e-f30c0225ccb4",
+    "int": "4f2d207a-dad3-478d-85d1-e5718c3f4965"
+  }
+}

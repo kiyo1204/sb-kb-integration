@@ -1,3 +1,6 @@
+import ExperimentEndBoundary from "./ExperimentEndBoundary";
+import R05Page from "./R05Page";
+import ExperimentLearnerPage from "./ExperimentLearnerPage";
 import DataManagementPage from "./DataManagementPage";
 import EventExportPage from "./EventExportPage";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
@@ -14,13 +17,18 @@ import Stage1NewSessionPage from "./Stage1NewSessionPage";
 import Stage1AnalysisPage from "./Stage1AnalysisPage";
 import Stage1GoalMapsPage from "./Stage1GoalMapsPage";
 import TutorialPage from "./TutorialPage";
+import MaterialsPage from "./MaterialsPage";
+import ExperimentRunsPage from "./ExperimentRunsPage";
+import ExperimentParticipantsPage from "./ExperimentParticipantsPage";
+import ExperimentLearnerGate from "./ExperimentLearnerGate";
+type UIPrincipal = {runState?:string;role?:string;sessionId?:string;protocolKey?:string;flowAvailable?:boolean};
 
 export default function App() {
   const [token, updateToken] = useState(getAccessToken());
   const [entry, setEntry] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [principal, setPrincipal] = useState<
-    { role?: string; sessionId?: string } | null | undefined
+    UIPrincipal | null | undefined
   >(token ? undefined : null);
 
   useEffect(() => {
@@ -29,7 +37,7 @@ export default function App() {
     apiFetch("/api/me")
       .then(async (response) => {
         if (!response.ok) throw new Error("Access code is no longer valid");
-        return (await response.json()) as { role?: string; sessionId?: string };
+        return (await response.json()) as UIPrincipal;
       })
       .then((currentPrincipal) => {
         if (!active) return;
@@ -37,6 +45,8 @@ export default function App() {
         if (
           currentPrincipal.role === "learner" &&
           currentPrincipal.sessionId &&
+          currentPrincipal.flowAvailable !== false &&
+          currentPrincipal.protocolKey !== "SBKB_INTEGRATION_V1" &&
           window.location.pathname === "/"
         ) {
           window.location.assign(`/sessions/${currentPrincipal.sessionId}`);
@@ -90,13 +100,15 @@ export default function App() {
     const nextPrincipal = (await response.json()) as {
       role: string;
       sessionId?: string;
+      flowAvailable?: boolean;
+      protocolKey?: string;
     };
     setPrincipal(nextPrincipal);
     setAccessToken(candidate);
     updateToken(candidate);
     setEntry("");
     setAuthError(null);
-    if (nextPrincipal.role === "learner" && nextPrincipal.sessionId) {
+    if (nextPrincipal.role === "learner" && nextPrincipal.sessionId && nextPrincipal.flowAvailable !== false && nextPrincipal.protocolKey !== "SBKB_INTEGRATION_V1") {
       window.location.assign(`/sessions/${nextPrincipal.sessionId}`);
     }
   }
@@ -130,11 +142,11 @@ export default function App() {
           アクセスコードを切り替える
         </button>
       </div>
-      <AuthenticatedApp
+      {principal?.protocolKey === "SBKB_INTEGRATION_V1" ? <ExperimentEndBoundary key={token} initialEnded={principal.runState==="ENDED"}>{principal.flowAvailable && principal.sessionId ? <ExperimentLearnerPage sessionId={principal.sessionId} key={token}/> : <ExperimentLearnerGate key={token}/>}</ExperimentEndBoundary> : <AuthenticatedApp
         homePage={renderHomePage()}
         principalRole={principal?.role}
         learnerSessionId={principal?.role === "learner" ? principal.sessionId : undefined}
-      />
+      />}
     </>
   );
 }
@@ -148,6 +160,13 @@ function AuthenticatedApp({
   principalRole?: string;
   learnerSessionId?: string;
 }) {
+  const r05Route=window.location.pathname.match(/^\/research\/materials\/([a-f0-9-]{36})\/test\/?$/i);
+  if(r05Route)return <ResearcherOnly><R05Page versionId={r05Route[1]}/></ResearcherOnly>;
+  const materialRoute = window.location.pathname.match(/^\/research\/materials(?:\/([a-f0-9-]{36}))?\/?$/i);
+  if (materialRoute) return <ResearcherOnly><MaterialsPage versionId={materialRoute[1]} /></ResearcherOnly>;
+  const runDetail = window.location.pathname.match(/^\/research\/experiment-runs\/([a-f0-9-]{36})\/?$/i);
+  if (runDetail) return <ResearcherOnly><ExperimentParticipantsPage runId={runDetail[1]}/></ResearcherOnly>;
+  if (/^\/research\/experiment-runs(?:\/new)?\/?$/.test(window.location.pathname)) return <ResearcherOnly><ExperimentRunsPage create={/\/new\/?$/.test(window.location.pathname)} /></ResearcherOnly>;
   const mapId = window.location.pathname.match(/^\/maps\/([^/]+)\/?$/)?.[1];
   const sessionPath = window.location.pathname.match(
     /^\/sessions\/([^/]+)(?:\/([^/]+))?\/?$/,

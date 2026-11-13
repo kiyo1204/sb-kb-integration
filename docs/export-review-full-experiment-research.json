@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "sessionIds": [
+    "3235b105-7cd3-4aea-93ad-dc895e5061d3",
+    "89e95030-4f74-487d-b2ad-b9af5d3671b0"
+  ],
+  "runId": "d6691a00-e950-4385-b1e3-a9dcc4d7f3ac",
+  "testMap": "7a359652-9c36-43d9-8454-3b9eb4f5501b",
+  "manual": true,
+  "automatic": true,
+  "authorization": true,
+  "jsonCsvParity": true,
+  "r05Excluded": true
+}

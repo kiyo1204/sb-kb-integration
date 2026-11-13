@@ -1,0 +1,12 @@
+{
+  "syntheticOnly": true,
+  "realApi": true,
+  "checks": [
+    "R07 to R08, unpublished start, no live Map",
+    "lost committed registration ACK, same-key retry without duplicate/plaintext replay",
+    "one-time UI reissue, two pages pending/owned, researcher switch and old-page rejection",
+    "registration beyond planned, desktop/mobile, reissue keeps Session and old code cannot authenticate"
+  ],
+  "screenshotsContainCredentials": false,
+  "startEnabled": false
+}

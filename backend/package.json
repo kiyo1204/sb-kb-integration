@@ -32,6 +32,8 @@
     "test:event-export": "tsx src/scripts/verify-event-export.ts",
     "samples:event-export": "tsx src/scripts/generate-event-export-samples.ts",
     "test:event-export-samples": "tsx src/scripts/verify-event-export-samples.ts",
+    "test:session-cleanup": "tsx src/scripts/verify-session-cleanup.ts",
+    "test:research-note-safety": "tsx src/scripts/verify-research-note-safety.ts",
     "test:data-management": "tsx src/scripts/verify-data-management.ts",
     "db:mock": "tsx src/scripts/mock-db.ts",
     "test:mock-reset-new-stream": "tsx src/scripts/verify-mock-reset-new-stream.ts",
@@ -48,7 +50,16 @@
     "test:merge-release": "tsx src/scripts/verify-merge-release.ts",
     "test:five-flow-composite": "tsx src/scripts/verify-five-flow-composite.ts",
     "test:session-flow-survey": "tsx src/scripts/verify-session-flow-survey.ts",
-    "test:goal-map-transfer": "tsx src/scripts/verify-goal-map-transfer.ts"
+    "test:goal-map-transfer": "tsx src/scripts/verify-goal-map-transfer.ts",
+    "test:experiment-foundation": "tsx src/scripts/verify-experiment-foundation.ts",
+    "test:material-catalog": "tsx src/scripts/verify-material-catalog.ts",
+    "test:run-management": "tsx src/scripts/verify-run-management.ts",
+    "test:participant-access": "tsx src/scripts/verify-participant-access.ts",
+    "test:experiment-learner": "tsx src/scripts/verify-experiment-learner.ts",
+    "test:link-direction-api": "tsx src/scripts/verify-link-direction-api.ts",
+    "test:r05-storage": "tsx src/scripts/verify-r05-storage.ts",
+    "test:r05-execution": "tsx src/scripts/verify-r05-execution.ts",
+    "test:experiment-research": "tsx src/scripts/verify-experiment-research.ts"
   },
   "dependencies": {
     "express": "^5.1.0",

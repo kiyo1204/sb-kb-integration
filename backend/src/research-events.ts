@@ -1,3 +1,5 @@
+import { ParticipantAccessError } from "./experiment-participant-access.js";
+import { guardExperimentTransaction } from "./experiment-execution.js";
 import { validateSurveyEventV7, type SurveyStateV7 } from "./research-event-survey-v7.js";
 import { validateMapEventV5 } from "./research-event-map-v5.js";
 import { validateFeedbackEventV6, type FeedbackDetailsV6 } from "./research-event-feedback-v6.js";
@@ -57,7 +59,7 @@ export function validateEvent(value: unknown): value is EventInput {
 
 export async function insertResearchEvent(client: PoolClient, sessionId: string, actor: EventActor, event: EventInput) {
   if (!uuid.test(sessionId) || !["LEARNER", "RESEARCHER", "SYSTEM"].includes(actor) || !validateEvent({ ...event, schemaVersion: event.schemaVersion ?? 1 })) throw new InvalidEventError("Invalid event");
-  const session = await client.query<{ participantCode: string; studyGroup: string | null }>(`SELECT participant_code AS "participantCode", study_group AS "studyGroup" FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')`, [sessionId]);
+  const session = await client.query<{ participantCode: string; studyGroup: string | null }>(`SELECT participant_code AS "participantCode", study_group AS "studyGroup" FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5', 'SBKB_INTEGRATION_V1')`, [sessionId]);
   if (!session.rowCount) return null;
   const participantCode = session.rows[0]!.participantCode;
   if (participantCode === process.env.RESEARCHER_API_TOKEN || (await client.query("SELECT 1 FROM sessions WHERE learner_access_token_hash=$1 LIMIT 1", [tokenHash(participantCode)])).rowCount) return null;
@@ -179,7 +181,7 @@ export function registerResearchEventRoutes(app: Express, pool: Pool) {
            LEFT JOIN LATERAL (
              SELECT id FROM session_stages WHERE session_id=s.id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1
            ) current_stage ON true
-           WHERE st.id=$1::uuid AND s.id=$2::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')`,
+           WHERE st.id=$1::uuid AND s.id=$2::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5', 'SBKB_INTEGRATION_V1')`,
           [event.stageId, sessionId],
         );
         const row = stage.rows[0];
@@ -219,7 +221,7 @@ export function registerResearchEventRoutes(app: Express, pool: Pool) {
     }
     const client = await pool.connect();
     try {
-      await client.query("BEGIN");
+      await client.query("BEGIN"); await guardExperimentTransaction(client);
       if(deliveryKey){
         if(principal.role!=="learner") {await client.query("ROLLBACK");return res.status(403).json({error:"forbidden"});}
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[sessionId+":"+deliveryKey]);
@@ -234,7 +236,7 @@ export function registerResearchEventRoutes(app: Express, pool: Pool) {
       if (!result) { await client.query("ROLLBACK"); return res.status(404).json({ error: "not_found" }); }
       await client.query("COMMIT");
       return res.status(201).json({ ...result, logSaved: true });
-    } catch (error) { await client.query("ROLLBACK"); return error instanceof InvalidEventError ? res.status(400).json({ error: "invalid_event", logSaved: false }) : res.status(500).json({ error: "event_save_failed", logSaved: false }); }
+    } catch (error) { await client.query("ROLLBACK"); if(error instanceof ParticipantAccessError)return res.status(error.status).json({error:error.code,logSaved:false}); return error instanceof InvalidEventError ? res.status(400).json({ error: "invalid_event", logSaved: false }) : res.status(500).json({ error: "event_save_failed", logSaved: false }); }
     finally { client.release(); }
   });
   app.get("/api/research/sessions/:sessionId/events", async (req, res) => {

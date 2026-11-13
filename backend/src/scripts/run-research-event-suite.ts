@@ -75,12 +75,14 @@ try {
     "test:event-export-samples",
     "test:event-export",
     "test:data-management",
+    "test:research-note-safety",
   ])
     await run(test);
   await start();
   for (const test of [
     "test:stage1:integration",
     "test:session-flow-survey",
+    "test:session-cleanup",
     "test:five-flow-composite",
     "test:five-flow-feature-maps",
     "test:goal-map-transfer",
@@ -117,8 +119,23 @@ try {
     await run("test:delivery-browser", true);
     await run("test:event-export-browser", true);
     await run("test:data-management-browser", true);
+    await run("test:session-cleanup-browser", true);
     await stop();
   }
+  await start();
+  await run("test:experiment-foundation");
+  await run("test:material-catalog");
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:material-catalog-browser", true);
+  await run("test:run-management");
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:run-management-browser", true);
+  await run("test:r05-execution");
+  await run("test:participant-access");
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:participant-access-browser", true);
+  await stop();
+  await run("test:experiment-learner");
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:link-direction-api");
+  await run("test:experiment-research");
+  await run("test:r05-storage");
   assert.ok(selected.every(name=>results.some(r=>r.test===name)),"unknown selected verification");
   console.log("Isolated research event suite: PASS");
 } finally {

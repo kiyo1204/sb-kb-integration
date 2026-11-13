@@ -14,7 +14,7 @@ const ids = new Set(sampleEvents.map((x) => x.event_id));
 assert.equal(ids.size, sampleEvents.length);
 for (const [name, text] of Object.entries(files)) {
   assert.equal(
-    await readFile("../docs/samples/event-export/" + name, "utf8"),
+    name.endsWith(".csv") ? await readFile("../docs/samples/event-export/" + name, "utf8") : (await readFile("../docs/samples/event-export/" + name, "utf8")).replace(/\r\n/g,"\n"),
     text,
     name + ": sample drift",
   );

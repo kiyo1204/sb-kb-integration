@@ -1,0 +1,151 @@
+.experiment-preview-banner {
+  margin: 0;
+  padding: 7px 24px;
+  background: #fff5df;
+  color: #71511e;
+  font-size: 12px;
+}
+.experiment-task-instructions {
+  margin: 8px 24px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: white;
+}
+.experiment-task-instructions p {
+  white-space: pre-wrap;
+}
+.is-experiment.map-editor-page {
+  background: #f5f8f6;
+}
+.is-experiment .map-editor-header {
+  display: block;
+  background: white;
+  padding: 0;
+}
+.is-experiment .map-editor-title {
+  background: #214d3b;
+  color: white;
+  padding: 18px 26px;
+}
+.is-experiment .map-editor-header-actions {
+  padding: 14px 24px;
+  gap: 12px;
+}
+.is-experiment .map-editor-title h1 {
+  color: white;
+}
+.is-experiment .map-editor-workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+.is-experiment .kit-palette {
+  order: -1;
+  max-height: 270px;
+  overflow: hidden;
+}
+.is-experiment .kit-palette-groups {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 1fr 1fr;
+  gap: 5px;
+}
+.is-experiment .kit-palette-groups > div {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+.is-experiment .kit-palette-list {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  gap: 10px;
+  flex: 1;
+  padding-bottom: 8px;
+}
+.is-experiment .kit-palette-list li {
+  flex: 0 0 150px;
+}
+.is-experiment .map-editor-canvas-column {
+  min-width: 0;
+}
+.is-experiment .map-canvas {
+  min-height: 400px;
+}
+
+.is-experiment .kit-palette {
+  position: relative;
+  padding: 12px;
+  gap: 6px;
+}
+.is-experiment .kit-palette-heading p {
+  font-size: 12px;
+}
+.is-experiment .kit-palette-search {
+  margin: 0;
+  max-width: 320px;
+}
+.is-experiment .kit-palette-groups h3 {
+  flex: 0 0 150px;
+  font-size: 12px;
+}
+
+/* Keep the toolbar, independent part rows and canvas in one working view. */
+.is-experiment .map-editor-header-actions {justify-content:flex-start;align-items:center;padding:10px 16px;}
+.is-experiment .map-editor-header-actions .map-editor-tools {margin:0;order:0;}
+.is-experiment .map-editor-history-actions {order:1;}
+.is-experiment .experiment-fit {order:2;}
+.is-experiment .experiment-task-instructions {order:3;position:relative;margin:0;padding:9px;background:white;}
+.is-experiment .experiment-task-instructions[open] > p {position:absolute;z-index:20;top:100%;left:0;width:min(650px,80vw);max-height:240px;overflow:auto;margin:4px 0;padding:16px;background:white;border:1px solid var(--line);box-shadow:var(--shadow-soft);}
+.is-experiment .kit-feedback-actions {display:contents;}
+.is-experiment .kit-feedback-actions > p:first-child {display:none;}
+.is-experiment .kit-feedback-check-button {order:4;}
+.is-experiment .kit-feedback-summary {order:8;font-size:12px;}
+.is-experiment .kit-feedback-review-button {order:9;}
+.is-experiment .map-editor-save-status {margin-left:auto;order:6;}
+.is-experiment .map-editor-submit-button {order:7;}
+.is-experiment .map-editor-back-link {order:10;font-size:12px;}
+.is-experiment .map-editor-operation-hint {margin:8px 0;font-size:12px;}
+.is-experiment .kit-palette {max-height:none;gap:4px;}
+.is-experiment .kit-palette-heading {min-height:24px;}
+.is-experiment .kit-palette-heading .eyebrow {display:none;}
+.is-experiment .kit-palette-heading h2 {font-size:13px;max-width:65%;overflow-wrap:anywhere;}
+.is-experiment .kit-palette-search {position:absolute;right:12px;top:5px;max-width:300px;font-size:12px;}
+.is-experiment .kit-palette-heading > p {display:none;}
+.is-experiment .kit-palette-list {max-height:76px;overflow-y:auto;}
+.is-experiment .kit-palette-part {padding:7px 10px;font-size:12px;}
+.is-experiment .canvas-connection-area {min-height:0;padding:0;}
+.is-experiment .canvas-connection-guidance:empty {display:none;}
+.is-experiment .concept-canvas-viewport {min-height:280px;height:calc(100vh - 480px);max-height:600px;overflow:auto;}
+.is-experiment.is-prior .concept-canvas-viewport {height:calc(100vh - 310px);}
+@media(max-width:700px){
+ .is-experiment .kit-palette-search {position:static;}
+ .is-experiment .map-editor-header-actions {flex-wrap:wrap;}
+ .is-experiment .kit-palette-groups h3 {flex-basis:100px;}
+}
+
+.concept-seed-tag {display:none;}
+.is-experiment .concept-seed-tag {display:block;position:absolute;top:-14px;right:8px;padding:4px 8px;background:#214d3b;color:white;border-radius:6px;font-size:12px;pointer-events:none;}
+.experiment-learner .is-experiment .concept-canvas-viewport {min-height:280px;height:calc(100vh - 480px);max-height:600px;}
+.experiment-learner .is-experiment.is-prior .concept-canvas-viewport {height:calc(100vh - 310px);}
+.experiment-learner .is-experiment .canvas-connection-area:has(.canvas-connection-guidance:empty) {display:none;}
+.is-experiment .map-editor-history-actions {display:flex;position:relative;gap:6px;flex-wrap:nowrap;}
+.is-experiment .map-editor-history-actions > span {position:absolute;top:100%;left:0;font-size:11px;white-space:nowrap;}
+.is-experiment .kit-feedback-summary {order:11;flex-basis:100%;margin:0;}
+
+/* New-protocol SB/KB guidance stays visible before a concept is selected. */
+.is-experiment .experiment-state-guidance {
+  margin: 10px 0 4px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid #557c66;
+  border-radius: var(--radius-md);
+  background: #edf4ef;
+  color: #214d3b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.is-experiment .kit-feedback-summary[hidden] { display: none; }
+.is-experiment .experiment-state-guidance p { margin: 0; }
+.is-experiment .experiment-submission-note { font-size: 12px; margin-top: 4px; }

@@ -1,3 +1,5 @@
+import { experimentStateRows, experimentStatesCsv } from "./experiment-research.js";
+import { loadResearchTextSafety, redactResearchOutput, respondResearchSafetyError } from "./research-output-safety.js";
 import {csvCell} from "./csv.js";
 import { safeServerErrorCode } from "./safe-server-error.js";
 import { auditCurrent, auditCommitted } from "./server-audit.js";
@@ -27,6 +29,7 @@ type RawMap = Record<string, unknown> & {
 async function sessionExport(pool: Pool, sessionId: string, includeSix = false) {
   const client = await pool.connect();
   try {
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     const result = await buildSessionRawExport(client, sessionId);
     if (result.kind !== "exported") return result;
     if (result.value.session.protocolKey !== "STAGE1_4" && !includeSix) {
@@ -34,6 +37,7 @@ async function sessionExport(pool: Pool, sessionId: string, includeSix = false) 
     }
     return result;
   } finally {
+    await client.query("ROLLBACK").catch(()=>undefined);
     client.release();
   }
 }
@@ -95,7 +99,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         current_stage.stage_type AS "currentStageType", current_stage.order_index AS "currentStageOrder"
         FROM sessions s LEFT JOIN LATERAL (SELECT stage_type, order_index FROM session_stages
           WHERE session_id=s.id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1) current_stage ON s.status='IN_PROGRESS'
-        WHERE s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5') ORDER BY s.created_at DESC, s.id DESC`);
+        WHERE s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') ORDER BY s.created_at DESC, s.id DESC`);
       return res.json({ sessions: result.rows });
     } catch (error) {
       console.error("Stage1 session list failed", safeServerErrorCode(error));
@@ -103,6 +107,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
     }
   });
   app.get("/api/research/stage1/sessions/:sessionId/analysis", async (req,res) => {
+    if (principalOf(res).role !== "researcher") return res.status(403).json({error:"forbidden"});
     if (!isUuid(req.params.sessionId)) return res.status(400).json({error:"invalid_session_id"});
     try {
       const result = await sessionExport(pool,req.params.sessionId,true);
@@ -137,12 +142,12 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
          FROM research_reflection_notes WHERE session_id=$1::uuid ORDER BY created_at,id`,[req.params.sessionId]);
       return res.json({
         session: raw.session, stages: raw.stages,
+        ...(raw.outputContract ? {outputContract:raw.outputContract,experiment:raw.experiment,integrationStates:raw.integrationStates,seedConcepts:raw.seedConcepts} : {}),
         features: raw.session.protocolKey === "STAGE1_4" ? deriveStage1Features(raw) : {},
         ...(raw.session.protocolKey === "STAGE1_5" ? {descriptiveFeatures:(await loadFiveFlowFeatures(pool,req.params.sessionId)).value} : {}),
         maps: analysisMaps,
         operations, operationCounts: counts,
-        propositionEvaluations: evals.rows,
-        reflectionNotes: notes.rows,
+        ...await redactResearchOutput({propositionEvaluations: evals.rows, reflectionNotes: notes.rows}, pool),
         ...(raw.survey ? {survey:raw.survey}:{}),
         limitations: [
           "Counts indicate operations, not learning quality.",
@@ -152,6 +157,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         ],
       });
     } catch(error) {
+      if (respondResearchSafetyError(res, error)) return;
       console.error("Stage1 analysis failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_analysis_failed"});
     }
@@ -160,6 +166,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
   app.get(
     "/api/research/stage1/sessions/:sessionId/maps/:mapId/history",
     async (req, res) => {
+      if (principalOf(res).role !== "researcher") return res.status(403).json({error:"forbidden"});
       const { sessionId, mapId } = req.params;
       if (!isUuid(sessionId) || !isUuid(mapId)) {
         return res.status(400).json({ error: "invalid_history_resource_id" });
@@ -172,32 +179,39 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       if (!Number.isSafeInteger(sequenceNumber)) {
         return res.status(400).json({ error: "invalid_sequence_number" });
       }
+      let client: PoolClient | null = null;
       try {
-        const completedSession = await pool.query<{ protocolKey: string; status: string }>(
+        client = await pool.connect();
+        await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+        const completedSession = await client.query<{ protocolKey: string; status: string }>(
           `SELECT protocol_key AS "protocolKey", status
            FROM sessions WHERE id = $1::uuid`,
           [sessionId],
         );
         if (
-          !["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(completedSession.rows[0]?.protocolKey ?? "") ||
-          completedSession.rows[0]?.status !== "COMPLETED"
+          !["STAGE1_4", "STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(completedSession.rows[0]?.protocolKey ?? "") ||
+          (completedSession.rows[0]?.protocolKey !== "SBKB_INTEGRATION_V1" && completedSession.rows[0]?.status !== "COMPLETED")
         ) {
           return res.status(409).json({ error: "session_not_completed" });
         }
-        const mapResult = await pool.query<{ id: string; type: string }>(
+        if (completedSession.rows[0]?.protocolKey === "SBKB_INTEGRATION_V1") {
+          const owned = await buildSessionRawExport(client,sessionId);
+          if (owned.kind !== "exported") return res.status(409).json({error:"research_data_inconsistent"});
+        }
+        const mapResult = await client.query<{ id: string; type: string }>(
           `SELECT map.id, map.type
            FROM maps AS map
            INNER JOIN session_stages AS stage ON stage.id = map.session_stage_id
            INNER JOIN sessions AS session ON session.id = stage.session_id
            WHERE map.id = $1::uuid AND stage.session_id = $2::uuid
-             AND session.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')
+             AND session.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1')
              AND map.type IN ('PRIOR', 'KB', 'INTEGRATION')`,
           [mapId, sessionId],
         );
         const map = mapResult.rows[0];
         if (!map) return res.status(404).json({ error: "map_not_found" });
 
-        const historyResult = await pool.query<{
+        const historyResult = await client.query<{
           snapshotVersion: number;
           snapshot: MapHistorySnapshot;
           capturedAt: Date;
@@ -207,7 +221,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
            FROM map_initial_snapshots WHERE map_id = $1::uuid`,
           [mapId],
         );
-        const operationResult = await pool.query<
+        const operationResult = await client.query<
           HistoryOperation & {
             clientTimestamp: Date | null;
             serverTimestamp: Date;
@@ -223,7 +237,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
            ORDER BY sequence_number, id`,
           [mapId],
         );
-        const newResult=await pool.query<MapHistoryEventV2 & {targetType:string;targetId:string;clientTimestamp:Date|null;serverTimestamp:Date}>(
+        const newResult=await client.query<MapHistoryEventV2 & {targetType:string;targetId:string;clientTimestamp:Date|null;serverTimestamp:Date}>(
           `SELECT event_id AS "eventId",map_id AS "mapId",schema_version AS "schemaVersion",
             event_type AS "eventType",target_type AS "targetType",target_id AS "targetId",related_event_id AS "relatedEventId",
             related_legacy_operation_log_id AS "relatedLegacyOperationLogId",
@@ -244,7 +258,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         const operation = sequenceNumber === 0 ? null : operations[sequenceNumber - 1];
         const history = historyResult.rows[0];
         if (!history) {
-          return res.json({
+          return res.json(await redactResearchOutput({
             status: "UNAVAILABLE",
             reason: "編集開始前の初期スナップショットがありません。過去状態を推測して復元しません。",
             mapId,
@@ -253,10 +267,10 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
             operation,
             beforeState: null,
             afterState: null,
-          });
+          },client));
         }
         if (history.snapshotVersion !== 1 || history.snapshot.snapshotVersion !== 1) {
-          return res.json({
+          return res.json(await redactResearchOutput({
             status: "UNAVAILABLE",
             reason: `未対応の初期スナップショット形式です (DB version ${history.snapshotVersion})。`,
             mapId,
@@ -265,16 +279,16 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
             operation,
             beforeState: null,
             afterState: null,
-          });
+          },client));
         }
         if (newResult.rows.length) {
-          const boundary=await pool.query<{legacyCount:string;legacyLastId:string|null;snapshot:MapHistorySnapshot}>(
+          const boundary=await client.query<{legacyCount:string;legacyLastId:string|null;snapshot:MapHistorySnapshot}>(
             `SELECT legacy_count AS "legacyCount",legacy_last_id AS "legacyLastId",boundary_snapshot AS snapshot
              FROM map_history_boundaries WHERE map_id=$1::uuid`,[mapId]);
           const item=boundary.rows[0];
-          if(!item) return res.json({status:"PARTIAL",reason:"旧・新履歴の切替境界がありません。",mapId,mapType:map.type,sequenceNumber,operation,beforeState:null,afterState:null});
+          if(!item) return res.json(await redactResearchOutput({status:"PARTIAL",reason:"旧・新履歴の切替境界がありません。",mapId,mapType:map.type,sequenceNumber,operation,beforeState:null,afterState:null},client));
           const checked=replayMixedMapHistory(history.snapshot,{legacyCount:Number(item.legacyCount),legacyLastId:item.legacyLastId},operationResult.rows,newResult.rows);
-          if(checked.status!=="REPLAYABLE") return res.json({status:"PARTIAL",reason:checked.reason,mapId,mapType:map.type,sequenceNumber,operation,beforeState:null,afterState:null});
+          if(checked.status!=="REPLAYABLE") return res.json(await redactResearchOutput({status:"PARTIAL",reason:checked.reason,mapId,mapType:map.type,sequenceNumber,operation,beforeState:null,afterState:null},client));
         }
         const before = replayMapAt(
           history.snapshot,
@@ -283,7 +297,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         );
         const after = replayMapAt(history.snapshot, operations, sequenceNumber);
         if (before.status !== "REPLAYABLE" || after.status !== "REPLAYABLE") {
-          return res.json({
+          return res.json(await redactResearchOutput({
             status: "PARTIAL",
             reason:
               before.status === "PARTIAL"
@@ -297,9 +311,9 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
             operation,
             beforeState: null,
             afterState: null,
-          });
+          },client));
         }
-        return res.json({
+        return res.json(await redactResearchOutput({
           status: "REPLAYABLE",
           reason: null,
           mapId,
@@ -308,13 +322,26 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
           operation,
           beforeState: before.state,
           afterState: after.state,
-        });
+        },client));
       } catch (error) {
+        if (respondResearchSafetyError(res,error)) return;
         console.error("Stage1 map history replay failed", safeServerErrorCode(error));
         return res.status(500).json({ error: "stage1_map_history_failed" });
-      }
+      } finally { await client?.query("ROLLBACK").catch(()=>undefined); client?.release(); }
     },
   );
+
+  app.get("/api/research/stage1/sessions/:sessionId/map-states.csv", async (req,res) => {
+    if (principalOf(res).role !== "researcher") return res.status(403).json({error:"forbidden"});
+    if (!isUuid(req.params.sessionId)) return res.status(400).json({error:"invalid_session_id"});
+    try {
+      const result=await sessionExport(pool,req.params.sessionId,true);
+      if(result.kind!=="exported") return res.status(result.kind==="not_found"?404:409).json({error:result.kind});
+      if(result.value.session.protocolKey!=="SBKB_INTEGRATION_V1") return res.status(409).json({error:"wrong_protocol"});
+      const body=experimentStatesCsv(experimentStateRows(result.value));
+      return res.set("Content-Type","text/csv; charset=utf-8").set("Content-Disposition",`attachment; filename="session-${req.params.sessionId}-map-states.csv"`).send(body);
+    } catch(error) { if(respondResearchSafetyError(res,error))return;return res.status(503).json({error:"research_unavailable"}); }
+  });
 
   app.get("/api/research/stage1/sessions/:sessionId/operations.csv", async (req,res) => {
     if (!isUuid(req.params.sessionId)) return res.status(400).json({error:"invalid_session_id"});
@@ -332,6 +359,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-operations.csv"`);
       return res.send("\uFEFF"+csv(operations,columns));
     } catch(error) {
+      if (respondResearchSafetyError(res, error)) return;
       console.error("Stage1 CSV export failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_csv_failed"});
     }
@@ -354,8 +382,9 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         "subjectSnapshot","evaluatorCode","category","rationale","createdAt","eventId"];
       res.setHeader("Content-Type","text/csv; charset=utf-8");
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-evaluations.csv"`);
-      return res.send("\uFEFF"+csv(rows.rows,cols));
+      return res.send("\uFEFF"+csv(await redactResearchOutput(rows.rows,pool),cols));
     } catch(error) {
+      if (respondResearchSafetyError(res, error)) return;
       console.error("Stage1 evaluation CSV failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_evaluations_csv_failed"});
     }
@@ -377,8 +406,9 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
         "reportedByCode","noteText","createdAt","eventId"];
       res.setHeader("Content-Type","text/csv; charset=utf-8");
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-reflections.csv"`);
-      return res.send("\uFEFF"+csv(rows.rows,cols));
+      return res.send("\uFEFF"+csv(await redactResearchOutput(rows.rows,pool),cols));
     } catch(error) {
+      if (respondResearchSafetyError(res, error)) return;
       console.error("Stage1 reflection CSV failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_reflections_csv_failed"});
     }
@@ -397,6 +427,7 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       res.setHeader("Content-Disposition",`attachment; filename="stage1-${req.params.sessionId}-features.csv"`);
       return res.send("\uFEFF"+csv([row],Object.keys(row)));
     }catch(error){
+      if (respondResearchSafetyError(res, error)) return;
       console.error("Stage1 feature export failed", safeServerErrorCode(error));
       return res.status(500).json({error:"stage1_features_csv_failed"});
     }
@@ -418,6 +449,11 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
     const client=await pool.connect();
     try {
       await client.query("BEGIN");
+      const safety = await loadResearchTextSafety(client);
+      if ([b.rationale,b.evaluatorCode].some(value => typeof value === "string" && safety.containsSecret(value))) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({error:"sensitive_text_rejected"});
+      }
       if(!await assertSessionCompleted(client,id)) {await client.query("ROLLBACK");return res.status(409).json({error:"session_not_completed"});}
       const belongs=await client.query(
         `SELECT 1 FROM maps m JOIN session_stages ss ON ss.id=m.session_stage_id
@@ -477,8 +513,9 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       await client.query("COMMIT");
       auditCommitted();
       return res.status(201).json(result.rows[0]);
-    } catch {
+    } catch (error) {
       await client.query("ROLLBACK").catch(()=>undefined);
+      if (respondResearchSafetyError(res, error)) return;
       console.error("evaluation_save_failed");
       return res.status(500).json({error:"evaluation_save_failed"});
     } finally {client.release();}
@@ -500,6 +537,11 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
     const client=await pool.connect();
     try {
       await client.query("BEGIN");
+      const safety = await loadResearchTextSafety(client);
+      if ([b.noteText,b.reportedByCode].some(value => typeof value === "string" && safety.containsSecret(value))) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({error:"sensitive_text_rejected"});
+      }
       if(!await assertSessionCompleted(client,id)) {await client.query("ROLLBACK");return res.status(409).json({error:"session_not_completed"});}
       if(b.mapId!=null) {
         const map=await client.query(
@@ -533,8 +575,9 @@ export function registerStage1AnalysisRoutes(app: Express, pool: Pool) {
       await client.query("COMMIT");
       auditCommitted();
       return res.status(201).json(result.rows[0]);
-    } catch {
+    } catch (error) {
       await client.query("ROLLBACK").catch(()=>undefined);
+      if (respondResearchSafetyError(res, error)) return;
       console.error("reflection_save_failed");
       return res.status(500).json({error:"reflection_save_failed"});
     } finally {client.release();}

@@ -14,7 +14,7 @@ import {
 import { lockSessionStageProgress, assertStageIsCurrent } from "./sessions.js";
 import { validAnswerText } from "./research-event-assessment-v3.js";
 import { validMapLabel } from "./research-event-map-v2.js";
-import { redactResearchOutput } from "./research-output-safety.js";
+import { redactResearchOutput, respondResearchSafetyError } from "./research-output-safety.js";
 import { csvCell } from "./csv.js";
 import type { SurveyStateV7 } from "./research-event-survey-v7.js";
 export type SurveyQuestion = {
@@ -147,7 +147,7 @@ export async function seedLearnerMap(
   const s = (
     await c.query("SELECT protocol_key FROM sessions WHERE id=$1", [sessionId])
   ).rows[0];
-  if (s?.protocol_key !== "STAGE1_5") return false;
+  if (!["STAGE1_5","SBKB_INTEGRATION_V1"].includes(s?.protocol_key)) return false;
   const items = (
     await c.query<{ id: string; source: string; label: string }>(
       `SELECT item.id,item.source_concept_id AS source,g.label FROM session_seed_concepts seed JOIN kit_concept_items item ON item.id=seed.kit_concept_item_id JOIN sessions s ON s.id=seed.session_id AND s.research_kit_definition_id=item.kit_definition_id JOIN concepts g ON g.id=item.source_concept_id WHERE seed.session_id=$1 ORDER BY item.id FOR SHARE OF item,g`,
@@ -276,7 +276,8 @@ export function registerSurveyRoutes(app: Express, pool: Pool) {
       return r.json(
         await tx(pool, (c) => surveySnapshot(c, q.params.sessionId)),
       );
-    } catch {
+    } catch (error) {
+      if (respondResearchSafetyError(r, error)) return;
       return r.status(503).json({ error: "survey_fetch_failed" });
     }
   });
@@ -352,7 +353,8 @@ export function registerSurveyRoutes(app: Express, pool: Pool) {
       return data
         ? r.json(data)
         : r.status(409).json({ error: "survey_not_current" });
-    } catch {
+    } catch (error) {
+      if (respondResearchSafetyError(r, error)) return;
       return r.status(503).json({ error: "survey_fetch_failed" });
     }
   });
@@ -623,7 +625,8 @@ export function registerSurveyRoutes(app: Express, pool: Pool) {
               ].join("\r\n") +
               "\r\n",
           );
-      } catch {
+      } catch (error) {
+        if (respondResearchSafetyError(r, error)) return;
         return r.status(503).json({ error: "survey_export_failed" });
       }
     },

@@ -1,0 +1,12 @@
+[
+  {
+    "test": "test:event-export",
+    "exitCode": 0,
+    "elapsedMs": 19209
+  },
+  {
+    "test": "test:experiment-research",
+    "exitCode": 0,
+    "elapsedMs": 64651
+  }
+]

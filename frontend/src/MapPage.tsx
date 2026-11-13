@@ -4,6 +4,8 @@ import {
   useCallback,
   useEffect,
   useId,
+  useImperativeHandle,
+  type Ref,
   useMemo,
   useRef,
   useState,
@@ -429,15 +431,22 @@ function mapDisplayName(type: MapResponse["type"]) {
   return ({ GOAL: "ゴールマップ", PRIOR: "Scratch-Build マップ", KB: "Kit-Build マップ", INTEGRATION: "統合マップ" })[type];
 }
 
+const navigateMap=(path:string)=>window.location.replace(path);
 export default function MapPage({
   mapId,
   isLearner = false,
   learnerSessionId,
+  navigate = navigateMap,
+  instructions,
 }: {
   mapId: string;
   isLearner?: boolean;
   learnerSessionId?: string;
+  navigate?: (path:string)=>void;
+  instructions?: Record<string,string>;
 }) {
+  const [online,setOnline]=useState(navigator.onLine);
+  useEffect(()=>{const update=()=>setOnline(navigator.onLine);window.addEventListener("online",update);window.addEventListener("offline",update);return()=>{window.removeEventListener("online",update);window.removeEventListener("offline",update);};},[]);
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [activityLogWarning, setActivityLogWarning] = useState(false);
   const noteActivityLogFailure = useCallback(() => setActivityLogWarning(true), []);
@@ -501,7 +510,7 @@ export default function MapPage({
       !isLearner ||
       state.status !== "success" ||
       !state.map.sessionId ||
-      !["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(state.map.sessionProtocolKey ?? "")
+      !["STAGE1_4", "STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(state.map.sessionProtocolKey ?? "")
     ) return;
     const idempotencyKey = newClientId();
     try {
@@ -631,7 +640,7 @@ export default function MapPage({
     if (
       !isLearner ||
       !currentMap ||
-      ! ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(currentMap.sessionProtocolKey ?? "") ||
+      ! ["STAGE1_4", "STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(currentMap.sessionProtocolKey ?? "") ||
       (currentMap.type !== "PRIOR" &&
         currentMap.type !== "KB" &&
         currentMap.type !== "INTEGRATION") ||
@@ -779,7 +788,7 @@ export default function MapPage({
 
       if (isLearner && learnerSessionId) {
         setState({ status: "loading" });
-        window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId)}`);
+        navigate(`/sessions/${encodeURIComponent(learnerSessionId)}`);
         return;
       }
 
@@ -1764,7 +1773,7 @@ export default function MapPage({
 
         if (response.status === 404) {
           if (isLearner && learnerSessionId) {
-            window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId)}`);
+            navigate(`/sessions/${encodeURIComponent(learnerSessionId)}`);
             return;
           }
           setState({ status: "not-found" });
@@ -1791,10 +1800,10 @@ export default function MapPage({
           );
           if (!flowResponse.ok) throw new Error("Session flow refresh failed");
           const flow = (await flowResponse.json()) as SessionFlowResponse;
-          if (isLearner && map.type === "INTEGRATION" && ["STAGE1_6","STAGE1_5"].includes(flow.session.protocolKey) && flow.currentStage?.id === map.sessionStageId && flow.currentStage.startedAt && flow.session.groupActivitySeconds !== null) {
+          if (isLearner && map.type === "INTEGRATION" && ["STAGE1_6","STAGE1_5","SBKB_INTEGRATION_V1"].includes(flow.session.protocolKey) && flow.currentStage?.id === map.sessionStageId && flow.currentStage.startedAt && flow.session.groupActivitySeconds !== null) {
             const deadline = flowRequestedAt + Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000 - Date.parse(flow.serverNow);
             if (deadline <= performance.now()) {
-              window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId ?? map.sessionId)}`);
+              navigate(`/sessions/${encodeURIComponent(learnerSessionId ?? map.sessionId)}`);
               return;
             }
             setIntegrationDeadline(deadline);
@@ -1832,20 +1841,20 @@ export default function MapPage({
 
     void loadMap();
     return () => controller.abort();
-  }, [mapId, reloadUndoRedoState, isLearner, learnerSessionId]);
+  }, [mapId, reloadUndoRedoState, isLearner, learnerSessionId, navigate]);
 
   useEffect(() => {
     if (!isLearner || !learnerSessionId || integrationDeadline === null) return;
     const leave = () => {
       setState({ status: "loading" });
-      window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId)}`);
+      navigate(`/sessions/${encodeURIComponent(learnerSessionId)}`);
     };
     const timer = window.setTimeout(leave, Math.max(0, integrationDeadline - performance.now()));
     const onVisible = () => { if (performance.now() >= integrationDeadline) leave(); };
     window.addEventListener("focus", onVisible);
     document.addEventListener("visibilitychange", onVisible);
     return () => { window.clearTimeout(timer); window.removeEventListener("focus", onVisible); document.removeEventListener("visibilitychange", onVisible); };
-  }, [integrationDeadline, isLearner, learnerSessionId]);
+  }, [integrationDeadline, isLearner, learnerSessionId, navigate]);
 
   const isSubmittedMap = state.status === "success" && state.map.status === "SUBMITTED";
 
@@ -1855,7 +1864,7 @@ export default function MapPage({
     let checking = false;
     function leaveMap() {
       setState({ status: "loading" });
-      window.location.replace(`/sessions/${encodeURIComponent(learnerSessionId!)}`);
+      navigate(`/sessions/${encodeURIComponent(learnerSessionId!)}`);
     }
     async function checkAccess() {
       if (checking || document.visibilityState !== "visible") return;
@@ -1884,7 +1893,7 @@ export default function MapPage({
       window.removeEventListener("focus", recheck);
       document.removeEventListener("visibilitychange", recheck);
     };
-  }, [isLearner, learnerSessionId, mapId, state.status, isSubmittedMap]);
+  }, [isLearner, learnerSessionId, mapId, state.status, isSubmittedMap, navigate]);
 
   const checkedKitMapId = state.status === "success" && state.map.type === "KB"
     ? state.map.id : null;
@@ -2050,7 +2059,7 @@ export default function MapPage({
         isLearner={isLearner && state.map.sessionId !== null}
         activityLogWarning={activityLogWarning}
         readOnly={
-          isReadOnlyMap || submitting || (isIntegrationMap && mergingConcepts)
+          isReadOnlyMap || submitting || (state.map.sessionProtocolKey==="SBKB_INTEGRATION_V1" && (kitFeedbackChecking || !online)) || (isIntegrationMap && mergingConcepts)
         }
         canCreateConcept={!isKBMap}
         canCreateLink={!isKBMap}
@@ -2069,13 +2078,15 @@ export default function MapPage({
         onShowKitFeedback={() => setKitFeedbackDialog({ status: "result", fromSubmission: false })}
         onCloseKitFeedback={() => setKitFeedbackDialog(null)}
         canSubmit={
-          ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(state.map.sessionProtocolKey ?? "") &&
-          state.map.sessionStageStatus === "IN_PROGRESS"
+          ["STAGE1_4", "STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(state.map.sessionProtocolKey ?? "") &&
+          state.map.sessionStageStatus === "IN_PROGRESS" &&
+          (state.map.sessionProtocolKey!=="SBKB_INTEGRATION_V1" || (online && mapEditorSaveStatus==="saved" && !positionSaving && !undoRedoBusy && !kitFeedbackChecking && (!isKBMap || (kitBuildFeedback?.result.matched===true && kitFeedbackFreshness==="current"))))
         }
-        supplementalContent={integrationEditorSupplement}
-        additionalBusy={mergingConcepts || undoRedoBusy}
+        instructionsText={instructions?.[state.map.type]}
+        supplementalContent={<>{state.map.sessionProtocolKey==="SBKB_INTEGRATION_V1" && !online && <p role="alert">オフライン：保存・提出はできません。未保存内容を別画面へ移さず、接続状態を確認してください。</p>}{integrationEditorSupplement}</>}
+        additionalBusy={mergingConcepts || undoRedoBusy || (state.map.sessionProtocolKey==="SBKB_INTEGRATION_V1" && kitFeedbackChecking)}
         undoRedoState={
-          isLearner && ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(state.map.sessionProtocolKey ?? "") ? undoRedoState : null
+          isLearner && ["STAGE1_4", "STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(state.map.sessionProtocolKey ?? "") ? undoRedoState : null
         }
         undoRedoFeedback={undoRedoFeedback}
         onUndoRedo={performUndoRedo}
@@ -2409,6 +2420,7 @@ function MapEditorShell({
   onCloseKitFeedback,
   canSubmit,
   supplementalContent,
+  instructionsText,
   additionalBusy,
   undoRedoState,
   undoRedoFeedback,
@@ -2450,6 +2462,7 @@ function MapEditorShell({
   onCloseKitFeedback: () => void;
   canSubmit: boolean;
   supplementalContent?: React.ReactNode;
+  instructionsText?: string;
   additionalBusy: boolean;
   undoRedoState?: UndoRedoState | null;
   undoRedoFeedback?: string | null;
@@ -2647,7 +2660,7 @@ function MapEditorShell({
     ) {
       return;
     }
-    if (!window.confirm(activeConcept.isMergeResult && map.type === "INTEGRATION" && map.sessionProtocolKey === "STAGE1_5" ? mergeReleaseNotice : `「${activeConcept.label}」を削除しますか？`)) {
+    if (!window.confirm(activeConcept.isMergeResult && map.type === "INTEGRATION" && ["STAGE1_5","SBKB_INTEGRATION_V1"].includes(map.sessionProtocolKey ?? "") ? mergeReleaseNotice : `「${activeConcept.label}」を削除しますか？`)) {
       void onCancelOperation("DELETE_CONCEPT", activeConcept.id);
       return;
     }
@@ -2787,6 +2800,59 @@ function MapEditorShell({
     setLinkCreation(null);
   }
 
+  const canvasFitRef=useRef<{fit:()=>void}>(null);
+  const experimentLayout=map.sessionProtocolKey==="SBKB_INTEGRATION_V1";
+  const experimentKB = experimentLayout && isLearner && map.type === "KB";
+  const kbSubmissionHint = readOnly ? "提出済みです。内容は変更できません。"
+    : kitFeedbackChecking ? "一致状況を確認中です。完了するまでお待ちください。"
+    : hasSaveError ? "保存状態を確認できません。保存を確認してから一時提出してください。"
+    : isSaving ? "保存中です。保存完了後に確認・提出できます。"
+    : !kitBuildFeedback ? "未確認です。「一時提出」で一致状況を確認してください。"
+    : kitFeedbackFreshness === "stale" ? "構造が変わったため、前回の結果は古くなっています。この画面の最終提出は、「一時提出」で最新の一致を確認すると有効になります。"
+    : kitFeedbackFreshness !== "current" ? "最新の保存状態の確認が必要です。「一時提出」で再確認してください。"
+    : !kitBuildFeedback.result.matched ? "確認結果：不一致。マップを編集し、「一時提出」で再確認してください。"
+    : !canSubmit || drawer.kind !== "closed" || linkCreation !== null ? "確認結果：一致。編集中の操作を完了し、オンラインで保存状態を確認すると最終提出できます。"
+    : "確認結果：一致。「最終提出」でこのマップを提出できます。";
+  const creationTools=!interactionLocked && (canCreateConcept || canCreateLink) && (
+            <div className="map-editor-tools" aria-label="マップ操作">
+              <span>追加</span>
+              {canCreateConcept && (
+                <button type="button" onClick={openAddConcept}>
+                  ＋ 概念
+                </button>
+              )}
+              {canCreateLink && (
+                <button type="button" onClick={openAddLink}>
+                  ＋ リンク
+                </button>
+              )}
+            </div>
+          );
+  const feedbackControls=map.type === "KB" && (
+        <section className="kit-feedback-actions" aria-label="ゴールマップとの一致確認">
+          {isLearner && <p>部品をマップに配置して接続した後、ボタンで一致状況を確認できます。</p>}
+          <button
+            type="button"
+            className="kit-feedback-check-button"
+            aria-describedby={experimentKB ? "kb-submission-guidance" : undefined}
+            disabled={isSaving || submitting || kitFeedbackChecking}
+            onClick={() => void onCheckKitFeedback()}
+          >
+            {kitFeedbackChecking ? "確認中…" : map.sessionProtocolKey==="SBKB_INTEGRATION_V1" ? "一時提出" : "一致状況を確認"}
+          </button>
+          {kitBuildFeedback && (
+            <>
+              <p className="kit-feedback-summary" role="status" hidden={experimentKB}>
+                前回の結果：{kitBuildFeedback.result.matched ? "一致" : "不一致"}。
+                {kitFeedbackFreshnessText(kitFeedbackFreshness)}
+              </p>
+              <button type="button" className="kit-feedback-review-button" onClick={onShowKitFeedback}>
+                前回の結果を表示
+              </button>
+            </>
+          )}
+        </section>
+      );
   const sourceLabel = activeLink
     ? (map.concepts.find((concept) => concept.id === activeLink.sourceConceptId)
         ?.label ?? "概念が見つかりません")
@@ -2810,7 +2876,7 @@ function MapEditorShell({
 
   return (
     <main
-      className={`map-editor-page is-${map.type.toLowerCase()}${isLearner ? " is-learner" : ""}`}
+      className={`map-editor-page${map.sessionProtocolKey==="SBKB_INTEGRATION_V1" ? " is-experiment" : ""} is-${map.type.toLowerCase()}${isLearner ? " is-learner" : ""}`}
     >
       <header className="map-editor-header">
         <div className="map-editor-title">
@@ -2819,6 +2885,10 @@ function MapEditorShell({
           {!isLearner && <span>{mapTitle}</span>}
         </div>
         <div className="map-editor-header-actions">
+          {experimentLayout && creationTools}
+          {experimentLayout && <button type="button" className="experiment-fit session-secondary-button" onClick={()=>canvasFitRef.current?.fit()}>全体表示</button>}
+          {experimentLayout && <details className="experiment-task-instructions"><summary>課題説明</summary><p>{instructionsText ?? "説明を取得できません。研究者に連絡してください。"}</p></details>}
+          {experimentLayout && feedbackControls}
           {isLearner&&map.sessionId&&<LearnerDeliveryStatus sessionId={map.sessionId}/>}
           {activityLogWarning && <p className="session-error" role="status">一部の操作記録の保存を確認できていません。送信状態を確認してください。</p>}
           <a
@@ -2836,7 +2906,9 @@ function MapEditorShell({
             role="status"
             aria-live="polite"
           >
-            {hasSaveError
+            {experimentLayout && drawer.kind !== "closed"
+              ? "入力編集中：保存または閉じて確認"
+              : hasSaveError
               ? "保存エラー"
               : isSaving
                 ? "保存中…"
@@ -2885,11 +2957,12 @@ function MapEditorShell({
                 submitting ||
                 drawerSaving ||
                 !canSubmit ||
+                (experimentLayout && drawer.kind !== "closed") ||
                 linkCreation !== null
               }
               onClick={() => void handleSubmitMap()}
             >
-              {submitting ? "提出中…" : "提出"}
+              {submitting ? "提出中…" : map.sessionProtocolKey==="SBKB_INTEGRATION_V1" ? "最終提出" : "提出"}
             </button>
           )}
           {submitFeedback && (
@@ -2910,30 +2983,9 @@ function MapEditorShell({
         </p>
       )}
 
-      {map.type === "KB" && (
-        <section className="kit-feedback-actions" aria-label="ゴールマップとの一致確認">
-          {isLearner && <p>部品をマップに配置して接続した後、ボタンで一致状況を確認できます。</p>}
-          <button
-            type="button"
-            className="kit-feedback-check-button"
-            disabled={isSaving || submitting || kitFeedbackChecking}
-            onClick={() => void onCheckKitFeedback()}
-          >
-            {kitFeedbackChecking ? "確認中…" : "一致状況を確認"}
-          </button>
-          {kitBuildFeedback && (
-            <>
-              <p className="kit-feedback-summary" role="status">
-                前回の結果：{kitBuildFeedback.result.matched ? "一致" : "不一致"}。
-                {kitFeedbackFreshnessText(kitFeedbackFreshness)}
-              </p>
-              <button type="button" className="kit-feedback-review-button" onClick={onShowKitFeedback}>
-                前回の結果を表示
-              </button>
-            </>
-          )}
-        </section>
-      )}
+      {experimentKB && <div className="experiment-state-guidance"><p id="kb-submission-guidance" role="status" aria-live="polite">{kbSubmissionHint}</p><p className="experiment-submission-note">最終提出時は、前回の結果にかかわらずサーバーが最新のマップを再判定します。</p></div>}
+      {experimentLayout && isLearner && map.type === "PRIOR" && map.concepts.some(c => c.isSeed) && <p className="experiment-state-guidance experiment-seed-guidance">初期概念は移動・リンク接続ができます。名前変更・削除はできません。</p>}
+      {!experimentLayout && feedbackControls}
 
       {supplementalContent}
 
@@ -2942,22 +2994,7 @@ function MapEditorShell({
       >
         <div className="map-editor-canvas-column">
           {isLearner && !readOnly && <p className="map-editor-operation-hint">{map.type === "KB" ? "部品をマップへドラッグし、リンクの両端を概念へ接続します。" : "概念とリンクを追加し、リンクの両端を概念へドラッグして接続します。"} 矢印の先が関係先です。</p>}
-          {!interactionLocked && (canCreateConcept || canCreateLink) && (
-            <div className="map-editor-tools" aria-label="マップ操作">
-              <span>追加</span>
-              {canCreateConcept && (
-                <button type="button" onClick={openAddConcept}>
-                  ＋ 概念
-                </button>
-              )}
-              {canCreateLink && (
-                <button type="button" onClick={openAddLink}>
-                  ＋ リンク
-                </button>
-              )}
-            </div>
-          )}
-
+          {!experimentLayout && creationTools}
           {linkCreation && (
             <div className="map-editor-link-creation-status" role="status">
               <span>
@@ -2989,7 +3026,8 @@ function MapEditorShell({
           <ConceptCanvas
             mapId={map.id}
             mapType={map.type}
-            allowMergeRelease={map.type === "INTEGRATION" && map.sessionProtocolKey === "STAGE1_5"}
+            fitRef={canvasFitRef}
+            allowMergeRelease={map.type === "INTEGRATION" && ["STAGE1_5","SBKB_INTEGRATION_V1"].includes(map.sessionProtocolKey ?? "")}
             concepts={map.concepts}
             links={map.links}
             kitDefinitionName={map.kitDefinitionName}
@@ -3152,7 +3190,7 @@ function MapEditorShell({
                       type="button"
                       className="is-danger"
                       disabled={
-                        drawerSaving || interactionLocked || (activeConcept.isMergeResult && !(map.type === "INTEGRATION" && map.sessionProtocolKey === "STAGE1_5")) || activeConcept.isSeed
+                        drawerSaving || interactionLocked || (activeConcept.isMergeResult && !(map.type === "INTEGRATION" && ["STAGE1_5","SBKB_INTEGRATION_V1"].includes(map.sessionProtocolKey ?? ""))) || activeConcept.isSeed
                       }
                       onClick={() => void handleConceptDelete()}
                     >
@@ -3170,7 +3208,7 @@ function MapEditorShell({
                   {activeConcept.isSeed && <p>初期概念の名前変更・削除はできません。移動・リンク作成はできます。</p>}
                   {activeConcept.isMergeResult && (
                     <p className="map-editor-drawer-hint">
-                      {map.type === "INTEGRATION" && map.sessionProtocolKey === "STAGE1_5" ? mergeReleaseNotice : "Mergeの履歴を保持するため、このConceptは削除できません。"}
+                      {map.type === "INTEGRATION" && ["STAGE1_5","SBKB_INTEGRATION_V1"].includes(map.sessionProtocolKey ?? "") ? mergeReleaseNotice : "Mergeの履歴を保持するため、このConceptは削除できません。"}
                     </p>
                   )}
                 </form>
@@ -3353,6 +3391,7 @@ export function ConceptCanvas({
   mapId,
   mapType,
   allowMergeRelease = false,
+  fitRef,
   concepts,
   links,
   kitDefinitionName,
@@ -3388,6 +3427,7 @@ export function ConceptCanvas({
   mapId: string;
   mapType: MapResponse["type"];
   allowMergeRelease?: boolean;
+  fitRef?: Ref<{fit:()=>void}>;
   concepts: Concept[];
   links: MapLink[];
   kitDefinitionName: string | null;
@@ -3526,9 +3566,11 @@ export function ConceptCanvas({
     kind: "temporary" | "saved";
     id: string;
     endpoint: "source" | "target";
+    hoveredConceptId?: string | null;
   } | null>(null);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasZoom,setCanvasZoom]=useState(1);
   const arrowMarkerId = `concept-arrow-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const [canvasViewportWidth, setCanvasViewportWidth] = useState(960);
   const nodeElementsRef = useRef(new Map<string, HTMLElement>());
@@ -3694,6 +3736,12 @@ export function ConceptCanvas({
     ...Array.from(linkConnectorPositions.values(), (position) => position.y + 100),
   );
 
+  useImperativeHandle(fitRef,()=>({fit:()=>{
+    const viewport=canvasViewportRef.current;if(!viewport)return;
+    if(!viewport.clientWidth||!viewport.clientHeight)return;
+    setCanvasZoom(Math.min(1,viewport.clientWidth/canvasWidth,viewport.clientHeight/canvasHeight));
+    viewport.scrollTo({left:0,top:0});
+  }}),[canvasWidth,canvasHeight]);
   const supportsKitPalette = mapType === "KB" || mapType === "INTEGRATION";
   const normalizedKitPartQuery = kitPartQuery.trim().toLowerCase();
   const visibleKitConcepts = normalizedKitPartQuery
@@ -3903,13 +3951,14 @@ export function ConceptCanvas({
         pointerEvent.clientY,
       );
       if (point)
-        setConnectionPreview({ start: connection.start, current: point, kind: connection.kind, id: connection.id, endpoint: connection.endpoint });
+        setConnectionPreview({ start: connection.start, current: point, kind: connection.kind, id: connection.id, endpoint: connection.endpoint, hoveredConceptId: conceptAtPoint(pointerEvent.clientX, pointerEvent.clientY) });
     };
     const finish = (pointerEvent: PointerEvent) => {
       if (pointerEvent.pointerId !== connection.pointerId) return;
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", handleKeyDown);
       if (activeConnectionRef.current === connection) {
         activeConnectionRef.current = null;
         setConnectionPreview(null);
@@ -3922,15 +3971,25 @@ export function ConceptCanvas({
     };
     const cancel = (pointerEvent: PointerEvent) => {
       if (pointerEvent.pointerId !== connection.pointerId) return;
+      cancelConnection();
+    };
+    const handleKeyDown = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== "Escape") return;
+      keyEvent.preventDefault();
+      cancelConnection();
+    };
+    const cancelConnection = () => {
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", handleKeyDown);
       activeConnectionRef.current = null;
       setConnectionPreview(null);
     };
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", handleKeyDown);
   }
 
   async function finishConnectionAt(
@@ -4938,7 +4997,7 @@ export function ConceptCanvas({
       {!readOnly && <div className="canvas-connection-area">
       {showConnectionGuidance && <p className="canvas-direction-hint">関係は「始点のConcept → Link → 矢印の先のConcept」の向きにつながります。</p>}
       <div className="canvas-connection-guidance" role="status" aria-live="polite">
-        {connectionPreview ? <p>「{connectionPreview.endpoint === "source" ? "始点" : "矢印の先"}」を接続するConceptへドラッグしてください。</p> : pendingConnectors.map(connector => <p key={connector.id}>
+        {connectionPreview ? <p>「{connectionPreview.endpoint === "source" ? "始点" : "矢印の先"}」を接続するConceptへドラッグしてください。{connectionPreview.hoveredConceptId ? ` 接続先候補：${conceptsById.get(connectionPreview.hoveredConceptId)?.label ?? "Concept"}。離すと接続します。` : ""} Escでこの接続操作を中止できます。</p> : pendingConnectors.map(connector => <p key={connector.id}>
           「{connector.label}」：始点 {connector.sourceConceptId ? conceptsById.get(connector.sourceConceptId)?.label ?? "接続済み" : "未接続"} → 矢印の先 {connector.targetConceptId ? conceptsById.get(connector.targetConceptId)?.label ?? "接続済み" : "未接続"}。
           {!connector.sourceConceptId || !connector.targetConceptId ? ` ${!connector.sourceConceptId && !connector.targetConceptId ? "始点と矢印の先" : !connector.sourceConceptId ? "始点" : "矢印の先"}のハンドルを対応するConceptへドラッグしてください。` : " 保存中です。"}
         </p>)}
@@ -4954,7 +5013,7 @@ export function ConceptCanvas({
           className={`concept-canvas${readOnly ? " is-read-only" : ""}`}
           role="list"
           aria-label="Concept一覧"
-          style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px` }}
+          style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px`,zoom:canvasZoom }}
           ref={canvasRef}
           onDragOver={handleCanvasDragOver}
           onDrop={handleCanvasDrop}
@@ -5140,7 +5199,7 @@ export function ConceptCanvas({
               >
                 <button
                   type="button"
-                  className="link-connector-handle is-source"
+                  className={`link-connector-handle is-source${connectionPreview?.kind === "saved" && connectionPreview.id === edge.id && connectionPreview.endpoint === "source" ? " is-connecting" : ""}`}
                   data-endpoint-label="始点"
                   aria-label={`${edge.label}の始点を再接続`}
                   disabled={readOnly || reconnectingLinkId === edge.id}
@@ -5171,7 +5230,7 @@ export function ConceptCanvas({
                 </button>
                 <button
                   type="button"
-                  className="link-connector-handle is-target"
+                  className={`link-connector-handle is-target${connectionPreview?.kind === "saved" && connectionPreview.id === edge.id && connectionPreview.endpoint === "target" ? " is-connecting" : ""}`}
                   data-endpoint-label="矢印の先"
                   aria-label={`${edge.label}の矢印の先を再接続`}
                   disabled={readOnly || reconnectingLinkId === edge.id}
@@ -5198,7 +5257,7 @@ export function ConceptCanvas({
             >
               <button
                 type="button"
-                className={`link-connector-handle is-source${connector.sourceConceptId ? " is-connected" : ""}`}
+                className={`link-connector-handle is-source${connector.sourceConceptId ? " is-connected" : ""}${connectionPreview?.kind === "temporary" && connectionPreview.id === connector.id && connectionPreview.endpoint === "source" ? " is-connecting" : ""}`}
                 data-endpoint-label="始点"
                 aria-label={`${connector.label}の始点を接続${connector.sourceConceptId ? "済み" : "、未接続"}`}
                 disabled={connector.saving}
@@ -5227,7 +5286,7 @@ export function ConceptCanvas({
               </button>
               <button
                 type="button"
-                className={`link-connector-handle is-target${connector.targetConceptId ? " is-connected" : ""}`}
+                className={`link-connector-handle is-target${connector.targetConceptId ? " is-connected" : ""}${connectionPreview?.kind === "temporary" && connectionPreview.id === connector.id && connectionPreview.endpoint === "target" ? " is-connecting" : ""}`}
                 data-endpoint-label="矢印の先"
                 aria-label={`${connector.label}の矢印の先を接続${connector.targetConceptId ? "済み" : "、未接続"}`}
                 disabled={connector.saving}
@@ -5277,7 +5336,7 @@ export function ConceptCanvas({
 
             return (
               <article
-                className={`concept-node${isDragging ? " is-dragging" : ""}${editingConceptId === concept.id ? " is-editing" : ""}${positionSaving ? " is-position-saving" : ""}${historyHighlightClass(!!highlightedConceptIds?.has(concept.id), historyConceptChangeKinds?.get(concept.id))}`}
+                className={`concept-node${isDragging ? " is-dragging" : ""}${connectionPreview?.hoveredConceptId === concept.id ? " is-connection-target" : ""}${editingConceptId === concept.id ? " is-editing" : ""}${positionSaving ? " is-position-saving" : ""}${historyHighlightClass(!!highlightedConceptIds?.has(concept.id), historyConceptChangeKinds?.get(concept.id))}`}
                 key={concept.id}
                 role="listitem"
                 tabIndex={canOpenConceptDrawer ? 0 : undefined}
@@ -5315,6 +5374,7 @@ export function ConceptCanvas({
                 {!usesMapEditorDrawers && (
                   <span className="concept-node-label">Concept</span>
                 )}
+                {concept.isSeed && <span className="concept-seed-tag">初期概念</span>}
                 {historyConceptChangeKinds?.has(concept.id) && <span className="history-change-tag">{historyConceptChangeKinds.get(concept.id)==="ADDED"?"＋ 追加":historyConceptChangeKinds.get(concept.id)==="REMOVED"?"− 削除":"↔ 変更"}</span>}
                 {usesMapEditorDrawers ? (
                   <h3>{concept.label}</h3>

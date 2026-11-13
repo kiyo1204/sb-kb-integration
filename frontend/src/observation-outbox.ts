@@ -1,6 +1,8 @@
+import {getExperimentObservationOrigin} from "./auth-client";
 import {discardAssessmentDrafts} from "./assessment-drafts";
 import { newClientId, requestDigest } from "./client-identity";
 type Item = {
+  experimentOrigin?: {clientId:string;generation:number};
   id: string;
   order: number;
   event: Record<string, unknown>;
@@ -138,8 +140,9 @@ function validState(value: State, sessionId: string) {
       typeof i !== "object" ||
       Object.keys(i).some(
         (k) =>
-          !["id", "order", "event", "created", "attempts", "last"].includes(k),
+          !["id", "order", "event", "created", "attempts", "last", "experimentOrigin"].includes(k),
       ) ||
+      (i.experimentOrigin !== undefined && (!uuid(i.experimentOrigin.clientId) || !Number.isSafeInteger(i.experimentOrigin.generation) || i.experimentOrigin.generation<1 || Object.keys(i.experimentOrigin).sort().join()!=="clientId,generation")) ||
       !uuid(i.id) ||
       ids.has(i.id) ||
       !Number.isSafeInteger(i.order) ||
@@ -265,6 +268,7 @@ export async function enqueue(
     !allowedObservation(event)
   )
     throw new Error("invalid_observation");
+  const origin=getExperimentObservationOrigin();
   try {
     return await changeState(sessionId, (s) => {
       const now = Date.now();
@@ -279,6 +283,7 @@ export async function enqueue(
         attempts: 0,
         last: "UNSENT",
       };
+      if(origin)item.experimentOrigin=origin;
       s.items.push(item);
       while (
         s.items.length > limits.count ||
@@ -316,7 +321,9 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
         }
         return false;
       }
-      if (!me.ok || (await me.json()).sessionId !== sessionId) return false;
+      if (!me.ok) return false;
+      const identity=await me.json();
+      if(identity.sessionId!==sessionId || identity.runState==="ENDED")return false;
       let failed = false,
         announced = false;
       for (;;) {
@@ -367,6 +374,7 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
               "Idempotency-Key": next.item.id,
               "X-Client-Stream-Id": next.clientId,
               "X-Client-Sequence": String(next.item.order),
+              ...(next.item.experimentOrigin ? {"X-Experiment-Origin-Client":next.item.experimentOrigin.clientId,"X-Experiment-Origin-Generation":String(next.item.experimentOrigin.generation)} : {}),
             },
             body: JSON.stringify(next.item.event),
           });
@@ -380,6 +388,9 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
           break;
         }
         const payload = await response.json().catch(() => null);
+        // Keep stale-origin observations for the separately undecided recovery policy.
+        // Never silently relabel them with a replacement device generation.
+        if(payload?.error==="experiment_origin_stale" || payload?.error==="experiment_ended")return false;
         if(response.status===410 && payload?.error === "research_data_deleted") {
           if(typeof payload.queueKey === "string") await discardDeletedQueue(payload.queueKey,send);
           return false;

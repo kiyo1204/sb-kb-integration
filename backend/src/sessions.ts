@@ -80,7 +80,7 @@ export async function lockSessionStageForMap(
         LIMIT 1
       ) AS current_stage ON true
       WHERE stage.id = $1::uuid
-        AND session.protocol_key IN ($2, 'STAGE1_6', 'STAGE1_5')
+        AND session.protocol_key IN ($2, 'STAGE1_6', 'STAGE1_5', 'SBKB_INTEGRATION_V1')
       FOR UPDATE OF session, stage
     `,
     [stageId, STAGE1_PROTOCOL_KEY],
@@ -131,7 +131,7 @@ export async function lockSessionStageProgress(
       FROM session_stages AS stage
       INNER JOIN sessions AS session ON session.id = stage.session_id
       WHERE stage.id = $1::uuid
-        AND session.protocol_key IN ($2, 'STAGE1_6', 'STAGE1_5')
+        AND session.protocol_key IN ($2, 'STAGE1_6', 'STAGE1_5', 'SBKB_INTEGRATION_V1')
       FOR NO KEY UPDATE OF session, stage
     `,
     [stageId, STAGE1_PROTOCOL_KEY],
@@ -221,7 +221,7 @@ export async function getSession(
       LEFT JOIN session_stages AS stage ON stage.session_id = session.id
       LEFT JOIN maps AS map ON map.session_stage_id = stage.id
       WHERE session.id = $1::uuid
-        AND session.protocol_key IN ($2, 'STAGE1_6', 'STAGE1_5')
+        AND session.protocol_key IN ($2, 'STAGE1_6', 'STAGE1_5', 'SBKB_INTEGRATION_V1')
       ORDER BY stage.order_index
     `,
     [sessionId, STAGE1_PROTOCOL_KEY],

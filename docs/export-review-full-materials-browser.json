@@ -1,0 +1,18 @@
+{
+  "syntheticOnly": true,
+  "realApi": true,
+  "checks": [
+    "R03 series/draft/published list",
+    "R04 three columns, no defaults, missing-field focus",
+    "draft save, completion check, optional-test confirmation and immutable completed view",
+    "next draft, failed save retained input, stale update refused",
+    "desktop/mobile geometry and researcher-only UI gate"
+  ],
+  "screenshots": [
+    "r03-list.png",
+    "r04-missing.png",
+    "r04-draft-desktop.png",
+    "r04-published-desktop.png",
+    "r04-mobile.png"
+  ]
+}

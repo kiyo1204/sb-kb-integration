@@ -1,3 +1,6 @@
+import {withFailureScreenshot} from "./failure-screenshot";
+import {verifyFailureScreenshot} from "./verify-failure-screenshot";
+await verifyFailureScreenshot();
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { createServer } from "vite";
@@ -35,6 +38,7 @@ const after = {
     { id: "l3", mapId, sourceConceptId: "c3", targetConceptId: "c4", label: "降る", labelPositionX: 600, labelPositionY: 250 },
   ],
 };
+let safetyFailure: { status: number; code: string; target: string } | null = null;
 let protocol = "STAGE1_5";
 let emptyHistory = false;
 let noSnapshot = false;
@@ -52,6 +56,7 @@ try {
   await page.addInitScript(() => sessionStorage.setItem("stage1-access-token", "mock-ui-only-long-enough-1234567890"));
   await page.route("**/api/**", async route => {
     const path = new URL(route.request().url()).pathname;
+    if (safetyFailure && path.endsWith(safetyFailure.target)) return route.fulfill({ status: safetyFailure.status, json: { error: safetyFailure.code } });
     if (path === "/api/me") return route.fulfill({ json: { role: "researcher" } });
     if(path.endsWith("/descriptive-features"))return protocol==="STAGE1_5"?route.fulfill({json:featureFixture()}):route.fulfill({status:409,json:{error:"wrong_protocol"}});
     if(path.endsWith("/descriptive-features.csv"))return route.fulfill({headers:{"Content-Type":"text/csv","Content-Disposition":"attachment; filename=mock-five-flow.csv"},body:"featureVersion,protocolKey,aggregationPoint,activeConcepts,hiddenMergeSources,links\r\nstage1-5-descriptive-v1,STAGE1_5,completion,2,2,3\r\n"});
@@ -88,7 +93,7 @@ try {
   const url = vite.resolvedUrls!.local[0]!;
   await page.goto(`${url}research/stage1/${sid}/analysis`);
   const featurePanel=page.getByRole("region",{name:"新5活動の記述的特徴量"});
-  await featurePanel.waitFor();
+  await withFailureScreenshot(()=>featurePanel.waitFor(),path=>page.screenshot({path,fullPage:true}));
   assert.match(await featurePanel.innerText(),/stage1-5-descriptive-v1/);
   assert.deepEqual(await featurePanel.locator('[data-feature-point="completion"] td').allTextContents(),["2","2","3","算出済み"]);
   assert.deepEqual(await featurePanel.locator('[data-feature-point="delta"] td').allTextContents(),["-1","2","1","算出済み"]);
@@ -157,6 +162,33 @@ try {
   assert.equal(await page.getByRole("region",{name:"新5活動の記述的特徴量"}).count(),0);
   protocol="STAGE1_5";
   for(const mode of ["NOT_SUBMITTED","INITIAL_SNAPSHOT_MISSING_OR_INVALID","HISTORY_INCONSISTENT"]){featureMode=mode;await page.goto(`${url}research/stage1/${sid}/analysis`);await featurePanel.waitFor();const row=featurePanel.locator('[data-feature-point="completion"]');assert.deepEqual((await row.locator("td").allTextContents()).slice(0,3),["算出不可","算出不可","算出不可"]);if(mode==="NOT_SUBMITTED")assert.match(await row.innerText(),/未提出/);}
+  // Fixed safety messages survive API, save and download error paths; no file starts.
+  protocol = "STAGE1_4";
+  let downloads = 0;
+  page.on("download", () => downloads++);
+  for (const [status, code, message] of [
+    [422, "safety_budget_exceeded", "安全確認の処理量上限を超えました。"],
+    [503, "safety_lookup_unavailable", "安全確認を行えませんでした。"],
+  ] as const) {
+    safetyFailure = { status, code, target: "/analysis" };
+    await page.goto(`${url}research/stage1/${sid}/analysis`);
+    await page.getByText(message, { exact: false }).waitFor();
+    safetyFailure = null;
+    await page.goto(`${url}research/stage1/${sid}/analysis`);
+    await page.getByRole("heading", { name: "活動概要" }).waitFor();
+    safetyFailure = { status, code, target: "/reflections" };
+    await page.getByLabel("記録者・報告者コード").fill("R-test");
+    await page.getByLabel("振り返りの記録").fill("テスト専用の通常文章");
+    await page.getByRole("button", { name: "メモを保存", exact: true }).click();
+    await page.getByText(message, { exact: false }).waitFor();
+    assert.equal(await page.getByLabel("振り返りの記録").inputValue(), "テスト専用の通常文章");
+    safetyFailure = { status, code, target: "/reflections.csv" };
+    const failedCsv = page.waitForResponse(r => r.url().endsWith("/reflections.csv") && r.status() === status);
+    await page.getByRole("button", { name: "振り返りCSV", exact: true }).click();
+    await failedCsv;
+    await page.getByText(message, { exact: false }).waitFor();
+    assert.equal(downloads, 0, "failed CSV must not download JSON as a file");
+  }
   console.log("Mock API browser: 5/6/4 activity summaries, no-group vs retained historical group, empty operation history, no-snapshot label with no fabricated diff, change/add/delete link rendering, TEXT/CHOICE/RATING survey answers, responsive layout: PASS");
   await context.close();
 } finally {

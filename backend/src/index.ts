@@ -1,3 +1,15 @@
+import {withExperimentMapRead} from "./experiment-map-read.js";
+import {registerExperimentEndRoutes} from "./experiment-end.js";
+import {registerExperimentResearchRoutes} from "./experiment-research.js";
+import {readKitBuildFeedbackWithSignature,readKitBuildMapSignature,type KitBuildFeedbackWithSignature} from "./kit-build-feedback.js";
+import {registerR05Routes} from "./r05-routes.js";
+import { ParticipantAccessError } from "./experiment-participant-access.js";
+import { initializeExperimentPreview, guardExperimentTransaction, guardExperimentSystemMap, registerExperimentExecutionRoutes } from "./experiment-execution.js";
+import { registerMaterialCatalogRoutes } from "./material-catalog-routes.js";
+import { registerExperimentRunRoutes } from "./experiment-run-routes.js";
+import { registerExperimentParticipantRoutes } from "./experiment-participant-routes.js";
+import { experimentStorageGuard } from "./experiment-foundation-guard.js";
+import { researchSafetyBudget, respondResearchSafetyError } from "./research-output-safety.js";
 import { registerSurveyRoutes, SeedValidationError, validSurveyQuestions, saveSurveyQuestions, seedLearnerMap, seededConceptGuard } from "./surveys.js";
 import { respondToMapFailure } from "./map-failure-response.js";
 import { validateMapStateV5, validMapCoordinate } from "./research-event-map-v5.js";
@@ -54,6 +66,7 @@ const app = express();
 const deadlineContext = new AsyncLocalStorage<{ mapIds: Set<string>; stageIds: Set<string>; actor: EventActor }>();
 const transactionBefore = new WeakMap<PoolClient, Map<string, MapHistorySnapshot>>();
 const pool = new Pool({ connectionString: databaseUrl });
+await initializeExperimentPreview(pool);
 const port = Number(process.env.PORT ?? 3000);
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -266,6 +279,8 @@ function ensureLinkLabelEditable(map: LockedMapState) {
 }
 
 function readOnlyMapResponse(response: Response, error: unknown) {
+  if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code,message:"コードまたは利用画面が更新されています。研究者に確認してください。"});
+  if (error instanceof Error && error.message === "experiment_asset_frozen") return response.status(409).json({error:"experiment_asset_frozen",message:"完成教材版の資材は変更できません。新しい教材版と資材を使用してください。"});
   if(error instanceof Error && error.message==="seed_concept_read_only") return response.status(409).json({error:"seed_concept_read_only",message:"初期概念の名前変更・削除・統合はできません。移動とリンク作成はできます。"});
   if (error instanceof HistoryTransitionError) return response.status(409).json({ error: "map_history_unavailable", message: error.message });
   if (error instanceof InvalidEventError) return response.status(400).json({ error: "invalid_map_state", message: "マップの内容を確認してください。URLや認証情報を名前に含めることはできません。" });
@@ -600,6 +615,8 @@ async function withTransaction<T>(
 
   try {
     await client.query("BEGIN");
+    transactionStarted = true;
+    await guardExperimentTransaction(client);
     transactionBefore.set(client, new Map());
     transactionStarted = true;
     const result = await reliableOperation(client, () => operation(client));
@@ -607,7 +624,7 @@ async function withTransaction<T>(
     if (guarded && (guarded.mapIds.size || guarded.stageIds.size)) {
       const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id
         LEFT JOIN maps m ON m.session_stage_id=st.id AND m.type='INTEGRATION'
-        WHERE s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type='INTEGRATION_MAP'
+        WHERE s.protocol_key IN ('STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') AND st.stage_type='INTEGRATION_MAP'
           AND (m.id = ANY($1::uuid[]) OR st.id = ANY($2::uuid[]))
           AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second' LIMIT 1`,
         [[...guarded.mapIds], [...guarded.stageIds]]);
@@ -693,7 +710,7 @@ async function lockMapForConcept(
       WHERE concept.id = $1::uuid
         AND (map.type = 'GOAL' OR (
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
-          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5')
+          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5', 'SBKB_INTEGRATION_V1')
         ))
       FOR NO KEY UPDATE OF map
     `,
@@ -739,7 +756,7 @@ async function lockMapForLink(
       WHERE link.id = $1::uuid
         AND (map.type = 'GOAL' OR (
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
-          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5')
+          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5', 'SBKB_INTEGRATION_V1')
         ))
       FOR NO KEY UPDATE OF map
     `,
@@ -784,7 +801,7 @@ async function lockMapById(
       WHERE map.id = $1::uuid
         AND (map.type = 'GOAL' OR (
           map.type IN ('PRIOR', 'KB', 'INTEGRATION')
-          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5')
+          AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5', 'SBKB_INTEGRATION_V1')
         ))
       FOR NO KEY UPDATE OF map
     `,
@@ -793,263 +810,6 @@ async function lockMapById(
 
   const map = result.rows[0];
   return map ? refreshKitDefinitionFlag(client, map) : null;
-}
-
-type KitBuildFeedback = {
-  configurationComplete: boolean;
-  matched: boolean;
-  concepts: { matched: number; total: number };
-  relations: { matched: number; total: number };
-  message: string;
-};
-
-type KitBuildFeedbackWithSignature = KitBuildFeedback & { mapSignature: string };
-
-async function readKitBuildFeedback(
-  client: PoolClient,
-  mapId: string,
-): Promise<KitBuildFeedback | null> {
-  const result = await client.query<{
-    kitDefinitionId: string | null;
-    expectedConcepts: number;
-    assignedConcepts: number;
-    validAssignedConcepts: number;
-    matchedConcepts: number;
-    activeConcepts: number;
-    expectedLinks: number;
-    assignedLinks: number;
-    validAssignedLinks: number;
-    matchedLinks: number;
-    activeLinks: number;
-  }>(
-    `
-      SELECT
-        map.kit_definition_id AS "kitDefinitionId",
-        (SELECT count(*)::int
-         FROM kit_definitions AS kit
-         INNER JOIN concepts AS goal_concept
-           ON goal_concept.map_id = kit.goal_map_id
-           AND goal_concept.merged_into_concept_id IS NULL
-         WHERE kit.id = map.kit_definition_id) AS "expectedConcepts",
-        (SELECT count(*)::int FROM kit_concept_items AS item
-         WHERE item.kit_definition_id = map.kit_definition_id) AS "assignedConcepts",
-        (SELECT count(*)::int
-         FROM kit_concept_items AS item
-         INNER JOIN kit_definitions AS kit ON kit.id = item.kit_definition_id
-         INNER JOIN concepts AS goal_concept
-           ON goal_concept.id = item.source_concept_id
-           AND goal_concept.map_id = kit.goal_map_id
-           AND goal_concept.merged_into_concept_id IS NULL
-         WHERE item.kit_definition_id = map.kit_definition_id) AS "validAssignedConcepts",
-        (SELECT count(*)::int
-         FROM kit_definitions AS kit
-         INNER JOIN concepts AS goal_concept
-           ON goal_concept.map_id = kit.goal_map_id
-           AND goal_concept.merged_into_concept_id IS NULL
-         WHERE kit.id = map.kit_definition_id
-           AND EXISTS (
-             SELECT 1 FROM kit_concept_items AS item
-             WHERE item.kit_definition_id = kit.id
-               AND item.source_concept_id = goal_concept.id
-           )
-           AND EXISTS (
-             SELECT 1
-             FROM concepts AS built_concept
-             INNER JOIN concept_provenance AS provenance
-               ON provenance.target_concept_id = built_concept.id
-               AND provenance.source_concept_id = goal_concept.id
-               AND provenance.relation_type = 'CLONED_FROM'
-             WHERE built_concept.map_id = map.id
-               AND built_concept.merged_into_concept_id IS NULL
-               AND built_concept.label = goal_concept.label
-           )) AS "matchedConcepts",
-        (SELECT count(*)::int FROM concepts AS built_concept
-         WHERE built_concept.map_id = map.id
-           AND built_concept.merged_into_concept_id IS NULL) AS "activeConcepts",
-        (SELECT count(*)::int
-         FROM kit_definitions AS kit
-         INNER JOIN links AS goal_link ON goal_link.map_id = kit.goal_map_id
-         INNER JOIN concepts AS goal_source
-           ON goal_source.id = goal_link.source_concept_id
-           AND goal_source.map_id = kit.goal_map_id
-           AND goal_source.merged_into_concept_id IS NULL
-         INNER JOIN concepts AS goal_target
-           ON goal_target.id = goal_link.target_concept_id
-           AND goal_target.map_id = kit.goal_map_id
-           AND goal_target.merged_into_concept_id IS NULL
-         WHERE kit.id = map.kit_definition_id) AS "expectedLinks",
-        (SELECT count(*)::int FROM kit_link_items AS item
-         WHERE item.kit_definition_id = map.kit_definition_id) AS "assignedLinks",
-        (SELECT count(*)::int
-         FROM kit_link_items AS item
-         INNER JOIN kit_definitions AS kit ON kit.id = item.kit_definition_id
-         INNER JOIN links AS goal_link
-           ON goal_link.id = item.source_link_id
-           AND goal_link.map_id = kit.goal_map_id
-         INNER JOIN concepts AS goal_source
-           ON goal_source.id = goal_link.source_concept_id
-           AND goal_source.map_id = kit.goal_map_id
-           AND goal_source.merged_into_concept_id IS NULL
-         INNER JOIN concepts AS goal_target
-           ON goal_target.id = goal_link.target_concept_id
-           AND goal_target.map_id = kit.goal_map_id
-           AND goal_target.merged_into_concept_id IS NULL
-         WHERE item.kit_definition_id = map.kit_definition_id) AS "validAssignedLinks",
-        (SELECT count(*)::int
-         FROM kit_definitions AS kit
-         INNER JOIN links AS goal_link
-           ON goal_link.map_id = kit.goal_map_id
-         INNER JOIN concepts AS goal_source
-           ON goal_source.id = goal_link.source_concept_id
-           AND goal_source.map_id = kit.goal_map_id
-           AND goal_source.merged_into_concept_id IS NULL
-         INNER JOIN concepts AS goal_target
-           ON goal_target.id = goal_link.target_concept_id
-           AND goal_target.map_id = kit.goal_map_id
-           AND goal_target.merged_into_concept_id IS NULL
-         WHERE kit.id = map.kit_definition_id
-           AND EXISTS (
-             SELECT 1 FROM kit_link_items AS item
-             WHERE item.kit_definition_id = kit.id
-               AND item.source_link_id = goal_link.id
-           )
-           AND EXISTS (
-             SELECT 1
-             FROM links AS built_link
-             INNER JOIN link_provenance AS link_source
-               ON link_source.target_link_id = built_link.id
-               AND link_source.source_link_id = goal_link.id
-               AND link_source.relation_type = 'RECONSTRUCTED_FROM'
-             WHERE built_link.map_id = map.id
-               AND built_link.label = goal_link.label
-               AND EXISTS (
-                 SELECT 1
-                 FROM concept_provenance AS source_provenance
-                 INNER JOIN concepts AS built_source
-                   ON built_source.id = source_provenance.target_concept_id
-                   AND built_source.map_id = map.id
-                   AND built_source.merged_into_concept_id IS NULL
-                 WHERE built_source.id = built_link.source_concept_id
-                   AND source_provenance.source_concept_id = goal_link.source_concept_id
-                   AND source_provenance.relation_type = 'CLONED_FROM'
-               )
-               AND EXISTS (
-                 SELECT 1
-                 FROM concept_provenance AS target_provenance
-                 INNER JOIN concepts AS built_target
-                   ON built_target.id = target_provenance.target_concept_id
-                   AND built_target.map_id = map.id
-                   AND built_target.merged_into_concept_id IS NULL
-                 WHERE built_target.id = built_link.target_concept_id
-                   AND target_provenance.source_concept_id = goal_link.target_concept_id
-                   AND target_provenance.relation_type = 'CLONED_FROM'
-               )
-           )) AS "matchedLinks",
-        (SELECT count(*)::int
-         FROM links AS built_link
-         INNER JOIN concepts AS source_concept
-           ON source_concept.id = built_link.source_concept_id
-           AND source_concept.map_id = map.id
-           AND source_concept.merged_into_concept_id IS NULL
-         INNER JOIN concepts AS target_concept
-           ON target_concept.id = built_link.target_concept_id
-           AND target_concept.map_id = map.id
-           AND target_concept.merged_into_concept_id IS NULL
-         WHERE built_link.map_id = map.id) AS "activeLinks"
-      FROM maps AS map
-      WHERE map.id = $1::uuid AND map.type = 'KB'
-    `,
-    [mapId],
-  );
-  const counts = result.rows[0];
-  if (!counts) return null;
-
-  const conceptsMatch =
-    counts.expectedConcepts > 0 &&
-    counts.expectedConcepts === counts.matchedConcepts &&
-    counts.expectedConcepts === counts.activeConcepts;
-  const relationsMatch =
-    counts.expectedLinks === counts.matchedLinks &&
-    counts.expectedLinks === counts.activeLinks;
-  const configurationComplete =
-    counts.kitDefinitionId !== null &&
-    counts.expectedConcepts > 0 &&
-    counts.expectedConcepts === counts.assignedConcepts &&
-    counts.assignedConcepts === counts.validAssignedConcepts &&
-    counts.expectedLinks === counts.assignedLinks &&
-    counts.assignedLinks === counts.validAssignedLinks;
-  const matched =
-    configurationComplete && conceptsMatch && relationsMatch;
-  const issues: string[] = [];
-  if (!conceptsMatch) issues.push("概念部品の配置を見直してください。");
-  if (!relationsMatch) issues.push("関係部品の接続先を見直してください。");
-
-  return {
-    configurationComplete,
-    matched,
-    concepts: {
-      matched: counts.matchedConcepts,
-      total: counts.expectedConcepts,
-    },
-    relations: {
-      matched: counts.matchedLinks,
-      total: counts.expectedLinks,
-    },
-    message: !configurationComplete
-      ? "このKitはGoal Map全体を含んでいません。研究者に確認してください。"
-      : matched
-        ? "Kit-Buildがゴールマップと一致しました。内容を見直して提出できます。"
-        : `一致している部品：概念 ${counts.matchedConcepts}/${counts.expectedConcepts}、関係 ${counts.matchedLinks}/${counts.expectedLinks}。${issues.join("")}`,
-  };
-}
-
-// Callers hold a Map row lock; positions do not affect matching.
-async function readKitBuildMapSignature(
-  client: PoolClient,
-  mapId: string,
-): Promise<string | null> {
-  const map = await client.query<{ kitDefinitionId: string | null }>(
-    `SELECT kit_definition_id AS "kitDefinitionId" FROM maps WHERE id = $1::uuid`,
-    [mapId],
-  );
-  if (!map.rows[0]) return null;
-  const concepts = await client.query<{ id: string; label: string }>(
-    `SELECT id, label FROM concepts
-     WHERE map_id = $1::uuid AND merged_into_concept_id IS NULL ORDER BY id`,
-    [mapId],
-  );
-  const links = await client.query<{
-    id: string; label: string; sourceConceptId: string; targetConceptId: string;
-  }>(
-    `SELECT link.id, link.label, link.source_concept_id AS "sourceConceptId",
-            link.target_concept_id AS "targetConceptId"
-     FROM links link
-     JOIN concepts source ON source.id = link.source_concept_id
-       AND source.map_id = link.map_id AND source.merged_into_concept_id IS NULL
-     JOIN concepts target ON target.id = link.target_concept_id
-       AND target.map_id = link.map_id AND target.merged_into_concept_id IS NULL
-     WHERE link.map_id = $1::uuid ORDER BY link.id`,
-    [mapId],
-  );
-  return JSON.stringify([
-    mapId,
-    map.rows[0].kitDefinitionId,
-    concepts.rows.map(({ id, label }) => [id, label]),
-    links.rows.map(({ id, label, sourceConceptId, targetConceptId }) => [
-      id, label, sourceConceptId, targetConceptId,
-    ]),
-  ]);
-}
-
-// The feedback and its signature describe the same saved graph under the Map lock.
-async function readKitBuildFeedbackWithSignature(
-  client: PoolClient,
-  mapId: string,
-): Promise<KitBuildFeedbackWithSignature | null> {
-  const feedback = await readKitBuildFeedback(client, mapId);
-  if (!feedback) return null;
-  const mapSignature = await readKitBuildMapSignature(client, mapId);
-  return mapSignature === null ? null : { ...feedback, mapSignature };
 }
 
 async function getConceptForUpdate(
@@ -1568,7 +1328,7 @@ async function isStage1LearnerMap(client: PoolClient, mapId: string) {
   );
   const row = result.rows[0];
   return Boolean(
-    ([STAGE1_PROTOCOL_KEY,"STAGE1_6","STAGE1_5"].includes(row?.protocolKey ?? "")) &&
+    ([STAGE1_PROTOCOL_KEY,"STAGE1_6","STAGE1_5","SBKB_INTEGRATION_V1"].includes(row?.protocolKey ?? "")) &&
       (row.type === "PRIOR" || row.type === "KB" || row.type === "INTEGRATION"),
   );
 }
@@ -1707,6 +1467,7 @@ async function applyHistoryStateDelta(
   }
 }
 
+app.use(researchSafetyBudget);
 app.use((request, response, next) => {
   const limit = request.path === "/api/research/goal-maps/import" ? MAX_MAP_STATE_BYTES : "100kb";
   express.json({ limit })(request, response, next);
@@ -1752,9 +1513,9 @@ app.use("/api", (request, response, next) => {
           const table = targetType === "CONCEPT" ? "concepts" : "links";
           const owner = await client.query<{mapId:string;sessionId:string;protocolKey:string;stageType:string;studyGroup:string|null;expired:boolean}>(
             `SELECT item.map_id AS "mapId",s.id AS "sessionId",s.protocol_key AS "protocolKey",st.stage_type AS "stageType",s.study_group AS "studyGroup",
-              (s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type='INTEGRATION_MAP' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
+              (s.protocol_key IN ('STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') AND st.stage_type='INTEGRATION_MAP' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
              FROM ${table} item JOIN maps m ON m.id=item.map_id JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id
-             WHERE item.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')`,[targetId]);
+             WHERE item.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1')`,[targetId]);
           if (!owner.rowCount) { await client.query("ROLLBACK"); return null; }
           resolvedMapId=owner.rows[0]!.mapId;
           if (principal.role==="learner"&&principal.sessionId!==owner.rows[0]!.sessionId) {await client.query("ROLLBACK");return null;}
@@ -1763,9 +1524,9 @@ app.use("/api", (request, response, next) => {
         if (!resolvedMapId) { await client.query("ROLLBACK"); return null; }
         const owner=await client.query<{sessionId:string;protocolKey:string;status:string;mapStatus:string;stageType:string;stageStatus:string;expired:boolean}>(
           `SELECT s.id AS "sessionId",s.protocol_key AS "protocolKey",s.status,m.status AS "mapStatus",st.stage_type AS "stageType",st.status AS "stageStatus",
-            (s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
+            (s.protocol_key IN ('STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
            FROM maps m JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id
-           WHERE m.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5')`,[resolvedMapId]);
+           WHERE m.id=$1::uuid AND s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1')`,[resolvedMapId]);
         if (!owner.rowCount || principal.role==="learner"&&principal.sessionId!==owner.rows[0]!.sessionId) {await client.query("ROLLBACK");return null;}
         const sessionId=owner.rows[0]!.sessionId;
         if(owner.rows[0]!.expired){reasonCode="DEADLINE";}
@@ -1774,7 +1535,7 @@ app.use("/api", (request, response, next) => {
         await client.query("SELECT id FROM maps WHERE id=$1::uuid FOR NO KEY UPDATE",[resolvedMapId]);
         const lockedOwner=await client.query<{status:string;mapStatus:string;stageStatus:string;expired:boolean}>(
           `SELECT s.status,m.status AS "mapStatus",st.status AS "stageStatus",
-            (s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
+            (s.protocol_key IN ('STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY') AND st.status='IN_PROGRESS' AND clock_timestamp()>=st.started_at+s.group_activity_seconds*interval '1 second') AS expired
            FROM maps m JOIN session_stages st ON st.id=m.session_stage_id JOIN sessions s ON s.id=st.session_id WHERE m.id=$1::uuid`,[resolvedMapId]);
         if(lockedOwner.rows[0]?.expired) reasonCode="DEADLINE";
         else if(lockedOwner.rows[0]?.mapStatus==="SUBMITTED"||lockedOwner.rows[0]?.status==="COMPLETED"||lockedOwner.rows[0]?.stageStatus==="COMPLETED") reasonCode="PERMISSION";
@@ -1827,6 +1588,14 @@ registerGoalMapTransferRoutes(app, pool);
 registerOperationContext(app);
 app.use("/api",seededConceptGuard(pool));
 registerAudit(app, pool);
+app.use("/api", experimentStorageGuard(pool));
+registerMaterialCatalogRoutes(app, pool);
+registerR05Routes(app,pool);
+registerExperimentResearchRoutes(app,pool);
+registerExperimentRunRoutes(app, pool);
+registerExperimentParticipantRoutes(app, pool);
+registerExperimentExecutionRoutes(app,pool);
+registerExperimentEndRoutes(app,pool);
 app.use("/api", async (request, response, next) => {
   if (!["POST", "PATCH"].includes(request.method) || !/^\/(maps|concepts|links)\//.test(request.path) || !request.body || typeof request.body.label !== "string") return next();
   const label = request.body.label as string;
@@ -1923,7 +1692,7 @@ const recordMapOperationCancellation = async (
         `SELECT s.id AS "sessionId", s.protocol_key AS "protocolKey", s.study_group AS "studyGroup",
           s.status AS "sessionStatus", st.stage_type AS "stageType", st.status AS "stageStatus",
           current_stage.id AS "currentStageId",
-          (s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type='INTEGRATION_MAP'
+          (s.protocol_key IN ('STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') AND st.stage_type='INTEGRATION_MAP'
             AND s.study_group='EXPERIMENTAL'
             AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second') AS expired
          FROM session_stages st JOIN sessions s ON s.id=st.session_id
@@ -1937,7 +1706,7 @@ const recordMapOperationCancellation = async (
       );
       const stage = owner.rows[0];
       const expectedStageType = map.mapType === "PRIOR" ? "PRIOR_MAP" : map.mapType === "KB" ? "KB_MAP" : map.mapType === "INTEGRATION" ? "INTEGRATION_MAP" : null;
-      if (!stage || stage.sessionId !== principal.sessionId || !["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(stage.protocolKey)
+      if (!stage || stage.sessionId !== principal.sessionId || !["STAGE1_4", "STAGE1_6", "STAGE1_5","SBKB_INTEGRATION_V1"].includes(stage.protocolKey)
         || !expectedStageType || stage.stageType !== expectedStageType || stage.sessionStatus !== "IN_PROGRESS"
         || stage.stageStatus !== "IN_PROGRESS" || stage.currentStageId !== map.sessionStageId || stage.expired) return null;
       if (targetId) {
@@ -2103,6 +1872,7 @@ app.get("/api/research/goal-maps", async (_request, response) => {
     );
     return response.json({ goalMaps: result.rows });
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to list Goal Maps", safeServerErrorCode(error));
     return response.status(500).json({ error: "goal_map_list_failed" });
   }
@@ -2136,6 +1906,7 @@ app.post("/api/research/goal-maps", async (request, response) => {
     if (!map) throw new Error("Goal Map insert returned no row");
     return response.status(201).json(map);
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to create Goal Map", safeServerErrorCode(error));
     return response.status(500).json({ error: "goal_map_create_failed" });
   }
@@ -2166,6 +1937,7 @@ app.get("/api/maps/:mapId/undo-redo", async (request, response) => {
     }
     return response.json(outcome.state);
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to read Undo/Redo state", safeServerErrorCode(error));
     return response.status(500).json({ error: "undo_redo_state_failed" });
   }
@@ -2497,7 +2269,7 @@ app.post("/api/research/stage1/sessions/:sessionId/learner-token", async (reques
   try {
     const result = await withTransaction(async (client) => {
       const session = await client.query(
-        "SELECT id FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5') FOR UPDATE",
+        "SELECT id FROM sessions WHERE id=$1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') FOR UPDATE",
         [sessionId],
       );
       if (!session.rowCount) return null;
@@ -2517,7 +2289,7 @@ app.post("/api/research/stage1/sessions/:sessionId/learner-token", async (reques
 async function currentLearnerMapState(sessionId: string) {
   const result = await pool.query<{ id: string; status: string; type: string; expired: boolean; autoSubmittedAt: Date | null }>(
     `SELECT m.id, m.status, m.type, m.auto_submitted_at AS "autoSubmittedAt",
-       (s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type = 'INTEGRATION_MAP' AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second') AS expired
+       (s.protocol_key IN ('STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') AND st.stage_type = 'INTEGRATION_MAP' AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second') AS expired
      FROM sessions s
      JOIN LATERAL (
        SELECT id, status, stage_type, started_at FROM session_stages
@@ -2570,6 +2342,7 @@ app.get("/api/sessions/:sessionId", async (request, response) => {
     }
     return response.json(session);
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to fetch Session", safeServerErrorCode(error));
     return response.status(500).json({
       error: "session_fetch_failed",
@@ -2631,6 +2404,7 @@ app.get(
         .json(result.value);
     } catch (error) {
       if (client) await client.query("ROLLBACK").catch(() => undefined);
+      if (respondResearchSafetyError(response, error)) return;
       console.error("Failed to export Session research data", safeServerErrorCode(error));
       return response.status(500).json({
         error: "session_export_failed",
@@ -2671,6 +2445,7 @@ app.get("/api/sessions/:sessionId/flow", async (request, response) => {
       : flow;
     return response.json({ ...visibleFlow, currentMapSubmitted: mapState.integrationSubmitted, currentIntegrationMapExists: mapState.integrationExists, currentMapAutoSubmittedAt: mapState.integrationAutoSubmittedAt, serverNow: clock.rows[0]!.now });
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to fetch Session flow", safeServerErrorCode(error));
     return response.status(500).json({
       error: "session_flow_fetch_failed",
@@ -2716,7 +2491,7 @@ app.post("/api/sessions/:sessionId/start", async (request, response) => {
   try {
     const outcome = await withTransaction(async (client) => {
       const current = await client.query<{ status: string; protocolKey: string }>(
-        "SELECT status, protocol_key AS \"protocolKey\" FROM sessions WHERE id = $1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5') FOR UPDATE",
+        "SELECT status, protocol_key AS \"protocolKey\" FROM sessions WHERE id = $1::uuid AND protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') FOR UPDATE",
         [sessionId],
       );
       const session = current.rows[0];
@@ -2766,6 +2541,7 @@ app.post("/api/sessions/:sessionId/start", async (request, response) => {
       status: outcome.status,
     });
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to start Session", safeServerErrorCode(error));
     return response.status(500).json({
       error: "session_start_failed",
@@ -2807,7 +2583,7 @@ app.post("/api/session-stages/:stageId/start", async (request, response) => {
       if (stage.status === "IN_PROGRESS") {
         {
           const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id
-            WHERE st.id=$1::uuid AND s.protocol_key IN ('STAGE1_6','STAGE1_5') AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY')
+            WHERE st.id=$1::uuid AND s.protocol_key IN ('STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') AND st.stage_type IN ('INTEGRATION_MAP','SELF_STUDY')
               AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`, [stageId]);
           if (expired.rowCount) return { kind: "time_expired" as const };
         }
@@ -2871,6 +2647,7 @@ app.post("/api/session-stages/:stageId/start", async (request, response) => {
       status: outcome.stageStatus,
     });
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to start SessionStage", safeServerErrorCode(error));
     return response.status(500).json({
       error: "session_stage_start_failed",
@@ -2914,9 +2691,9 @@ app.post("/api/session-stages/:stageId/complete", async (request, response) => {
           EXISTS (SELECT 1 FROM maps m WHERE m.session_stage_id=st.id AND m.type='INTEGRATION' AND m.status='SUBMITTED') AS submitted
          FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid`, [stageId]);
       const conditions = timed.rows[0];
-      const isTimed = ["STAGE1_6","STAGE1_5"].includes(conditions?.protocol ?? "") && (stage.stageType === "SELF_STUDY" || stage.stageType === "INTEGRATION_MAP");
+      const isTimed = ["STAGE1_6","STAGE1_5","SBKB_INTEGRATION_V1"].includes(conditions?.protocol ?? "") && (stage.stageType === "SELF_STUDY" || stage.stageType === "INTEGRATION_MAP");
       if (isTimed && conditions?.protocol === "STAGE1_6" && (stage.stageType === "SELF_STUDY" ? conditions.studyGroup !== "CONTROL" : conditions.studyGroup !== "EXPERIMENTAL")) return { kind: "group_mismatch" as const };
-      if (isTimed && (!conditions.elapsed || (stage.stageType === "INTEGRATION_MAP" && !conditions.submitted))) return { kind: "timed_incomplete" as const };
+      if (isTimed && ((conditions.protocol !== "SBKB_INTEGRATION_V1" && !conditions.elapsed) || (stage.stageType === "INTEGRATION_MAP" && !conditions.submitted))) return { kind: "timed_incomplete" as const };
       if (
         stage.stageType === "PRIOR_MAP" ||
         stage.stageType === "KB_MAP" ||
@@ -2950,6 +2727,10 @@ app.post("/api/session-stages/:stageId/complete", async (request, response) => {
       const log = await insertResearchEventBestEffort(client, result.sessionId, principalOf(response).role === "learner" ? "LEARNER" : "RESEARCHER", {
         eventType: "STAGE_COMPLETE", targetType: "STAGE", stageId, outcome: "SUCCESS", clientTimeQuality: "NOT_APPLICABLE",
       });
+      if(conditions?.protocol === "SBKB_INTEGRATION_V1" && stage.stageType === "INTEGRATION_MAP"){
+        await client.query("UPDATE sessions SET status='COMPLETED',completed_at=clock_timestamp() WHERE id=$1 AND status='IN_PROGRESS'",[stage.sessionId]);
+        await insertResearchEventBestEffort(client,stage.sessionId,"LEARNER",{eventType:"SESSION_COMPLETE",targetType:"SESSION",outcome:"SUCCESS",clientTimeQuality:"NOT_APPLICABLE"});
+      }
       return { kind: "completed" as const, stage: result, logSaved: log.logSaved };
     });
 
@@ -2978,6 +2759,7 @@ app.post("/api/session-stages/:stageId/complete", async (request, response) => {
       status: outcome.stageStatus,
     });
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to complete SessionStage", safeServerErrorCode(error));
     return response.status(500).json({
       error: "session_stage_complete_failed",
@@ -3066,6 +2848,7 @@ app.get("/api/maps/:mapId/kit-graph-signature", async (request, response) => {
       ? response.status(404).json({ error: "map_not_found" })
       : response.json({ mapSignature: signature });
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to read Kit-Build graph signature", safeServerErrorCode(error));
     return response.status(500).json({ error: "kit_graph_signature_failed" });
   }
@@ -3109,7 +2892,7 @@ app.get("/api/maps/:mapId/kit-feedback", async (request, response) => {
       if (!result) return { kind: "not_found" as const };
       let activityLogSaved: boolean | null = null;
       if (principal.role === "learner" && owner.sessionId && owner.stageId && owner.protocolKey &&
-          ["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(owner.protocolKey)) {
+          ["STAGE1_4", "STAGE1_6", "STAGE1_5","SBKB_INTEGRATION_V1"].includes(owner.protocolKey)) {
         const log = await insertResearchEventBestEffort(client, owner.sessionId, "LEARNER", {
           schemaVersion:6,eventType: "FEEDBACK_CHECK", targetType: "FEEDBACK", targetId:mapId,stageId: owner.stageId, mapId,
           outcome: "SUCCESS", details:{matched:result.matched},clientTimeQuality: "NOT_APPLICABLE",beforeQuality:"NOT_APPLICABLE",afterQuality:"NOT_APPLICABLE",
@@ -3155,7 +2938,7 @@ app.post("/api/maps/:mapId/kit-feedback/display", async (request, response) => {
         [mapId, principal.sessionId],
       );
       const item = owner.rows[0];
-      if (!item || !["STAGE1_4", "STAGE1_6", "STAGE1_5"].includes(item.protocolKey) || item.stageType !== "KB_MAP" ||
+      if (!item || !["STAGE1_4", "STAGE1_6", "STAGE1_5","SBKB_INTEGRATION_V1"].includes(item.protocolKey) || item.stageType !== "KB_MAP" ||
           item.mapStatus !== "DRAFT" || item.sessionStatus !== "IN_PROGRESS" || item.stageStatus !== "IN_PROGRESS" || item.currentStageId !== item.stageId) {
         return { allowed: false as const };
       }
@@ -3285,7 +3068,7 @@ app.post("/api/maps/:mapId/submit", async (request, response) => {
         [map.sessionStageId],
       );
       const transitionOwner = transitionContext?.rows[0] ?? null;
-      const sixIntegration = map.mapType === "INTEGRATION" && transitionOwner?.protocolKey === "STAGE1_6";
+      const sixIntegration = map.mapType === "INTEGRATION" && ["STAGE1_6","SBKB_INTEGRATION_V1"].includes(transitionOwner?.protocolKey ?? "");
       if (map.sessionStageId !== null && !sixIntegration) {
         const completedStage = await client.query(
           `
@@ -3459,7 +3242,7 @@ app.post(["/api/maps/:priorMapId/integration", "/api/session-stages/:stageId/int
          JOIN maps kb ON kb.session_stage_id = kb_stage.id AND kb.type = 'KB' AND kb.status = 'SUBMITTED' AND kb.kit_definition_id IS NOT NULL
          WHERE target.id = $1::uuid AND target.stage_type = 'INTEGRATION_MAP'
            AND target.status = 'IN_PROGRESS' AND s.status = 'IN_PROGRESS'
-           AND (s.protocol_key IN ('STAGE1_4','STAGE1_5') OR (s.protocol_key = 'STAGE1_6' AND s.study_group = 'EXPERIMENTAL'))
+           AND (s.protocol_key IN ('STAGE1_4','STAGE1_5','SBKB_INTEGRATION_V1') OR (s.protocol_key = 'STAGE1_6' AND s.study_group = 'EXPERIMENTAL'))
            AND target.id = (SELECT id FROM session_stages WHERE session_id = s.id AND status <> 'COMPLETED' ORDER BY order_index LIMIT 1)`,
         [stageId],
       );
@@ -3547,7 +3330,7 @@ app.post(["/api/maps/:priorMapId/integration", "/api/session-stages/:stageId/int
           ) {
             integrationStageSessionId = validation.stage.sessionId;
             {
-              const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid AND s.protocol_key IN ('STAGE1_6','STAGE1_5') AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`, [sessionStageId]);
+              const expired = await client.query(`SELECT 1 FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid AND s.protocol_key IN ('STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`, [sessionStageId]);
               if (expired.rowCount) return { kind: "time_expired" };
               deadlineContext.getStore()?.stageIds.add(sessionStageId);
             }
@@ -4130,6 +3913,7 @@ app.post("/api/maps/:goalMapId/kits", async (request, response) => {
       message: "Kitに含めるLinkのsource / target Conceptも指定してください。",
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "experiment_asset_frozen") return response.status(409).json({error:"experiment_asset_frozen",message:"完成教材版の資材は変更できません。"});
     console.error("Failed to create KitDefinition", safeServerErrorCode(error));
     return response.status(500).json({
       error: "kit_create_failed",
@@ -4201,7 +3985,7 @@ app.patch("/api/maps/:mapId/kit-definition", async (request, response) => {
           [map.sessionStageId],
         );
         if (
-          owner.rows[0]?.protocolKey === STAGE1_PROTOCOL_KEY &&
+          [STAGE1_PROTOCOL_KEY,"SBKB_INTEGRATION_V1"].includes(owner.rows[0]?.protocolKey??"") &&
           owner.rows[0]?.researchKitDefinitionId !== kitDefinitionId
         ) {
           return { kind: "kit_not_found" };
@@ -6461,7 +6245,7 @@ app.delete("/api/concepts/:conceptId", async (request, response) => {
         const owner = map.sessionStageId && (await client.query<{ protocolKey: string }>(
           "SELECT s.protocol_key AS \"protocolKey\" FROM session_stages st JOIN sessions s ON s.id=st.session_id WHERE st.id=$1::uuid", [map.sessionStageId],
         )).rows[0];
-        if (map.mapType === "INTEGRATION" && owner && owner.protocolKey === "STAGE1_5") {
+        if (map.mapType === "INTEGRATION" && owner && ["STAGE1_5","SBKB_INTEGRATION_V1"].includes(owner.protocolKey)) {
           const context = await readUndoRedoContext(client, mapId);
           if (context.status !== "AVAILABLE" || !context.initial || !context.current) throw new MergeReleaseUnavailableError();
           const desired = releaseMerge(context.initial, context.operations, context.current, conceptId);
@@ -6624,7 +6408,7 @@ app.post("/api/kits/:kitId/kb-map", async (request, response) => {
             [validation.stage.sessionId],
           );
           if (
-            owner.rows[0]?.protocolKey === STAGE1_PROTOCOL_KEY &&
+            [STAGE1_PROTOCOL_KEY,"SBKB_INTEGRATION_V1"].includes(owner.rows[0]?.protocolKey??"") &&
             owner.rows[0]?.researchKitDefinitionId !== kitId
           ) {
             return { kind: "kit_not_found" };
@@ -6759,6 +6543,7 @@ app.get("/api/kits", async (_request, response) => {
     return response.json({ kits: principal.role === "researcher"
       ? result.rows : result.rows.filter((kit) => kit.id === principal.kitId) });
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to list KitDefinitions", safeServerErrorCode(error));
     return response.status(500).json({
       error: "kit_list_failed",
@@ -6850,6 +6635,7 @@ app.get("/api/kits/:kitId", async (request, response) => {
       links: linksResult.rows,
     });
   } catch (error) {
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to fetch KitDefinition", safeServerErrorCode(error));
     return response.status(500).json({
       error: "kit_fetch_failed",
@@ -6883,7 +6669,8 @@ app.get("/api/maps/:mapId", async (request, response) => {
   }
 
   try {
-    const result = await pool.query<MapConceptRow>(
+    await withExperimentMapRead(pool, request, response, async db => {
+    const result = await db.query<MapConceptRow>(
       `
         SELECT
           m.id AS "mapId",
@@ -6927,7 +6714,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
         WHERE m.id = $1::uuid
           AND (m.type = 'GOAL' OR (
             m.type IN ('PRIOR', 'KB', 'INTEGRATION')
-            AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5')
+            AND session.protocol_key IN ('STAGE1_4', 'STAGE1_6', 'STAGE1_5', 'SBKB_INTEGRATION_V1')
           ))
         ORDER BY c.created_at NULLS LAST, c.id
       `,
@@ -6943,7 +6730,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
       });
     }
 
-    const linksResult = await pool.query<MapLinkRow>(
+    const linksResult = await db.query<MapLinkRow>(
       `
         SELECT
           link.id,
@@ -6987,7 +6774,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
       (map.mapType === "KB" || map.mapType === "INTEGRATION") &&
       map.kitDefinitionId !== null
     ) {
-      const kitLinksResult = await pool.query<MapKitLinkRow>(
+      const kitLinksResult = await db.query<MapKitLinkRow>(
         `
           SELECT
             item.id AS "kitLinkItemId",
@@ -7027,7 +6814,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
       (map.mapType === "KB" || map.mapType === "INTEGRATION") &&
       map.kitDefinitionId !== null
     ) {
-      const kitConceptsResult = await pool.query<MapKitConceptRow>(
+      const kitConceptsResult = await db.query<MapKitConceptRow>(
         `
           SELECT
             item.id AS "kitConceptItemId",
@@ -7064,7 +6851,7 @@ app.get("/api/maps/:mapId", async (request, response) => {
 
     let availableKitDefinitions: KitDefinitionOption[] = [];
     if (map.mapType === "INTEGRATION" && map.kitDefinitionId === null) {
-      const kitOptionsResult = await pool.query<KitDefinitionOption>(
+      const kitOptionsResult = await db.query<KitDefinitionOption>(
         `
           SELECT id, name
           FROM kit_definitions
@@ -7113,7 +6900,10 @@ app.get("/api/maps/:mapId", async (request, response) => {
       kitConcepts,
       availableKitDefinitions,
     });
+    });
   } catch (error) {
+    if(response.headersSent || response.destroyed)return;
+    if(error instanceof ParticipantAccessError)return response.status(error.status).json({error:error.code});
     console.error("Failed to fetch Map", safeServerErrorCode(error));
     return response.status(500).json({
       error: "map_fetch_failed",
@@ -7153,14 +6943,16 @@ async function submitExpiredIntegrationMaps() {
     await observeExpiredStages(pool);
     const candidates = await pool.query<{ id: string }>(`SELECT m.id FROM maps m JOIN session_stages st ON m.session_stage_id=st.id JOIN sessions s ON s.id=st.session_id
       WHERE m.type='INTEGRATION' AND m.status='DRAFT'
-        AND (s.protocol_key='STAGE1_5' OR (s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL')) AND s.status='IN_PROGRESS'
+        AND (s.protocol_key IN ('STAGE1_5','SBKB_INTEGRATION_V1') OR (s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL')) AND s.status='IN_PROGRESS'
         AND st.stage_type='INTEGRATION_MAP' AND st.status='IN_PROGRESS' AND st.started_at IS NOT NULL
+        AND (s.protocol_key<>'SBKB_INTEGRATION_V1' OR EXISTS(SELECT 1 FROM experiment_run_sessions p JOIN experiment_runs r ON r.id=p.run_id WHERE p.session_id=s.id AND r.state='RUNNING'))
         AND st.id=(SELECT current_stage.id FROM session_stages current_stage
           WHERE current_stage.session_id=s.id AND current_stage.status <> 'COMPLETED' ORDER BY current_stage.order_index LIMIT 1)
         AND clock_timestamp() >= st.started_at + s.group_activity_seconds * interval '1 second'`);
     for (const candidate of candidates.rows) {
       try {
         await withTransaction(async client => {
+          await guardExperimentSystemMap(client,candidate.id);
           const map = await lockMapById(client, candidate.id);
           if (!map || map.mapStatus !== "DRAFT") return;
           const hasEvents = (await client.query<{ name: string | null }>("SELECT to_regclass('map_history_boundaries')::text AS name")).rows[0]?.name;
@@ -7169,7 +6961,7 @@ async function submitExpiredIntegrationMaps() {
             UPDATE maps m SET status='SUBMITTED', submitted_at=clock.submitted_at, auto_submitted_at=clock.submitted_at
             FROM session_stages st JOIN sessions s ON s.id=st.session_id CROSS JOIN submission_clock clock
             WHERE m.id=$1::uuid AND m.session_stage_id=st.id AND m.type='INTEGRATION' AND m.status='DRAFT'
-              AND (s.protocol_key='STAGE1_5' OR (s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL')) AND s.status='IN_PROGRESS'
+              AND (s.protocol_key IN ('STAGE1_5','SBKB_INTEGRATION_V1') OR (s.protocol_key='STAGE1_6' AND s.study_group='EXPERIMENTAL')) AND s.status='IN_PROGRESS'
               AND st.stage_type='INTEGRATION_MAP' AND st.status='IN_PROGRESS' AND st.started_at IS NOT NULL
               AND st.id=(SELECT current_stage.id FROM session_stages current_stage WHERE current_stage.session_id=s.id AND current_stage.status <> 'COMPLETED' ORDER BY current_stage.order_index LIMIT 1)
               AND clock.submitted_at >= st.started_at + s.group_activity_seconds * interval '1 second' RETURNING m.id`, [candidate.id]);

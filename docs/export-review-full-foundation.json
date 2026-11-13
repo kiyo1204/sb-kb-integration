@@ -1,0 +1,14 @@
+{
+  "protocol": "SBKB_INTEGRATION_V1",
+  "checks": [
+    "foreign/duplicate seeds, incomplete Kit and learner service calls rejected atomically",
+    "published version, seeds, Goal, Concept/Link and Kit/parts immutable through SQL",
+    "real API frozen mutation/reregistration refusal and independent JSON import",
+    "atomic run/session/stages/membership, counts not capped, ownership and storage-only DB guards",
+    "real API start/stage/token/deletion refusals, missing auth and different Session denied",
+    "injected mid-stage failure rolls back identities/run/session; concurrent retry creates once",
+    "publication/writer concurrency and old repeatable-read snapshots cannot bypass freeze"
+  ],
+  "existingSessionsUnchanged": true,
+  "publicExecutionEnabled": false
+}
