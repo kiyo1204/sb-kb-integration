@@ -1,0 +1,17 @@
+[
+  {
+    "test": "test:event-export-samples",
+    "exitCode": 0,
+    "elapsedMs": 1496
+  },
+  {
+    "test": "test:stage1:integration",
+    "exitCode": 0,
+    "elapsedMs": 19417
+  },
+  {
+    "test": "test:experiment-research",
+    "exitCode": 1,
+    "elapsedMs": 37923
+  }
+]

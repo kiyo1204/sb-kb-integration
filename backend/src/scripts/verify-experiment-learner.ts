@@ -5,7 +5,7 @@ import {join,resolve} from "node:path";
 import {pathToFileURL} from "node:url";
 import {checkExperimentEnd,checkBackgroundEndOrder} from "./experiment-end-checks.js";
 import {checkStartPool} from "./experiment-start-pool-checks.js";
-import {checkExperimentResearch} from "./experiment-research-checks.js";
+import {checkExperimentResearch,checkMapStateCsv} from "./experiment-research-checks.js";
 import type { Request, Response } from "express";
 import {
   initializeExperimentPreview,
@@ -286,6 +286,7 @@ try {
     const preparing=(await research(`/research/stage1/sessions/${p.sessionId}/analysis`)).data;
     assert.equal(preparing.session.status,"NOT_STARTED");assert.equal(preparing.maps.length,0);
     assert.equal(preparing.integrationStates.submission.state,null);
+    await checkMapStateCsv({pool,base,token:researcher,runId:run.id,sessionId:p.sessionId});
   }
   const absentMap = randomUUID(); // No learner Map can exist before Stage start.
   for (const [path, method, body] of [
@@ -375,6 +376,7 @@ try {
     endAfterAutomatic = false,
   ) {
     await claim(token);
+    const csvRunId = process.env.EXPERIMENT_RESEARCH_CHECKS==="1" ? (await pool.query("SELECT run_id FROM experiment_run_sessions WHERE session_id=$1",[sessionId])).rows[0].run_id : undefined;
     const fs = (await call(`/sessions/${sessionId}/flow`)).data;
     const st = (kind: string) =>
       fs.stages.find((s: { stageType: string }) => s.stageType === kind).id;
@@ -426,7 +428,9 @@ try {
     ).data;
     const initial = (await call(`/maps/${sb.id}`)).data;
     assert.equal(initial.concepts.length, 1);
+    assert.equal(initial.status, "DRAFT");
     assert.ok(initial.concepts[0].isSeed);
+    if(process.env.EXPERIMENT_RESEARCH_CHECKS==="1") await checkMapStateCsv({pool,base,token:researcher,runId:csvRunId,sessionId});
     await call(
       `/concepts/${initial.concepts[0].id}/label`,
       "PATCH",
@@ -665,6 +669,7 @@ try {
       await checkBackgroundEndOrder(pool,base,sessionId,int.id);
       return {sb:sb.id,kb:kb.id,int:int.id};
     }
+    if(process.env.EXPERIMENT_RESEARCH_CHECKS==="1" && manual) await checkMapStateCsv({pool,base,token:researcher,runId:csvRunId,sessionId});
     let m = (await call(`/maps/${int.id}`)).data;
     if (!m.kitDefinitionId) {
       await call(`/maps/${int.id}/kit-definition`, "PATCH", {

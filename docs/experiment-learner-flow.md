@@ -192,7 +192,7 @@ R05、実施終了、離脱・撤回・停止、撤回者Export除外、分析/E
 | GET `/api/research/experiment-runs/:runId/research[.json]` | 同一REPEATABLE READで実施所属の参加SessionをまとめたJSON |
 | GET `/api/research/experiment-runs/:runId/research.csv` | 同じ所属SessionのMap状態CSV。操作履歴はJSON/既存操作CSV/共通イベント出力を使用 |
 
-新しいMap状態CSVの列順は`outputContract,protocolKey,runId,materialVersionId,sessionId,pseudonym,sessionStatus,exportedAt,mapId,mapType,point,status,reason,recordedAt,submissionEventId,state`。`point`は`SAVED_AT_READ`（各Map）、`INTEGRATION_START`、`ACCEPTED_SUBMISSION`。`state`はsnapshot JSONで、座標/接続/ラベル/非表示Merge元/Provenanceを含む。欠測stateや時刻は空欄。Map未作成Sessionは`MAP_NOT_CREATED`の欠測行を出力し、実施登録0人ではCSVヘッダーのみ。CSVは既存csvCell（引用/式インジェクション防止）、UTF-8 BOM、CRLF、ISO8601 UTCを利用する。
+新しいMap状態CSVの列順は`outputContract,protocolKey,runId,materialVersionId,sessionId,pseudonym,sessionStatus,exportedAt,mapId,mapType,point,status,reason,recordedAt,submissionEventId,state,mapStatus,mapSubmittedAt`。`point`は`SAVED_AT_READ`（各Map）、`INTEGRATION_START`、`ACCEPTED_SUBMISSION`。`state`はsnapshot JSONで、座標/接続/ラベル/非表示Merge元/Provenanceを含む。欠測stateや時刻は空欄。Map未作成Sessionは`MAP_NOT_CREATED`の欠測行を出力し、実施登録0人ではCSVヘッダーのみ。CSVは既存csvCell（引用/式インジェクション防止）、UTF-8 BOM、CRLF、ISO8601 UTCを利用する。
 
 R08の参加者行から既存分析画面へ移動し、実施JSON/Map状態CSVも取得できる。Home一覧は新protocolを旧4活動と誤表示せず、研究者読取り画面へ接続する。分析画面は各Mapの保存状態/現在の由来、統合開始/提出snapshot、既存の操作比較・履歴を表示。新protocolではアンケート、旧4活動評価入力、STAGE1_5特徴量を表示しない。
 
@@ -320,3 +320,18 @@ Node24.15.0/Windows/Edgeの最初の全体は53件成功後、2回目の学習�
 専用DBは既存db:mockのcreate/migrate/safety/seed/checkを使用し、suiteは対象をRESEARCH_SUITE_ONLY=test:experiment-learner（関連はtest:run-management,test:participant-access）、全体は同変数を解除してRESEARCH_BROWSER_CHECKS=1/BROWSER_CHANNEL=msedgeで実行した。各結果prefixは上記のとおり。生の中間記録はローカルだけに保持しコミットしない。
 
 今回作成した専用DB4件はcontainer ID/名前/用途/nonce/DB名/loopback bind/volume/cacheパス/リンクなしを確認して後片付けした。今回の一時Node配布物も削除した。生成された開始時cleanのsurvey結果だけを復元し、先行未追跡ファイルは保持。既存DB適用、実機LAN、複数端末、本番運用、旧分析UIと今回パレット待機の根本原因は未確認。通常公開は無効のまま。
+
+### Map状態CSVの追加列（2026-11-13）
+
+既存16列の順序・意味を維持し、末尾に `mapStatus`、`mapSubmittedAt` を追加する。実施単位とSession単位のMap状態CSVに共通適用し、JSON・旧protocolのCSV契約は変更しない。列数固定の利用側は18列へ対応し、可能ならヘッダー名で取得する。外部のCSV利用処理は未確認であり、完全な後方互換性を保証するものではない。リポジトリ内の利用側はヘッダー名で解析しており、列順は対象API検証でも確認する。
+
+両列は同一読取りトランザクションのJSON `maps[].status` / `maps[].submittedAt`（DB `maps.status` / `maps.submitted_at`）をそのまま使う。`mapStatus` はMap本体のDRAFT/SUBMITTED等、`mapSubmittedAt` は保存された提出時刻のISO8601 UTC（Z）。未提出のnull時刻は空欄で、時刻・提出状態をイベントから補完しない。Mapが存在しない行は両列空欄とし、既存のstatus/reason/stateの欠測表現を維持する。欠損snapshotや不整合履歴でも、保存済みMapの情報とsnapshotの取得可否を混同しない。
+
+`SAVED_AT_READ` は取得時のMap本文、`INTEGRATION_START` は過去の開始snapshot、`ACCEPTED_SUBMISSION` は受理済み提出snapshotを表す。**追加2列は全行で取得時点のMap本体のメタデータ**であり、開始snapshot時点の提出状態ではない。したがって提出済みMapの開始snapshot行にもSUBMITTEDと現在保存されている提出時刻が入る。snapshotの時点は従来のpoint/recordedAtで判断する。status=AVAILABLEは引き続き状態記録の取得可能性であって提出済みを意味しない。提出snapshotが欠測の場合も、Map本体のSUBMITTEDだけを根拠に完成snapshotを作らない。
+
+今回の検証（2026-11-13、Windows / Node 24.15.0 / PostgreSQL 17-alpine、専用使い捨て模擬DB・合成データ）:
+
+- 初回: event-export-samples、旧stage1 integrationは成功。experiment-researchは追加した検証が別実施の参加者を主実施IDで検索して失敗（検証fixtureの所属指定誤り、製品のCSV不具合ではない）。`csv-submission-initial-suite-results.json`を保持。
+- 修正後: 新規模擬DBでexperiment-research、event-exportが2/2成功。実製品APIの実施JSON/CSVとDBの保存行を照合。SB下書き、未提出統合、Map未作成、手動/自動提出済み、過去の開始snapshot行を確認。対象DBだけで開始snapshotを削除してAPIを呼び、追加列は保存Map情報のまま、snapshotはINITIAL_SNAPSHOT_MISSING_OR_INVALIDかつ空欄となることを確認し、finallyで復元。新たなmigrationやDB制約緩和はなし。
+- 既存研究者認可、仮名化、R05 Map/履歴の非混入、JSON/CSV整合、旧CSVの式注入保護を含む。最終記録は`csv-submission-target-suite-results.json`。全体suiteは再実行していない。
+- 最終backend typecheck/lint/buildとgit diff --check成功。模擬DB2件・専用volume・今回の一時データを削除。通常公開設定は変更していない。外部のCSV利用処理、実研究データ・実機LAN・本番運用は未確認。
