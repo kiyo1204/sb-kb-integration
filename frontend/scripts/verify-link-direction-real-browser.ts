@@ -102,7 +102,7 @@ try {
       await diagnoseLinkWait(page, "kb-drop", ".kit-palette-part.is-link", ".is-temporary", async () => {
         await part.dragTo(canvas, {targetPosition:{x:400,y:200}});
         await page.locator(".is-temporary").waitFor();
-      });
+      }, undefined, {x:400,y:200});
       return;
     }
     await page.getByRole("button", { name: "＋ リンク", exact: true }).click();

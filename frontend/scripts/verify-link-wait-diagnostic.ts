@@ -36,6 +36,12 @@ try {
           await page.locator(".source").click();
           if (kind === "kb-drop") {
             await page.locator(".source").dispatchEvent("dragstart");
+            for (let i = 0; i < 20; i++)
+              await page
+                .locator(".concept-canvas")
+                .dispatchEvent("dragover", { clientX: 20, clientY: 25 });
+            await page.locator(".source").dispatchEvent("drag");
+            await page.locator(".source").dispatchEvent("dragend");
             await page.locator(".concept-canvas").dispatchEvent("drop");
           }
           await page.locator(".missing").waitFor({ timeout: 100 });
@@ -58,6 +64,21 @@ try {
     assert.equal(r.state.events.pointerReached, 1);
     assert.equal(r.state.events.dragstart, kind === "kb-drop" ? 1 : 0);
     assert.equal(r.state.events.canvasDrop, kind === "kb-drop" ? 1 : 0);
+    const detail = (
+      r as unknown as {
+        state: {
+          dragDetail: {
+            samples: unknown[];
+            last: unknown;
+            initialDestination: unknown;
+          };
+          events: { canvasDragover: number; dragend: number };
+        };
+      }
+    ).state;
+    assert.ok(detail.dragDetail.samples.length <= 12);
+    assert.equal(detail.events.canvasDragover, kind === "kb-drop" ? 20 : 0);
+    assert.equal(detail.events.dragend, kind === "kb-drop" ? 1 : 0);
     assert.equal(r.state.source.count, 1);
     assert.equal(r.state.result.count, 0);
   }

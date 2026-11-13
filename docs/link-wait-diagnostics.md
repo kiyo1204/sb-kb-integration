@@ -25,3 +25,16 @@ CSS可視と画面内交差は別の項目で、端末で実際に見えたこ�
 初回の実API対象検証は、診断コールバックのtsx変換が参照するブラウザー内 `__name` が未定義で失敗した。既存の他のブラウザー検証と同じinit scriptを追加して再確認する。元のCIタイムアウトと区別する。
 
 修正後の今回の対象検証は2/2成功。SB・KB・統合の接続、付け替え、保存、無効ドロップ、Esc、Undo/RedoとDB方向照合が成功。新規診断ファイルの個別型確認と差分チェック成功。生成した集計JSONはコミットせず保持する。専用DBはID・用途・nonceを照合して削除した。CI結果は別途確認する。
+
+
+## KB drop未到達の追加診断（2026-11-13）
+
+PR #43 `78f8027` のPR用・push用CIでは両方ともpointerdown=1、dragstart=1、canvas drop=0、一時リンク未生成。これだけでは製品・検証どちらの原因とも断定できない。
+
+操作前にpassive captureリスナーを登録し、既存の件数にdrag・dragend・canvas dragoverを追加する。イベント座標・重なり先の固定分類・dropEffectを先頭12件と最後1件だけ記録し、失敗時だけ出力する。dropEffectはブラウザー報告の列挙値であり、サーバー受理を表さない。キャンバス矩形と、検証が指定するpadding box基準の予定ドロップ点（400,200）の開始前・失敗時の画面座標、画面内判定、hit test分類も出力する。ズームや途中のスクロールを含むブラウザー内部の最終ドロップ座標そのものを保証せず、イベント座標と併せて読む。実際のdropがなければその座標を作らない。
+
+分類はcanvas／concept／connector／palette／drawer／dialogと、許可したHTML/SVGタグの汎用分類に限定し、テキスト・ID・クラス文字列・URL・ヘッダー・本文・認証情報を出力しない。監視でpreventDefault・stopPropagation・dataTransfer変更・イベント再送はしない。成功条件、待機時間、操作回数は変更しない。
+
+環境はWindows・Node 22.23.5・Chromium headless shell 156.0.8078.4。準備済みLinuxブラウザー実行環境はなく、Linux CI（Node 22.23.4・Chromium channel指定）との差を残す。新規使い捨てDB `stage1_mock_kb_drag_detail` と製品API・既存認証・合成教材／Sessionのみを使用する。自己検証は20回の合成dragover・drag/dragend/dropと意図的な100ms待機失敗で、件数・記録上限・元例外保持を確認する。合成イベントは自己検証だけで、製品APIのブラウザー検証には注入しない。
+
+今回の追加診断で対象2/2成功、SB・KB・統合の実API・DB方向照合成功、個別型確認・差分チェック成功。CI失敗はローカルでは再現せず原因未特定。模擬DBはID・用途・nonceを照合して削除し、集計JSONはローカル保持する。ローカル全体suiteは再実行しない。

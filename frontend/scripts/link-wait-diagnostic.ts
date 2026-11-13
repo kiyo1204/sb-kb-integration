@@ -8,6 +8,7 @@ export async function diagnoseLinkWait(
   result: string,
   action: () => Promise<void>,
   emit = (record: unknown) => console.log(JSON.stringify(record)),
+  dropOffset?: { x: number; y: number },
 ) {
   const key = "__linkWaitDiagnostic";
   const bounded = <T>(work: Promise<T>) =>
@@ -17,55 +18,150 @@ export async function diagnoseLinkWait(
     ]);
   try {
     try {
-    await page.evaluate(
-      ({ key, source, result }) => {
-        const counts = {
-          pointerReached: 0,
-          dragstart: 0,
-          canvasDrop: 0,
-          resultGenerated: false,
-          resultVisible: false,
-        };
-        const handler = (event: Event) => {
-          const target = event.target,
-            element = document.querySelector(source);
-          if (!(target instanceof Element)) return;
-          if (event.type === "pointerdown" && element?.contains(target))
-            counts.pointerReached++;
-          if (event.type === "dragstart" && element?.contains(target))
-            counts.dragstart++;
-          if (event.type === "drop" && target.closest(".concept-canvas"))
-            counts.canvasDrop++;
-        };
-        const observe = () => {
-          const e = document.querySelector(result);
-          if (e) {
-            counts.resultGenerated = true;
-            const b = e.getBoundingClientRect();
-            counts.resultVisible ||=
-              b.width > 0 &&
-              b.height > 0 &&
-              getComputedStyle(e).visibility !== "hidden";
-          }
-        };
-        const observer = new MutationObserver(observe);
-        observer.observe(document.documentElement, {
-          subtree: true,
-          childList: true,
-          attributes: true,
-        });
-        observe();
-        (window as unknown as Record<string, unknown>)[key] = {
-          counts,
-          handler,
-          observer,
-        };
-        for (const type of ["pointerdown", "dragstart", "drop"])
-          window.addEventListener(type, handler, true);
-      },
-      { key, source, result },
-    );
-    } catch { /* Diagnostic setup must not suppress the actual operation. */ }
+      await page.evaluate(
+        ({ key, source, result, dropOffset }) => {
+          const counts = {
+            pointerReached: 0,
+            dragstart: 0,
+            canvasDrop: 0,
+            drag: 0,
+            dragend: 0,
+            canvasDragover: 0,
+            resultGenerated: false,
+            resultVisible: false,
+          };
+          const hitKind = (element: Element | null) => {
+            for (const [selector, kind] of [
+              [".concept-node", "concept"],
+              [".link-connector", "connector"],
+              [".kit-palette-part", "palette"],
+              [".map-editor-drawer", "drawer"],
+              ["[role=dialog]", "dialog"],
+              [".concept-canvas", "canvas"],
+            ])
+              if (element?.closest(selector)) return kind;
+            if (!element) return "none";
+          const tag=element.tagName.toUpperCase();
+          return ["BUTTON","INPUT","DIV","SVG","PATH","HEADER","ASIDE","SECTION","SPAN"].includes(tag)?"other-"+tag.toLowerCase():"other";
+          };
+          const destination = () => {
+            const canvas = document.querySelector(".concept-canvas");
+            if (!canvas) return null;
+            const b = canvas.getBoundingClientRect(),
+              css = getComputedStyle(canvas);
+            const rect = { x: b.x, y: b.y, width: b.width, height: b.height };
+            const x =
+                b.x +
+                parseFloat(css.borderLeftWidth || "0") +
+                (dropOffset?.x ?? 0),
+              y =
+                b.y +
+                parseFloat(css.borderTopWidth || "0") +
+                (dropOffset?.y ?? 0);
+            return {
+              canvas: rect,
+              point: dropOffset
+                ? {
+                    x,
+                    y,
+                    inViewport:
+                      x >= 0 && y >= 0 && x < innerWidth && y < innerHeight,
+                    hit: hitKind(document.elementFromPoint(x, y)),
+                  }
+                : null,
+            };
+          };
+          const samples: unknown[] = [];
+          let last: unknown = null;
+          const initialDestination = destination();
+          const handler = (event: Event) => {
+            const target = event.target,
+              element = document.querySelector(source);
+            if (!(target instanceof Element)) return;
+            if (event.type === "pointerdown" && element?.contains(target))
+              counts.pointerReached++;
+            if (event.type === "dragstart" && element?.contains(target))
+              counts.dragstart++;
+            if (event.type === "drag") counts.drag++;
+            if (event.type === "dragend") counts.dragend++;
+            if (event.type === "dragover" && target.closest(".concept-canvas"))
+              counts.canvasDragover++;
+            if (
+              [
+                "dragstart",
+                "drag",
+                "dragenter",
+                "dragover",
+                "drop",
+                "dragend",
+              ].includes(event.type)
+            ) {
+              const e = event as DragEvent;
+              last = {
+                type: event.type,
+                x: e.clientX,
+                y: e.clientY,
+                target: hitKind(target),
+                hit: hitKind(document.elementFromPoint(e.clientX, e.clientY)),
+                dropEffect: ["none", "copy", "move", "link"].includes(
+                  e.dataTransfer?.dropEffect ?? "",
+                )
+                  ? e.dataTransfer?.dropEffect
+                  : null,
+              };
+              if (samples.length < 12) samples.push(last);
+            }
+            if (event.type === "drop" && target.closest(".concept-canvas"))
+              counts.canvasDrop++;
+          };
+          const observe = () => {
+            const e = document.querySelector(result);
+            if (e) {
+              counts.resultGenerated = true;
+              const b = e.getBoundingClientRect();
+              counts.resultVisible ||=
+                b.width > 0 &&
+                b.height > 0 &&
+                getComputedStyle(e).visibility !== "hidden";
+            }
+          };
+          const observer = new MutationObserver(observe);
+          observer.observe(document.documentElement, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+          });
+          observe();
+          (window as unknown as Record<string, unknown>)[key] = {
+            counts,
+            handler,
+            observer,
+            detail: () => ({
+              samples,
+              last,
+              initialDestination,
+              currentDestination: destination(),
+            }),
+          };
+          for (const type of [
+            "pointerdown",
+            "dragstart",
+            "drag",
+            "dragend",
+            "dragenter",
+            "dragover",
+            "drop",
+          ])
+            window.addEventListener(type, handler, {
+              capture: true,
+              passive: true,
+            });
+        },
+        { key, source, result, dropOffset },
+      );
+    } catch {
+      /* Diagnostic setup must not suppress the actual operation. */
+    }
     await action();
   } catch (original) {
     try {
@@ -105,10 +201,14 @@ export async function diagnoseLinkWait(
               };
             };
             const state = (
-              window as unknown as Record<string, { counts: unknown }>
+              window as unknown as Record<
+                string,
+                { counts: unknown; detail: () => unknown }
+              >
             )[key];
             return {
               events: state?.counts ?? null,
+              dragDetail: state?.detail?.() ?? null,
               viewport: { width: innerWidth, height: innerHeight },
               source: inspect(source),
               result: inspect(result),
@@ -131,7 +231,15 @@ export async function diagnoseLinkWait(
             { handler: EventListener; observer: MutationObserver }
           >;
           if (w[key])
-            for (const type of ["pointerdown", "dragstart", "drop"])
+            for (const type of [
+              "pointerdown",
+              "dragstart",
+              "drag",
+              "dragend",
+              "dragenter",
+              "dragover",
+              "drop",
+            ])
               window.removeEventListener(type, w[key].handler, true);
           w[key]?.observer.disconnect();
           delete w[key];
