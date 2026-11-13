@@ -1,3 +1,4 @@
+import { newClientId } from "./client-identity";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch, uiText } from "./auth-client";
 import "./materials.css";
@@ -118,12 +119,12 @@ function CreateRun() {
         plannedParticipants: count,
       },
       signature = JSON.stringify(body);
-    let key = keys.current.get(signature);
-    if (!key) {
-      key = crypto.randomUUID();
-      keys.current.set(signature, key);
-    }
     try {
+      let key = keys.current.get(signature);
+      if (!key) {
+        key = newClientId();
+        keys.current.set(signature, key);
+      }
       const run = await request<Run>("", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": key },

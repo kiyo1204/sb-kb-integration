@@ -1,3 +1,4 @@
+import { newClientId } from "./client-identity";
 import { useEffect, useRef, useState } from "react";
 import { apiFetch, uiText } from "./auth-client";
 import "./materials.css";
@@ -126,11 +127,11 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 function useWrite() {
   // Same in-page retry after an uncertain response keeps its original key.
   const keys = useRef(new Map<string, string>());
-  return <T,>(path: string, method: string, body: unknown) => {
+  return async <T,>(path: string, method: string, body: unknown) => {
     const signature = JSON.stringify([path, method, body]);
     let key = keys.current.get(signature);
     if (!key) {
-      key = crypto.randomUUID();
+      key = newClientId();
       keys.current.set(signature, key);
     }
     return api<T>(path, {
