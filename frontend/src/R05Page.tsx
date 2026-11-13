@@ -1,3 +1,4 @@
+import { newClientId, SecureRandomUnavailableError } from "./client-identity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, getAccessToken } from "./auth-client";
 import { ConceptCanvas } from "./MapPage";
@@ -163,8 +164,8 @@ export default function R05Page({ versionId }: { versionId: string }) {
     [source, setSource] = useState(""),
     [target, setTarget] = useState(""),
     [part, setPart] = useState("");
-  const proof = useRef(crypto.randomUUID()),
-    startKey = useRef(crypto.randomUUID()),
+  const proof = useRef(""),
+    startKey = useRef(""),
     latest = useRef({ view, active, busy, retry });
   useEffect(() => {
     latest.current = { view, active, busy, retry };
@@ -216,17 +217,18 @@ export default function R05Page({ versionId }: { versionId: string }) {
       if (!current.view?.run || !current.active || current.busy)
         throw new Error("execution_not_owned");
       if (current.retry && !replay) throw new Error("operation_result_pending");
-      const command = replay ?? {
-        id: current.view.run.id,
-        action,
-        data,
-        executionId: proof.current,
-        expectedRevision: current.view.run.revision,
-        key: crypto.randomUUID(),
-      };
+      let command: PendingOperation | undefined;
       setBusy(true);
       setError("");
       try {
+        command = replay ?? {
+          id: current.view.run.id,
+          action,
+          data,
+          executionId: proof.current,
+          expectedRevision: current.view.run.revision,
+          key: newClientId(),
+        };
         const result = await request("/" + command.id + "/operations", {
           method: "POST",
           headers: {
@@ -250,9 +252,13 @@ export default function R05Page({ versionId }: { versionId: string }) {
         setHistoryState(null);
         return result;
       } catch (e) {
-        setRetry(e instanceof R05HttpError && e.status < 500 ? null : command);
+        setRetry(
+          !command || (e instanceof R05HttpError && e.status < 500)
+            ? null
+            : command,
+        );
         setError(
-          e instanceof R05HttpError
+          e instanceof R05HttpError || e instanceof SecureRandomUnavailableError
             ? e.message
             : "操作結果を確認できません。同じ要求で結果を再確認してください。",
         );
@@ -289,20 +295,24 @@ export default function R05Page({ versionId }: { versionId: string }) {
         r = c.view?.run;
       if (!c.active || !r || ["COMPLETE", "INTERRUPTED"].includes(r.phase))
         return;
-      void fetch(base + "/" + r.id + "/operations", {
-        method: "POST",
-        keepalive: true,
-        headers: {
-          Authorization: "Bearer " + getAccessToken(),
-          "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID(),
-        },
-        body: JSON.stringify({
-          action: "INTERRUPT",
-          executionId: proof.current,
-          expectedRevision: r.revision,
-        }),
-      }).catch(() => undefined);
+      try {
+        void fetch(base + "/" + r.id + "/operations", {
+          method: "POST",
+          keepalive: true,
+          headers: {
+            Authorization: "Bearer " + getAccessToken(),
+            "Content-Type": "application/json",
+            "Idempotency-Key": newClientId(),
+          },
+          body: JSON.stringify({
+            action: "INTERRUPT",
+            executionId: proof.current,
+            expectedRevision: r.revision,
+          }),
+        }).catch(() => undefined);
+      } catch (e) {
+        if (e instanceof SecureRandomUnavailableError) setError(e.message);
+      }
     };
     window.addEventListener("pagehide", interrupt);
     return () => window.removeEventListener("pagehide", interrupt);
@@ -312,6 +322,8 @@ export default function R05Page({ versionId }: { versionId: string }) {
     setBusy(true);
     setError("");
     try {
+      if (!proof.current) proof.current = newClientId();
+      if (!startKey.current) startKey.current = newClientId();
       await request("", {
         method: "POST",
         headers: {
@@ -323,8 +335,13 @@ export default function R05Page({ versionId }: { versionId: string }) {
       setActive(true);
       setStartUnconfirmed(false);
       await load();
-    } catch {
-      setError("開始を確認できません。同じ開始ボタンで結果を再確認できます。");
+    } catch (e) {
+      if (e instanceof SecureRandomUnavailableError) setStartUnconfirmed(false);
+      setError(
+        e instanceof SecureRandomUnavailableError
+          ? e.message
+          : "開始を確認できません。同じ開始ボタンで結果を再確認できます。",
+      );
       await load().catch(() => undefined);
     } finally {
       setBusy(false);
@@ -347,7 +364,7 @@ export default function R05Page({ versionId }: { versionId: string }) {
           return;
         command = {
           id,
-          key: crypto.randomUUID(),
+          key: newClientId(),
           confirmation: preview.confirmation,
         };
       }
@@ -366,8 +383,8 @@ export default function R05Page({ versionId }: { versionId: string }) {
       setRetry(null);
       setActive(false);
       setStartUnconfirmed(false);
-      proof.current = crypto.randomUUID();
-      startKey.current = crypto.randomUUID();
+      proof.current = "";
+      startKey.current = "";
       setSelection("CURRENT");
       setHistoryState(null);
       await load();
@@ -377,7 +394,9 @@ export default function R05Page({ versionId }: { versionId: string }) {
           e instanceof R05HttpError && e.status < 500 ? null : command,
         );
       setError(
-        "削除結果を確認できません。最新状態を確認し、同じ要求で結果を再確認してください。",
+        e instanceof SecureRandomUnavailableError
+          ? e.message
+          : "削除結果を確認できません。最新状態を確認し、同じ要求で結果を再確認してください。",
       );
       await load().catch(() => undefined);
     } finally {

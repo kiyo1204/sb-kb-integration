@@ -29,7 +29,8 @@
     "test:experiment-learner-browser": "tsx scripts/verify-experiment-learner-browser.ts",
     "test:r05-browser": "tsx scripts/verify-r05-browser.ts",
     "test:experiment-research-browser": "tsx scripts/verify-experiment-research-browser.ts",
-    "test:experiment-end-browser": "tsx scripts/verify-experiment-end-browser.ts"
+    "test:experiment-end-browser": "tsx scripts/verify-experiment-end-browser.ts",
+    "test:uuid-lan-browser": "tsx scripts/verify-uuid-lan-browser.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",

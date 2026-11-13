@@ -1,3 +1,4 @@
+import { newClientId } from "./client-identity";
 import {
   useCallback,
   useEffect,
@@ -118,12 +119,12 @@ export default function ExperimentParticipantsPage({
     setError(null);
     setNotice(null);
     const signature = JSON.stringify([path, body]);
-    let key = keys.current.get(signature);
-    if (!key) {
-      key = crypto.randomUUID();
-      keys.current.set(signature, key);
-    }
     try {
+      let key = keys.current.get(signature);
+      if (!key) {
+        key = newClientId();
+        keys.current.set(signature, key);
+      }
       const r = await api<{ issuedCode: string | null; codeDelivery: string }>(
         path,
         {

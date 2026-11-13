@@ -90,10 +90,7 @@ type TemporaryConnector = {
 const KIT_PALETTE_MIME = "application/x-kbcm-kit-part";
 
 function createTemporaryId() {
-  return (
-    newClientId() ??
-    `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  );
+  return newClientId();
 }
 
 type KitDefinitionOption = {
