@@ -65,4 +65,3 @@ This change provides UUID generation compatibility for LAN HTTP; it does not enc
 - frontend/src/MapPage.tsx: dfeb6cf03f74e0f52b77b099d86a8bc39eda721b0d6ee504b73cc81fdb6629b1
 - frontend/package.json: f025b488349e031b4878c3a60e85ed83639a0504031cb5b9f03dd753a395b055
 - frontend/scripts/verify-uuid-lan-browser.ts: ee2eed63ea7d5eb7b647421e2406ccf6c5f9515b1a74ce0acab705d1d9d27224
-
