@@ -26,6 +26,7 @@
     "test:material-catalog-browser": "tsx scripts/verify-material-catalog-browser.ts",
     "test:run-management-browser": "tsx scripts/verify-run-management-browser.ts",
     "test:participant-access-browser": "tsx scripts/verify-participant-access-browser.ts",
+    "test:link-wait-diagnostic": "tsx scripts/verify-link-wait-diagnostic.ts",
     "test:sb-position-diagnostic": "tsx scripts/verify-sb-position-diagnostic.ts",
     "test:experiment-learner-browser": "tsx scripts/verify-experiment-learner-browser.ts",
     "test:r05-browser": "tsx scripts/verify-r05-browser.ts",

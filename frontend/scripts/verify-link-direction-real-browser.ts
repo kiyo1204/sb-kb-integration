@@ -1,3 +1,4 @@
+import { diagnoseLinkWait } from "./link-wait-diagnostic.js";
 // Real learner authentication, product API and guarded disposable PostgreSQL.
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
@@ -27,6 +28,7 @@ try {
     viewport: { width: 1440, height: 1000 },
   });
   page.setDefaultTimeout(15000);
+  await page.addInitScript("globalThis.__name = (fn) => fn;");
   await page.addInitScript(
     (t) => sessionStorage.setItem("stage1-access-token", t),
     code,
@@ -97,8 +99,10 @@ try {
       const part = page.locator(".kit-palette-part.is-link").first(),
         canvas = page.locator(".concept-canvas");
       // Native dragTo waits for both visible targets and dispatches dragover before drop.
-      await part.dragTo(canvas, {targetPosition:{x:400,y:200}});
-      await page.locator(".is-temporary").waitFor();
+      await diagnoseLinkWait(page, "kb-drop", ".kit-palette-part.is-link", ".is-temporary", async () => {
+        await part.dragTo(canvas, {targetPosition:{x:400,y:200}});
+        await page.locator(".is-temporary").waitFor();
+      });
       return;
     }
     await page.getByRole("button", { name: "＋ リンク", exact: true }).click();
@@ -138,6 +142,7 @@ try {
   });
   await enter();
   async function invalidDrop(selector: string) {
+    const begin = async () => {
     await page.locator(selector).scrollIntoViewIfNeeded();
     const h = await page.locator(selector).boundingBox();
     assert.ok(h);
@@ -146,6 +151,9 @@ try {
     await page
       .locator(".connection-preview-path[marker-mid]")
       .waitFor({ state: "attached" });
+    };
+    if (mapType === "INTEGRATION") await diagnoseLinkWait(page, "integration-preview", selector, ".connection-preview-path[marker-mid]", begin);
+    else await begin();
     const area = await page.locator(".concept-canvas").boundingBox();
     assert.ok(area);
     await page.mouse.move(area.x + 12, area.y + 12, { steps: 8 });
