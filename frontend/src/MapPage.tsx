@@ -3560,7 +3560,6 @@ export function ConceptCanvas({
     message: string;
   } | null>(null);
   const [kitPartQuery, setKitPartQuery] = useState("");
-  const [connectionNotice, setConnectionNotice] = useState<string | null>(null);
   const [connectionPreview, setConnectionPreview] = useState<{
     start: Point;
     current: Point;
@@ -3636,7 +3635,7 @@ export function ConceptCanvas({
     ? [...kitTemporaryConnectors, mapTemporaryConnector]
     : kitTemporaryConnectors;
   const pendingConnectors = temporaryConnectors.filter(connector => !connector.sourceConceptId || !connector.targetConceptId);
-  const showConnectionGuidance = !readOnly && (connectionPreview !== null || pendingConnectors.length > 0 || selectedLinkId !== null || connectionNotice !== null);
+  const showConnectionGuidance = !readOnly && (connectionPreview !== null || pendingConnectors.length > 0);
 
   useEffect(() => () => {
     connectorDragCleanupRef.current?.();
@@ -3942,7 +3941,6 @@ export function ConceptCanvas({
       pointerId: event.pointerId,
       start: handleCenter,
     } as const;
-    setConnectionNotice(null);
     activeConnectionRef.current = connection;
     setConnectionPreview({ start: handleCenter, current: handleCenter, kind, id, endpoint });
 
@@ -3981,7 +3979,6 @@ export function ConceptCanvas({
       cancelConnection();
     };
     const cancelConnection = () => {
-      setConnectionNotice("接続操作を中止しました。保存済みの接続は変更していません。");
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", cancel);
@@ -4001,10 +3998,7 @@ export function ConceptCanvas({
     clientY: number,
   ) {
     const conceptId = conceptAtPoint(clientX, clientY);
-    if (!conceptId || !conceptsById.has(conceptId)) {
-      setConnectionNotice(connection.kind === "saved" ? "概念以外では付け替えできません。元の接続を保持しました。" : "丸を概念へドラッグしてください。両端がつながるまでリンクは未保存です。");
-      return;
-    }
+    if (!conceptId || !conceptsById.has(conceptId)) return;
 
     if (connection.kind === "saved") {
       const link = links.find((candidate) => candidate.id === connection.id);
@@ -5003,8 +4997,6 @@ export function ConceptCanvas({
       {!readOnly && <div className="canvas-connection-area">
       {showConnectionGuidance && <p className="canvas-direction-hint">関係は「始点のConcept → Link → 矢印の先のConcept」の向きにつながります。</p>}
       <div className="canvas-connection-guidance" role="status" aria-live="polite">
-        {!connectionPreview && connectionNotice && <p>{connectionNotice}</p>}
-        {!connectionPreview && selectedLinkId && pendingConnectors.length === 0 && <p>左右の丸を別の概念へドラッグして付け替えます。概念以外に離すかEscで中止すると、元の接続を保持します。</p>}
         {connectionPreview ? <p>「{connectionPreview.endpoint === "source" ? "始点" : "矢印の先"}」を接続するConceptへドラッグしてください。{connectionPreview.hoveredConceptId ? ` 接続先候補：${conceptsById.get(connectionPreview.hoveredConceptId)?.label ?? "Concept"}。離すと接続します。` : ""} Escでこの接続操作を中止できます。</p> : pendingConnectors.map(connector => <p key={connector.id}>
           「{connector.label}」：始点 {connector.sourceConceptId ? conceptsById.get(connector.sourceConceptId)?.label ?? "接続済み" : "未接続"} → 矢印の先 {connector.targetConceptId ? conceptsById.get(connector.targetConceptId)?.label ?? "接続済み" : "未接続"}。
           {!connector.sourceConceptId || !connector.targetConceptId ? ` ${!connector.sourceConceptId && !connector.targetConceptId ? "始点と矢印の先" : !connector.sourceConceptId ? "始点" : "矢印の先"}のハンドルを対応するConceptへドラッグしてください。` : " 保存中です。"}
@@ -5171,7 +5163,7 @@ export function ConceptCanvas({
                 aria-hidden="true"
               />
             )}
-            {!readOnly && edges.filter(edge => edge.id === selectedLinkId || (connectionPreview?.kind === "saved" && edge.id === connectionPreview.id)).map(edge => {
+            {!readOnly && connectionPreview?.kind === "saved" && edges.filter(edge => edge.id === connectionPreview.id).map(edge => {
               const geometry = geometryForEdge(edge);
               if (!geometry) return null;
               const center = linkConnectorPositions.get(edge.id) ?? { x: geometry.labelX, y: geometry.labelY };
