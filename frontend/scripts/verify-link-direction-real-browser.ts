@@ -96,13 +96,8 @@ try {
     if (mapType === "KB") {
       const part = page.locator(".kit-palette-part.is-link").first(),
         canvas = page.locator(".concept-canvas");
-      const h = await part.boundingBox(),
-        b = await canvas.boundingBox();
-      assert.ok(h && b);
-      await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(b.x + 400, b.y + 280, { steps: 12 });
-      await page.mouse.up();
+      // Native dragTo waits for both visible targets and dispatches dragover before drop.
+      await part.dragTo(canvas, {targetPosition:{x:400,y:200}});
       await page.locator(".is-temporary").waitFor();
       return;
     }

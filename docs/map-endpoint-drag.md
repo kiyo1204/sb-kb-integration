@@ -38,3 +38,5 @@ backend製品コード、保存方向、重複・接続制約、操作ログ、�
 最終結果: 実APIのSB・KB・統合MapすべてPASS。合成APIの代表6ケースとリンク位置・KB/統合フィードバックの関連回帰もPASS。backend/frontend型検査・Lint・build、`git diff --check`成功。統合MapのSQL照合は新規リンク成功1件、始点・終点の再接続成功2件、全体キャンセル1件を確認。端末切替を伴うfixtureで表示される観測イベントの送信待ちはMap保存とは別であり、送信待ち全件の完了や回収を保証しない。
 
 専用DBはID・用途・nonceで照合し、コンテナー・volume・manifestを削除した。元worktreeの追加要素強調表示や既存バックアップは変更しない。
+
+最初のpush後、PR用CIは成功したがpush用CIはKBパレットのドラッグ後に一時リンクを待つ検証でタイムアウトした。環境準備やbackend保存のエラーとは区別する。固定した一連のmouse.moveから、要素の可視性とdragoverを扱うPlaywrightのネイティブdragToへ検証操作を変更し、成功条件・保存判定は緩めない。同じHEADの盲目的な再実行は行わない。
