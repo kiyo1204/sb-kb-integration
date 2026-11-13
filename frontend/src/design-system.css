@@ -979,6 +979,11 @@ textarea:focus {
 }
 
 .link-connector-handle {
+  width: 26px;
+  height: 26px;
+  margin-left: -13px;
+  margin-right: -13px;
+  cursor: grab;
   background: #64846d;
   box-shadow: 0 0 0 1px #64846d;
 }
@@ -989,6 +994,7 @@ textarea:focus {
 }
 
 .link-connector-handle.is-connecting {
+  cursor: grabbing;
   outline: 3px solid var(--accent-hover);
   outline-offset: 4px;
 }

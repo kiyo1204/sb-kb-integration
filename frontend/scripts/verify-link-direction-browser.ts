@@ -90,6 +90,13 @@ try {
     await page.locator(".is-temporary").waitFor({ state: "detached" });
     assert.equal(creates, 1); assert.equal(map.links[0].sourceConceptId, id(2)); assert.equal(map.links[0].targetConceptId, id(3));
     const saved = `[data-connector-id="${id(7)}"]`;
+    await page.locator(`${saved} .link-connector-label`).click();
+    if(process.env.ENDPOINT_BASELINE === "1") {
+      console.log(JSON.stringify({baseline:true,selectedEndpointNames:await page.locator(".connector-endpoint-label").count()}));
+      await page.screenshot({path:join(dir,"endpoint-before.png"),fullPage:true});await page.close();break;
+    }
+    assert.equal(await page.locator(".connector-endpoint-label").count(),2);
+    await page.getByRole("button",{name:"Drawerを閉じる",exact:true}).click();
     await drag(page, `${saved} .is-target`, id(4)); await page.keyboard.press("Escape"); await page.mouse.up(); assert.equal(reconnects, 0); assert.equal(map.links[0].targetConceptId, id(3));
     const changed = page.waitForResponse(r => new URL(r.url()).pathname.endsWith("/reconnect"));
     await drag(page, `${saved} .is-target`, id(4)); await page.mouse.up();

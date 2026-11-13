@@ -63,6 +63,7 @@ try {
       concepts: [
         { id: "a", label: "MOCK A", position: { x: 80, y: 100 } },
         { id: "b", label: "MOCK B", position: { x: 650, y: 100 } },
+        { id: "c", label: "MOCK C", position: { x: 350, y: 400 } },
       ],
       links: [
         {
@@ -140,6 +141,85 @@ try {
   await call(`/session-stages/${stage("LESSON")}/complete`, {});
   await call(`/session-stages/${stage("PRIOR_MAP")}/start`, {});
   const sb = await call(`/session-stages/${stage("PRIOR_MAP")}/prior-map`, {});
+  async function browserCheck(type: string, mapId: string, ids: string[]) {
+    const child = spawn(
+      process.execPath,
+      [
+        "node_modules/tsx/dist/cli.mjs",
+        "scripts/verify-link-direction-real-browser.ts",
+      ],
+      {
+        cwd: "../frontend",
+        env: {
+          ...process.env,
+          API_BASE_URL: base,
+          DIRECTION_SESSION: p.sessionId,
+          DIRECTION_RUN: run.id,
+          DIRECTION_MAP: mapId,
+          DIRECTION_CONCEPTS: JSON.stringify(ids),
+          DIRECTION_CODE: p.issuedCode,
+          DIRECTION_TYPE: type,
+        },
+        stdio: "inherit",
+        windowsHide: true,
+      },
+    );
+    assert.equal((await once(child, "exit"))[0], 0, type + " real browser");
+    const headers = {
+      Authorization: "Bearer " + p.issuedCode,
+      "Content-Type": "application/json",
+      "X-Experiment-Client": extra["X-Experiment-Client"],
+    };
+    const pending = await fetch(base + "/api/experiment-client/claim", {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
+    const candidate = await pending.json();
+    const list = await fetch(
+      base + `/api/research/experiment-runs/${run.id}/participants`,
+      { headers: { Authorization: "Bearer " + researcher } },
+    );
+    const entry = (await list.json()).participants.find(
+      (x: { id: string }) => x.id === p.sessionId,
+    );
+    const switched = await fetch(
+      base +
+        `/api/research/experiment-runs/${run.id}/participants/${p.sessionId}/client-switch`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + researcher,
+          "Content-Type": "application/json",
+          "Idempotency-Key": randomUUID(),
+        },
+        body: JSON.stringify({
+          clientId: candidate.clientId,
+          expectedDeviceGeneration: entry.deviceGeneration,
+        }),
+      },
+    );
+    assert.equal(switched.status, 200);
+    const owned = await fetch(base + "/api/experiment-client/claim", {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
+    extra["X-Experiment-Generation"] = String(
+      (await owned.json()).deviceGeneration,
+    );
+  }
+  const sbNodes: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const n = await call(`/maps/${sb.id}/concepts`, {
+      label: "MOCK SB " + i,
+      positionX: 80 + i * 310,
+      positionY: 350,
+    });
+    sbNodes.push(n.id);
+  }
+  await browserCheck("PRIOR", sb.id, sbNodes);
+
   await call(`/maps/${sb.id}/submit`, {});
   await call(`/session-stages/${stage("KB_MAP")}/start`, {});
   const kb = await call(`/kits/${goal.kitDefinitionId}/kb-map`, {
@@ -159,10 +239,15 @@ try {
       [goal.kitDefinitionId],
     )
   ).rows[0];
-  await call(`/maps/${kb.id}/kit-links/${link.id}`, {
-    sourceConceptId: nodes.get(link.source),
-    targetConceptId: nodes.get(link.target),
-  });
+  const kbThird = parts.find(
+    (part) => part.source !== link.source && part.source !== link.target,
+  );
+  assert.ok(kbThird);
+  await browserCheck("KB", kb.id, [
+    nodes.get(link.source)!,
+    nodes.get(link.target)!,
+    nodes.get(kbThird.source)!,
+  ]);
   await call(`/maps/${kb.id}/submit`, {});
   await call(`/session-stages/${stage("INTEGRATION_MAP")}/start`, {});
   const map = await call(
@@ -178,7 +263,7 @@ try {
     const c = await call(`/maps/${map.id}/concepts`, {
       label,
       positionX: 80 + i * 310,
-      positionY: 350,
+      positionY: 750,
     });
     ids.push(c.id);
   }
@@ -227,7 +312,7 @@ try {
     history.filter(
       (e) => e.event_type === "RECONNECT_LINK" && e.outcome === "SUCCESS",
     ).length,
-    1,
+    2,
   );
   assert.ok(
     history.some(
@@ -242,7 +327,7 @@ try {
       mapType: "INTEGRATION",
       dbDirection: true,
       successfulCreates: 1,
-      successfulReconnects: 1,
+      successfulReconnects: 2,
       cancellationEvents: history.filter((e) => e.outcome === "CANCELLED")
         .length,
     }),
