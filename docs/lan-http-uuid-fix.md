@@ -3,6 +3,19 @@
 ## Contract and scope
 Researcher material, run and participant writes and R05 execution/operation/deletion IDs now reuse newClientId in client-identity.ts. It prefers native crypto.randomUUID and otherwise uses the existing crypto.getRandomValues UUID v4 bit layout. Without a safe source it throws SecureRandomUnavailableError; the researcher write handlers display its Japanese message and send no mutation. Retry keys stay in their existing refs/maps until the existing success rules clear them. R05 initializes proof/start keys inside its guarded start handler and retains them across uncertain responses. The unused weak temporary-ID fallback in MapPage was removed; newClientId returns a UUID or throws. Authentication/secret generators, backend UUIDs, DB schema and operation/event contracts were not changed. No dependencies or browser security exceptions were added.
 
+## 模擬LANリハーサル当日の短い手順
+
+この手順は合成データだけを使う閉じた模擬環境向け。今回の記録対象は main merge `d6d85a5f58d2bb74648e94ff3c8a287d6304a90f`、Web source revision `uuid-795df3889fbbd2cd`（source commit `0e02905224047a88beae39b0ce4ce117ebd455cc`、merge commitと同じtree `8e1d0a7f5f54307141fe37f61c0382de3c4b005a`）。別日に行う場合は、起動中のWeb/APIの識別情報を当日の引継ぎ記録と照合し、この版と異なる場合は実際に使ったcommitを記録する。
+
+1. **環境を照合する。** 当日のローカル引継ぎ記録が指定するmanifestとコンテナー情報で、専用DB名・コンテナーID・用途ラベル・識別値が一致することを確認する。識別値は照合だけに使い、公開記録へ転記しない。名前だけで模擬DBと判断しない。不一致、稼働中プロセス不明、実DBの可能性があれば停止し、resetや既存DBへの接続をしない。DB/APIはloopback限定、Webだけを同一LAN向けにする。参加者PC自身から引継ぎ記録のWeb URLを開いてログイン画面を確認する。接続しない場合は参加者PCで `Test-NetConnection <研究者PCのLANアドレス> -Port <Webポート>` を実行する。HTTPは通信を暗号化しないため模擬データ専用とし、ファイアウォールやブラウザー保護を無効にしない。
+2. **研究者PCで準備する。** 研究者コードは研究者PCだけで扱う。模擬用Kitを選び、動画参照・各活動の説明・SB初期概念・統合制限時間は研究者が決めて入力する（固定の推奨値や教材内容を補わない）。完成登録後、その完成教材版を選んで実施を作成する。予定人数は記録値で参加者登録の上限ではない。仮名ラベルA・Bの参加Sessionを登録し、参加者コードは参加者PCでのみ入力する。コードはチャット、ログ、引継ぎ記録へ書かない。紛失時は研究者画面から再発行し、旧コードを使わない。登録後に研究者が「実施開始（模擬検証専用）」を明示操作する。
+3. **参加者PCで活動する。** 参加者本人のコードでログインし、授業の動画視聴確認（自己申告）を行う。SBを編集し、保存完了を画面で確認してから再読込し、復元を確認した後に提出する。KBを組み立てて一時確認し、最新の確認が一致する状態で最終提出する。最終提出時にもサーバーが最新Mapを判定する。統合Mapは、実施に固定された時間を研究者画面で確認し、続けて操作できるときに開始する。編集・Merge/解除後に手動提出するか、期限時自動提出となったかを保存結果で区別し、受理後に「次へ」で本人の活動を完了する。新protocolにアンケートはない。
+4. **未提出者を残して終了する。** 未提出にする参加者は、下書き保存の完了を確認して提出せずに止める。研究者は実施詳細でA/Bの状態を確認し、「実施を終了」を押す前に確認文を読む。終了後は参加者の操作が止まり、未提出Mapは未提出のまま、参加者には終了案内だけが表示される。終了は提出・本人完了・離脱・撤回を作らない。端末内の未送信変更が後から回収される保証はない。
+5. **結果を出力・照合する。** 研究者画面の対象実施から「実施の研究用JSON」と「実施のMap状態CSV」をダウンロードする。CSVは18列で、既存16列の末尾に `mapStatus` と `mapSubmittedAt` がある。既存 `status` は行の取得状態、`mapStatus` は取得時点のMap本体の状態。提出時刻は保存値のみで、未提出・Map未作成では空欄。開始/提出snapshotの `point` と `recordedAt` はsnapshotの時点を表し、追加2列の現在Map情報とは別である。出力契約と欠測理由は[新protocolの研究者分析・Map状態CSV仕様](experiment-learner-flow.md)を参照する。外部の列数固定処理は未確認。
+6. **止まった場合は状態を先に確認する。** ローカルの制限された記録先に、アプリcommit/Web revision、模擬実施ラベル、役割PC、参加者仮名（A/B等）、時刻、活動と操作段階、画面の非機密な文言、保存確認の有無、研究者画面の状態、出力ファイル名を記す。コード、トークン、Map本文は記録しない。保存応答が不明なら再操作や再読込の前に研究者画面で状態を確認する。終了済み実施は再開できない。続ける必要があれば新しい模擬実施を作り、教材を変える場合は新しい下書き版を完成登録する。既存DBをreset・seedし直さない。
+
+過去記録では、ユーザーが実機2台で行った操作報告と、専用DBの読み取り照合、JSON/CSVのローカル照合、自動テストを別々に記録している。実機2台の報告・合成DBでの状態確認・18列CSVの照合は、10〜20台同時利用、HTTP通信の保護、実研究DBへの適用/復旧、本番運用の確認ではない。pause/resume の `UNKNOWN` は不確かな観測であり、確定した中断や活動時間として扱わない。
+
 ## Verification (2026-11-13 JST)
 Windows, Node 24.15.0, Edge 157.0.4341.46 headless, 1366x900. An isolated worktree based on main b11b7e6f17387ef1263698bbbf630805ef23340b was used. A new PostgreSQL 17-alpine mock container was created and migrated through the canonical mock-db procedure. Its loopback-only binding, manifest nonce/labels and SQL guard were checked. The test API used its own loopback port; the existing rehearsal API/Web/DB were retained.
 
@@ -52,3 +65,4 @@ This change provides UUID generation compatibility for LAN HTTP; it does not enc
 - frontend/src/MapPage.tsx: dfeb6cf03f74e0f52b77b099d86a8bc39eda721b0d6ee504b73cc81fdb6629b1
 - frontend/package.json: f025b488349e031b4878c3a60e85ed83639a0504031cb5b9f03dd753a395b055
 - frontend/scripts/verify-uuid-lan-browser.ts: ee2eed63ea7d5eb7b647421e2406ccf6c5f9515b1a74ce0acab705d1d9d27224
+
