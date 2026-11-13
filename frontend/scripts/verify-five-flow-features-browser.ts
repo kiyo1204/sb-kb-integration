@@ -1,6 +1,6 @@
 // Real API from the isolated mock suite, synthetic fixtures only.
 import assert from "node:assert/strict";
-import { chromium } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 import { createServer } from "vite";
 import type { FiveFlowFeatures } from "../../backend/src/five-flow-features.js";
 const base = process.env.API_BASE_URL!,
@@ -33,14 +33,23 @@ assert.ok(
   "Run the five-flow-composite or session-flow-survey fixture in this isolated suite first",
 );
 const f = fixture;
+// Keep route.fetch's documented default explicit: route draining below waits
+// for active handlers, and each network wait is bounded to 30 seconds.
+const ROUTE_FETCH_TIMEOUT_MS = 30_000;
 const vite = await createServer({ server: { host: "127.0.0.1", port: 0 } });
-await vite.listen();
-const browser = await chromium.launch({
-  channel: process.env.BROWSER_CHANNEL ?? "msedge",
-  headless: true,
-});
+let browser: Browser | undefined;
+let page: Page | undefined;
+let verificationError: unknown;
+let verificationFailed = false;
+const routeErrors: unknown[] = [];
+const teardownErrors: unknown[] = [];
 try {
-  const page = await browser.newPage({
+  await vite.listen();
+  browser = await chromium.launch({
+    channel: process.env.BROWSER_CHANNEL ?? "msedge",
+    headless: true,
+  });
+  page = await browser.newPage({
     viewport: { width: 1200, height: 900 },
   });
   await page.addInitScript(
@@ -48,11 +57,21 @@ try {
     token,
   );
   await page.route("**/api/**", async (route) => {
-    const url = new URL(route.request().url());
-    const response = await route.fetch({
-      url: base + url.pathname + url.search,
-    });
-    await route.fulfill({ response });
+    try {
+      const url = new URL(route.request().url());
+      const response = await route.fetch({
+        url: base + url.pathname + url.search,
+        timeout: ROUTE_FETCH_TIMEOUT_MS,
+      });
+      await route.fulfill({ response });
+    } catch (error) {
+      routeErrors.push(error);
+      try {
+        await route.abort();
+      } catch (abortError) {
+        routeErrors.push(abortError);
+      }
+    }
   });
   await page.goto(
     vite.resolvedUrls!.local[0] + `research/stage1/${f.sessionId}/analysis`,
@@ -131,10 +150,45 @@ try {
       f.completion.serverTimestamp ?? "",
     );
   }
-  console.log(
-    "Isolated real API + Edge: feature version/protocol/points/counts, submission identity, actor/outcome groups and downloaded CSV agree: PASS",
-  );
-} finally {
-  await browser.close();
-  await vite.close();
+} catch (error) {
+  verificationFailed = true;
+  verificationError = error;
 }
+
+// Wait for active route callbacks before disposing the browser request context.
+if (page) {
+  try {
+    await page.unrouteAll({ behavior: "wait" });
+  } catch (error) {
+    teardownErrors.push(error);
+  }
+}
+if (browser) {
+  try {
+    await browser.close();
+  } catch (error) {
+    teardownErrors.push(error);
+  }
+}
+try {
+  await vite.close();
+} catch (error) {
+  teardownErrors.push(error);
+}
+
+const failures = [
+  ...(verificationFailed ? [verificationError] : []),
+  ...routeErrors,
+  ...teardownErrors,
+];
+if (failures.length === 1) throw failures[0];
+if (failures.length > 1) {
+  throw new AggregateError(
+    failures,
+    "Five-flow feature browser verification or teardown failed",
+  );
+}
+
+console.log(
+  "Isolated real API + Edge: feature version/protocol/points/counts, submission identity, actor/outcome groups and downloaded CSV agree: PASS",
+);
