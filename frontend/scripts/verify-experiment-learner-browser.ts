@@ -1,4 +1,3 @@
-import { verifySbPositionSave } from "./sb-position-diagnostic.js";
 // TEST ONLY. Actual API and fresh browser Session supplied by parent verification.
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
@@ -246,19 +245,23 @@ try {
   const seedNode = page.locator(".concept-node").first(),
     seedBox = await seedNode.boundingBox();
   assert.ok(seedBox);
-  await verifySbPositionSave(page, seedNode, async () => {
-    await page.mouse.move(
-      seedBox.x + seedBox.width / 2,
-      seedBox.y + seedBox.height / 2,
-    );
-    await page.mouse.down();
-    await page.mouse.move(
-      seedBox.x + seedBox.width / 2 + 40,
-      seedBox.y + seedBox.height / 2 + 30,
-      { steps: 10 },
-    );
-    await page.mouse.up();
-  });
+  const moved = page.waitForResponse(
+    (r) =>
+      r.request().method() === "PATCH" &&
+      /\/concepts\/[^/]+\/position$/.test(new URL(r.url()).pathname),
+  );
+  await page.mouse.move(
+    seedBox.x + seedBox.width / 2,
+    seedBox.y + seedBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    seedBox.x + seedBox.width / 2 + 40,
+    seedBox.y + seedBox.height / 2 + 30,
+    { steps: 10 },
+  );
+  await page.mouse.up();
+  assert.equal((await moved).status(), 200);
   await page.screenshot({ path: join(dir, "p05.png"), fullPage: true });
   await seedNode.click();
   assert.ok(await page.locator(".experiment-seed-guidance").isVisible());

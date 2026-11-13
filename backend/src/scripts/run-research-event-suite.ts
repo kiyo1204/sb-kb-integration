@@ -109,8 +109,6 @@ try {
   await run("test:event-scale");
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") {
     await start();
-    await run("test:link-wait-diagnostic", true);
-    await run("test:sb-position-diagnostic", true);
     await run("test:research-log-ui", true);
     await run("test:stage1-analysis-layout-browser", true);
     await run("test:link-position-browser", true);

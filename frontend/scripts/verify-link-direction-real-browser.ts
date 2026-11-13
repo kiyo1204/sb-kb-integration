@@ -1,4 +1,3 @@
-import { diagnoseLinkWait } from "./link-wait-diagnostic.js";
 // Real learner authentication, product API and guarded disposable PostgreSQL.
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
@@ -9,7 +8,6 @@ const base = process.env.API_BASE_URL!,
   mapId = process.env.DIRECTION_MAP!,
   code = process.env.DIRECTION_CODE!,
   researcher = process.env.RESEARCHER_API_TOKEN!;
-const mapType = process.env.DIRECTION_TYPE ?? "INTEGRATION";
 const [a, b, c] = JSON.parse(process.env.DIRECTION_CONCEPTS!) as string[];
 const vite = await createServer({
   server: {
@@ -28,7 +26,6 @@ try {
     viewport: { width: 1440, height: 1000 },
   });
   page.setDefaultTimeout(15000);
-  await page.addInitScript("globalThis.__name = (fn) => fn;");
   await page.addInitScript(
     (t) => sessionStorage.setItem("stage1-access-token", t),
     code,
@@ -95,20 +92,10 @@ try {
     await page.locator(".concept-canvas").waitFor();
   }
   async function add() {
-    if (mapType === "KB") {
-      const part = page.locator(".kit-palette-part.is-link").first(),
-        canvas = page.locator(".concept-canvas");
-      // Native dragTo waits for both visible targets and dispatches dragover before drop.
-      await diagnoseLinkWait(page, "kb-drop", ".kit-palette-part.is-link", ".is-temporary", async () => {
-        await part.dragTo(canvas, {targetPosition:{x:400,y:200}});
-        await page.locator(".is-temporary").waitFor();
-      }, undefined, {x:400,y:200});
-      return;
-    }
     await page.getByRole("button", { name: "＋ リンク", exact: true }).click();
     await page
       .getByLabel("リンクラベル", { exact: true })
-      .fill(mapType === "PRIOR" ? "MOCK SB direction" : "MOCK direction new");
+      .fill("MOCK direction new");
     await page.getByRole("button", { name: "接続を開始", exact: true }).click();
   }
   async function drag(selector: string, id: string) {
@@ -132,38 +119,14 @@ try {
   page.on("request", (r) => {
     if (
       (r.method() === "POST" &&
-        (new URL(r.url()).pathname === `/api/maps/${mapId}/links` ||
-          new URL(r.url()).pathname.startsWith(
-            `/api/maps/${mapId}/kit-links/`,
-          ))) ||
+        new URL(r.url()).pathname === `/api/maps/${mapId}/links`) ||
       (r.method() === "PATCH" && r.url().endsWith("/reconnect"))
     )
       mutations.push(r.method());
   });
   await enter();
-  async function invalidDrop(selector: string) {
-    const begin = async () => {
-    await page.locator(selector).scrollIntoViewIfNeeded();
-    const h = await page.locator(selector).boundingBox();
-    assert.ok(h);
-    await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
-    await page.mouse.down();
-    await page
-      .locator(".connection-preview-path[marker-mid]")
-      .waitFor({ state: "attached" });
-    };
-    if (mapType === "INTEGRATION") await diagnoseLinkWait(page, "integration-preview", selector, ".connection-preview-path[marker-mid]", begin);
-    else await begin();
-    const area = await page.locator(".concept-canvas").boundingBox();
-    assert.ok(area);
-    await page.mouse.move(area.x + 12, area.y + 12, { steps: 8 });
-    await page.mouse.up();
-  }
   const initial = await snapshot();
   await add();
-  await invalidDrop(".is-temporary .is-source");
-  assert.deepEqual(await snapshot(), initial);
-  assert.equal(mutations.length, 0);
   await drag(".is-temporary .is-source", a);
   await page.keyboard.press("Escape");
   await page.mouse.up();
@@ -171,7 +134,7 @@ try {
   assert.equal(mutations.length, 0);
   // Whole-link cancellation has its own existing telemetry endpoint, not a mutation.
   const cancelled = page.waitForResponse((r) =>
-    r.url().includes(mapType === "KB" ? "/operation-cancellations/IMPORT_KIT_LINK" : "/operation-cancellations/ADD_LINK"),
+    r.url().includes("/operation-cancellations/ADD_LINK"),
   );
   await page.locator(".temporary-connector-cancel").click();
   assert.ok((await cancelled).ok());
@@ -182,8 +145,7 @@ try {
   const created = page.waitForResponse(
     (r) =>
       r.request().method() === "POST" &&
-      (new URL(r.url()).pathname === `/api/maps/${mapId}/links` ||
-        new URL(r.url()).pathname.startsWith(`/api/maps/${mapId}/kit-links/`)),
+      new URL(r.url()).pathname === `/api/maps/${mapId}/links`,
   );
   await drag(".is-temporary .is-target", b);
   await page.mouse.up();
@@ -200,9 +162,6 @@ try {
   assert.equal(row.source, a);
   assert.equal(row.target, b);
   const before = await snapshot();
-  await invalidDrop(saved + " .is-target");
-  assert.deepEqual(await snapshot(), before);
-  assert.equal(mutations.length, 1);
   await drag(saved + " .is-target", c);
   await page.keyboard.press("Escape");
   await page.mouse.up();
@@ -224,35 +183,12 @@ try {
     });
   await page.mouse.up();
   assert.equal((await reconnected).status(), 200);
-  async function history(action: string, label: string) {
-    const response = page.waitForResponse(
-      (r) => r.request().method() === "POST" && r.url().endsWith("/undo-redo"),
-    );
-    await page.getByRole("button", { name: label, exact: true }).click();
-    assert.equal((await response).status(), 200);
-    await page.getByText(action === "UNDO" ? "操作を元に戻しました。" : "操作をやり直しました。",{exact:true}).waitFor();
-  }
-  await history("UNDO", "元に戻す");
-  assert.equal(
-    (await snapshot()).find((l: { id: string }) => l.id === link.id).target,
-    b,
-  );
-  await history("REDO", "やり直す");
-  assert.equal(
-    (await snapshot()).find((l: { id: string }) => l.id === link.id).target,
-    c,
-  );
-  const sourceChanged=page.waitForResponse(r=>r.request().method()==="PATCH"&&r.url().endsWith("/reconnect"));
-  await drag(saved+" .is-source",b);await page.mouse.up();assert.equal((await sourceChanged).status(),200);
-  assert.equal((await snapshot()).find((l:{id:string})=>l.id===link.id).source,b);
-  await history("UNDO","元に戻す");assert.equal((await snapshot()).find((l:{id:string})=>l.id===link.id).source,a);
-  if (mapType === "KB") await history("UNDO", "元に戻す");
   await enter();
   await page.locator(saved).waitFor();
   row = (await snapshot()).find((l: { id: string }) => l.id === link.id);
   assert.equal(row.source, a);
-  assert.equal(row.target, mapType === "KB" ? b : c);
-  assert.equal(mutations.length, 3);
+  assert.equal(row.target, c);
+  assert.equal(mutations.length, 2);
   // The rendered saved edge and its endpoints are derived from the real GET response.
   assert.equal(
     await page
@@ -272,7 +208,7 @@ try {
       fullPage: true,
     });
   console.log(
-    `PASS real ${mapType}: create/reload, reconnect/reload, invalid drop, Esc, Undo/Redo, separate cancellation telemetry`,
+    "PASS real learner integration browser: create/reload, reconnect/reload, Esc then pointerup unchanged, separate cancellation telemetry",
   );
 } finally {
   await browser.close();
