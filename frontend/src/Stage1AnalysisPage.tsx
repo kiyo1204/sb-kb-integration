@@ -262,20 +262,29 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
           <p>セッション：{sessionId} 仮名ID：{data?.session.participantCode??"—"}</p>
         </div>
         <div className="stage1-analysis-exports" role="group" aria-label="データ出力">
+          <strong>研究用データを出力</strong>
           <button type="button" onClick={() => void downloadApiFile(`/api/research/sessions/${sessionId}/export`).catch(e => setError(e instanceof Error ? e.message : "JSONを取得できませんでした。"))}>生データJSON</button>
           <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/operations.csv`).catch(e => setError(e instanceof Error ? e.message : "CSVを取得できませんでした。"))}>操作イベントCSV</button>
           {data?.session.protocolKey === "STAGE1_4" && <><button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/evaluations.csv`).catch(e => setError(e instanceof Error ? e.message : "CSVを取得できませんでした。"))}>命題評価CSV</button>
           <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/reflections.csv`).catch(e => setError(e instanceof Error ? e.message : "CSVを取得できませんでした。"))}>振り返りCSV</button></>}
-          <a href={`/research/event-exports?sessionId=${sessionId}`}>研究イベントの絞り込み出力</a>
-          {data?.experiment ? <a href={`/research/experiment-runs/${data.experiment.runId}`}>実施・参加者一覧へ戻る</a> : <a href={`/sessions/${sessionId}`}>セッションへ戻る</a>}
           {data?.experiment && <button type="button" onClick={()=>void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/map-states.csv`).catch(e=>setError(e instanceof Error?e.message:"CSVを取得できませんでした。"))}>保存Map・開始／提出状態CSV</button>}
         </div>
-        {error&&<p className="session-error" role="alert">{error}</p>}
+        <nav className="stage1-analysis-navigation" aria-label="関連画面">
+          <a href={`/research/event-exports?sessionId=${sessionId}`}>研究イベントの絞り込み出力</a>
+          {data?.experiment ? <a href={`/research/experiment-runs/${data.experiment.runId}`}>実施・参加者一覧へ戻る</a> : <a href={`/sessions/${sessionId}`}>セッションへ戻る</a>}
+        </nav>
+        {error && (data ? <p className="session-error" role="alert">{error}</p> : <div className="stage1-analysis-load-error">
+          <p className="session-error" role="alert">{error}</p>
+          <button type="button" onClick={() => {
+            setError(null);
+            void reload().catch((e) => setError(e instanceof Error ? e.message : "分析データを取得できませんでした。"));
+          }}>分析データを再取得</button>
+        </div>)}
         {status&&<p role="status">{status}</p>}
       </section>
       <ResearchDeliveryStatus sessionId={sessionId}/>
       {(data?.session.protocolKey==="STAGE1_5") && <FiveFlowFeatures key={sessionId} sessionId={sessionId}/>}
-      {!data?<p role="status">分析データを読み込んでいます…</p>:(
+      {!data ? (error ? <p className="stage1-analysis-unavailable" role="status">分析データを表示できません。上の「分析データを再取得」から再試行できます。</p> : <p className="stage1-analysis-loading" role="status">分析データを読み込んでいます…</p>) : (
         <>
           {data.experiment && <section className="session-card"><h2>実施と固定教材版</h2>
             <p>実施ID：{data.experiment.runId} · 教材：{data.experiment.materialTitle}（版 {data.experiment.materialVersion}）</p>

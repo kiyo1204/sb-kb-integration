@@ -1,0 +1,482 @@
+/* Page chrome only. Canvas, node/link geometry and pointer targets stay in their
+   existing stylesheets; do not add editor geometry rules here. */
+.home-header {
+  background: #214d3b;
+  border-color: #214d3b;
+}
+.home-header .home-brand { color: #fff; font-size: 19px; }
+.home-header-inner { min-height: 64px; }
+.home-main, .materials-content, .stage1-analysis-page {
+  width: 100%;
+  max-width: 1440px;
+  margin-inline: auto;
+  padding: 24px;
+}
+.home-top-grid.is-single { margin-inline: auto; max-width: 680px; }
+.home-card, .material-panel, .material-summary, .session-card {
+  box-shadow: var(--shadow-soft);
+  border-color: var(--line);
+}
+.home-card h2, .material-summary h2, .material-main h2,
+.session-card > h1, .stage1-analysis-heading h1 { font-size: 22px; line-height: 1.5; }
+.materials-header { min-height: 64px; padding-inline: 24px; }
+.material-summary { flex-wrap: wrap; padding: 20px; gap: 16px; }
+.material-actions { align-items: center; gap: 8px; }
+.material-actions > a, .material-actions > button { display: inline-flex; align-items: center; justify-content: center; }
+.material-series > p[role="group"] { display: flex; flex-wrap: wrap; gap: 8px; }
+.materials-content :is(button, input, select, textarea):not(.concept-canvas *),
+.home-main :is(button, input, select),
+.session-card :is(.session-primary-button, .session-secondary-button) {
+  min-height: 40px;
+}
+.materials-content :is(input, select, textarea), .home-access-control input { font-size: 15px; }
+.materials-content textarea { line-height: 1.7; }
+.materials-content label, .home-access-form > label { color: var(--ink); font-weight: 600; }
+.material-table-scroll, .research-session-table-wrap { border: 1px solid var(--line); border-radius: var(--radius-md); }
+.materials-content table, .research-session-table { border-collapse: collapse; width: 100%; }
+.materials-content th, .research-session-table th { background: var(--surface-accent); color: var(--ink); font-size: 13px; text-align: left; }
+.materials-content :is(th, td), .research-session-table :is(th, td) { padding: 13px 16px; line-height: 1.6; }
+.materials-content tbody tr + tr, .research-session-table tbody tr + tr { border-top: 1px solid var(--line); }
+.materials-content tbody tr:hover, .research-session-table tbody tr:hover { background: var(--surface-muted); }
+.materials-content td a, .research-session-table td a { text-underline-offset: 3px; }
+.materials-content summary { padding-block: 6px; }
+.materials-content :is(.material-muted, .material-footer), .participant-data-scope { color: var(--ink-soft); }
+.session-page.is-learner { padding: 28px 24px; }
+.session-page.is-learner .session-card { max-width: 960px; }
+.experiment-learner > .session-card { margin: 28px auto; width: min(960px, calc(100% - 48px)); padding: 28px; }
+.experiment-learner > .session-card > button { min-height: 40px; padding: 8px 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+.experiment-learner > .session-card > button:disabled { cursor: wait; opacity: .65; }
+.session-card .session-current-panel { padding: 24px; }
+.session-card .session-current-panel > :first-child { margin-top: 0; }
+.session-card .session-current-panel > button { margin-top: 16px; }
+.session-card :is(.session-error, .error-message), .materials-content .session-error { padding: 12px 16px; border: 1px solid #e8cbc7; border-left: 4px solid var(--danger); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.stage1-analysis-exports { display: flex; flex-wrap: wrap; gap: 8px; }
+.stage1-analysis-page > .session-card { width: 100%; margin-bottom: 20px; }
+.stage1-analysis-page pre { max-width: 100%; overflow: auto; }
+.stage1-analysis-page details > summary { cursor: pointer; padding-block: 8px; }
+.home-access-form :focus-visible,
+.home-main :is(a, button):focus-visible,
+.materials-content :focus-visible,
+.session-card :is(button, a, input, select, summary):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+.home-research-workflow {
+  margin-top: 20px;
+}
+.home-section-heading {
+  margin: 0 0 12px;
+}
+.home-section-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+}
+.home-section-heading p {
+  margin: 5px 0 0;
+  color: var(--ink-soft);
+}
+.home-research-workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.home-workflow-card {
+  display: flex;
+  min-height: 205px;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.home-workflow-card .home-card-kicker {
+  margin: 0 0 8px;
+}
+.home-workflow-card h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.5;
+}
+.home-workflow-card .home-card-description {
+  margin: 8px 0 18px;
+}
+.home-workflow-card :is(.home-primary-button, .home-secondary-button) {
+  align-self: flex-start;
+  gap: 8px;
+}
+.home-researcher-utilities {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 2px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.home-researcher-utilities > span {
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 650;
+}
+.home-researcher-utility-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.home-researcher-utilities .home-secondary-link {
+  min-height: 32px;
+  margin-top: 0;
+  padding: 5px 0;
+  font-size: 13px;
+  text-underline-offset: 3px;
+}
+.research-session-list {
+  margin-top: 20px;
+}
+.research-session-list .home-card-heading-row {
+  margin-bottom: 12px;
+}
+.research-session-list .home-card-heading-row > div {
+  min-width: 0;
+}
+.research-session-list .home-card-heading-row > div > p {
+  max-width: 80ch;
+  line-height: 1.55;
+}
+.research-session-actions {
+  display: flex;
+  min-width: 210px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.research-session-actions > span {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+.research-session-actions > :is(a, button) {
+  min-height: 36px;
+  padding: 5px 10px;
+}
+.tutorial-page {
+  max-width: 1240px;
+}
+.tutorial-card {
+  width: 100%;
+}
+.tutorial-heading {
+  display: grid;
+  gap: 8px;
+}
+.tutorial-heading .home-card-kicker {
+  margin: 0;
+}
+.tutorial-heading h1 {
+  margin: 0;
+}
+.tutorial-practice-note {
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+  line-height: 1.65;
+}
+.tutorial-controls {
+  margin: 18px 0 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.tutorial-controls [aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--accent-outline);
+}
+.tutorial-practice-area > h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+.tutorial-practice-description {
+  max-width: 78ch;
+  margin: 0 0 16px;
+  color: var(--ink-soft);
+  line-height: 1.65;
+}
+.tutorial-tools form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+.tutorial-tools form label,
+.tutorial-edit label {
+  display: grid;
+  gap: 5px;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+.tutorial-tools input,
+.tutorial-edit input {
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.tutorial-tools button {
+  min-height: 40px;
+  padding-inline: 14px;
+}
+.tutorial-link-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  color: var(--ink-soft);
+}
+.tutorial-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.tutorial-edit button {
+  min-height: 40px;
+  padding-inline: 12px;
+}
+.tutorial-practice-footnote {
+  margin: 10px 0;
+  color: var(--ink-soft);
+}
+.tutorial-card :is(a, button, input):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+@media (max-width: 760px) {
+  .home-main, .materials-content, .stage1-analysis-page { padding: 16px; }
+  .material-summary { padding: 16px; }
+  .material-actions { width: 100%; }
+  .experiment-learner > .session-card { width: calc(100% - 32px); padding: 20px; }
+  .home-research-workflow-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .home-workflow-card {
+    min-height: 0;
+  }
+  .tutorial-page {
+    padding: 20px 16px;
+  }
+  .tutorial-card {
+    padding: 20px;
+  }
+}
+
+/* P01 shared access entry: match the frame's centered two-panel rhythm while
+   keeping the existing shared researcher/learner authentication flow. */
+.home-page.is-signed-out .home-main {
+  padding: 40px 24px 24px;
+}
+.home-top-grid.is-entry {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 840px;
+}
+.home-page.is-signed-out .home-entry-card {
+  min-height: 400px;
+  padding: 40px 52px;
+}
+.home-page.is-signed-out .home-entry-card .home-card-description {
+  max-width: 700px;
+  line-height: 1.65;
+}
+.home-page.is-signed-out .home-access-form {
+  margin-top: 40px;
+}
+.home-page.is-signed-out .home-access-form > label {
+  margin-bottom: 10px;
+}
+.home-page.is-signed-out .home-access-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+.home-page.is-signed-out .home-access-control input {
+  min-height: 56px;
+  padding: 12px 16px;
+}
+.home-page.is-signed-out .home-access-control .home-primary-button {
+  min-width: 168px;
+  min-height: 45px;
+  justify-self: end;
+}
+.home-page.is-signed-out .home-access-control .home-primary-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+.home-access-submit-status {
+  margin: 12px 0 0;
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+.home-page.is-signed-out .home-access-note {
+  margin-top: auto;
+  padding-top: 12px;
+}
+.home-practice-card {
+  display: flex;
+  width: min(100%, 840px);
+  min-height: 166px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 28px auto 0;
+  padding: 26px 28px;
+}
+.home-practice-card h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 19px;
+}
+.home-practice-card p {
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+}
+.home-practice-card > a {
+  flex: 0 0 auto;
+}
+.home-page.is-signed-out .home-development-note {
+  width: min(100%, 840px);
+  margin-inline: auto;
+  text-align: left;
+}
+
+/* R01 researcher top: two primary destinations, followed by retained
+   secondary status/results and utility areas. */
+.home-page.is-researcher .home-main {
+  width: 100%;
+  max-width: 1440px;
+  padding: 28px clamp(24px, 5.86vw, 80px) 24px;
+}
+.home-researcher-page-heading {
+  max-width: 100%;
+  margin: 0 0 42px;
+}
+.home-researcher-page-heading h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 28px;
+  line-height: 1.35;
+}
+.home-researcher-page-heading p {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+.home-research-workflow {
+  margin-top: 0;
+}
+.home-research-primary-grid,
+.home-research-secondary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 46px;
+}
+.home-research-primary-grid .home-workflow-card {
+  min-height: 414px;
+  padding: 28px 30px;
+}
+.home-research-primary-grid .home-workflow-card h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1.5;
+}
+.home-workflow-features {
+  display: grid;
+  gap: 16px;
+  margin: 20px 0 22px;
+  padding-left: 20px;
+  color: var(--ink);
+  line-height: 1.55;
+}
+.home-research-primary-grid .home-workflow-card .home-primary-button {
+  align-self: flex-end;
+  margin-top: auto;
+}
+.home-research-secondary-heading {
+  margin: 24px 0 12px;
+}
+.home-research-secondary-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+}
+.home-research-secondary-heading p {
+  margin: 5px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+.home-research-secondary-grid .home-workflow-card {
+  min-height: 0;
+}
+.home-research-secondary-grid .home-workflow-card h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 19px;
+  line-height: 1.5;
+}
+.home-research-secondary-grid .home-workflow-card .home-secondary-button {
+  align-self: flex-end;
+  margin-top: auto;
+}
+
+@media (max-width: 860px) {
+  .home-page.is-signed-out .home-entry-card {
+    min-height: 0;
+  }
+  .home-page.is-signed-out .home-access-form {
+    margin-top: 30px;
+  }
+  .home-practice-card {
+    min-height: 0;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .home-page.is-researcher .home-main {
+    padding-inline: 24px;
+  }
+  .home-research-primary-grid,
+  .home-research-secondary-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .home-research-primary-grid .home-workflow-card {
+    min-height: 0;
+  }
+  .home-research-primary-grid .home-workflow-card .home-primary-button {
+    margin-top: 12px;
+  }
+}
+
+@media (max-width: 560px) {
+  .home-page.is-signed-out .home-main,
+  .home-page.is-researcher .home-main {
+    padding: 24px 16px 20px;
+  }
+  .home-page.is-signed-out .home-entry-card {
+    padding: 28px 20px;
+  }
+  .home-page.is-signed-out .home-access-control .home-primary-button {
+    width: 100%;
+  }
+  .home-researcher-page-heading {
+    margin-bottom: 26px;
+  }
+}

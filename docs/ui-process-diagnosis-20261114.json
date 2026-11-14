@@ -1,0 +1,407 @@
+{
+  "syntheticOnly": true,
+  "scope": "Process diagnosis only; product code and assertion/fixture semantics unchanged",
+  "environment": {
+    "platform": "Windows x64 10.0.26300",
+    "npm": "11.12.1",
+    "tsx": "4.23.15",
+    "playwright": "1.64.1",
+    "browser": "Microsoft Edge 157.0.4341.46",
+    "node22": "Not found in PATH and searched existing runtime/cache/worktree locations; not installed"
+  },
+  "targets": [
+    {
+      "test": "test:delivery-reliability",
+      "nodeVersions": [
+        "v24.15.0"
+      ],
+      "exitCode": 0,
+      "durationMs": 16755
+    },
+    {
+      "test": "test:experiment-research",
+      "nodeVersions": [
+        "v24.15.0"
+      ],
+      "exitCode": 1,
+      "durationMs": 10686
+    },
+    {
+      "test": "test:r05-storage",
+      "nodeVersions": [
+        "v24.15.0"
+      ],
+      "exitCode": 0,
+      "durationMs": 9728
+    },
+    {
+      "test": "test:experiment-research",
+      "nodeVersions": [
+        "v24.22.1"
+      ],
+      "exitCode": 0,
+      "durationMs": 141927
+    },
+    {
+      "test": "test:delivery-reliability",
+      "nodeVersions": [
+        "v24.22.1"
+      ],
+      "exitCode": 0,
+      "durationMs": 17118
+    },
+    {
+      "test": "test:r05-storage",
+      "nodeVersions": [
+        "v24.22.1"
+      ],
+      "exitCode": 0,
+      "durationMs": 9913
+    }
+  ],
+  "observedFailure": {
+    "test": "test:experiment-research",
+    "node": "v24.15.0",
+    "process": "verify-experiment-research.ts",
+    "pid": 21804,
+    "exitCode": 3221226505,
+    "firstObservedFailure": "Test process abnormal exit",
+    "parentAssertionLater": true,
+    "precedingNonHealthFetchRejectionObserved": false,
+    "precedingJavaScriptUncaughtExceptionObserved": false,
+    "browserChildStarted": false
+  },
+  "deliveryReset": {
+    "currentTrials": "ECONNRESET not reproduced",
+    "historicalApiLiveness": "Unknown; prior records did not capture API lifecycle at reset time"
+  },
+  "runtimeConclusion": "Uniform Node 24.15.0 still failed once; uniform 24.22.1 passed the three targets and full suite. Runtime causality and original root cause remain unconfirmed.",
+  "windowsEventMetadata": "Normal query denied; elevated narrow Application Error query had no matching events. No dumps read.",
+  "fullSuite": {
+    "node": "v24.22.1",
+    "observedNodeVersions": [
+      "v24.22.1"
+    ],
+    "exitCode": 0,
+    "registered": 61,
+    "recorded": 61,
+    "passed": 61,
+    "failed": [],
+    "durationMs": 1134013,
+    "results": [
+      {
+        "test": "test:test-target-guards",
+        "exitCode": 0,
+        "elapsedMs": 1621
+      },
+      {
+        "test": "test:event-catalog",
+        "exitCode": 0,
+        "elapsedMs": 2681
+      },
+      {
+        "test": "test:research-event-schema",
+        "exitCode": 0,
+        "elapsedMs": 1540
+      },
+      {
+        "test": "test:undo-redo:unit",
+        "exitCode": 0,
+        "elapsedMs": 1419
+      },
+      {
+        "test": "test:merge-release",
+        "exitCode": 0,
+        "elapsedMs": 1389
+      },
+      {
+        "test": "test:five-flow-features",
+        "exitCode": 0,
+        "elapsedMs": 1498
+      },
+      {
+        "test": "test:map-mixed-history",
+        "exitCode": 0,
+        "elapsedMs": 1378
+      },
+      {
+        "test": "test:research-events",
+        "exitCode": 0,
+        "elapsedMs": 3949
+      },
+      {
+        "test": "test:event-export-samples",
+        "exitCode": 0,
+        "elapsedMs": 1562
+      },
+      {
+        "test": "test:event-export",
+        "exitCode": 0,
+        "elapsedMs": 25904
+      },
+      {
+        "test": "test:data-management",
+        "exitCode": 0,
+        "elapsedMs": 4457
+      },
+      {
+        "test": "test:research-note-safety",
+        "exitCode": 0,
+        "elapsedMs": 89381
+      },
+      {
+        "test": "test:stage1:integration",
+        "exitCode": 0,
+        "elapsedMs": 26424
+      },
+      {
+        "test": "test:session-flow-survey",
+        "exitCode": 0,
+        "elapsedMs": 8904
+      },
+      {
+        "test": "test:session-cleanup",
+        "exitCode": 0,
+        "elapsedMs": 7459
+      },
+      {
+        "test": "test:five-flow-composite",
+        "exitCode": 0,
+        "elapsedMs": 27422
+      },
+      {
+        "test": "test:five-flow-feature-maps",
+        "exitCode": 0,
+        "elapsedMs": 3380
+      },
+      {
+        "test": "test:goal-map-transfer",
+        "exitCode": 0,
+        "elapsedMs": 4026
+      },
+      {
+        "test": "test:map-api-v2",
+        "exitCode": 0,
+        "elapsedMs": 6535
+      },
+      {
+        "test": "test:map-failure-retry",
+        "exitCode": 0,
+        "elapsedMs": 6623
+      },
+      {
+        "test": "test:parent-followup",
+        "exitCode": 0,
+        "elapsedMs": 10101
+      },
+      {
+        "test": "test:map-auto-submit-v2",
+        "exitCode": 0,
+        "elapsedMs": 3126
+      },
+      {
+        "test": "test:learning-activity-events",
+        "exitCode": 0,
+        "elapsedMs": 4467
+      },
+      {
+        "test": "test:assessment-events",
+        "exitCode": 0,
+        "elapsedMs": 6293
+      },
+      {
+        "test": "test:server-audit",
+        "exitCode": 0,
+        "elapsedMs": 7678
+      },
+      {
+        "test": "test:audit-routing",
+        "exitCode": 0,
+        "elapsedMs": 2339
+      },
+      {
+        "test": "test:integrated-streams",
+        "exitCode": 0,
+        "elapsedMs": 5497
+      },
+      {
+        "test": "test:integration-invariants",
+        "exitCode": 0,
+        "elapsedMs": 1965
+      },
+      {
+        "test": "test:safe-server-error",
+        "exitCode": 0,
+        "elapsedMs": 1502
+      },
+      {
+        "test": "test:server-recovery",
+        "exitCode": 0,
+        "elapsedMs": 5757
+      },
+      {
+        "test": "test:autosubmit-deadlock",
+        "exitCode": 0,
+        "elapsedMs": 6305
+      },
+      {
+        "test": "test:delivery-reliability",
+        "exitCode": 0,
+        "elapsedMs": 9696
+      },
+      {
+        "test": "test:event-scale",
+        "exitCode": 0,
+        "elapsedMs": 14801
+      },
+      {
+        "test": "test:research-log-ui",
+        "exitCode": 0,
+        "elapsedMs": 10856
+      },
+      {
+        "test": "test:stage1-analysis-layout-browser",
+        "exitCode": 0,
+        "elapsedMs": 17284
+      },
+      {
+        "test": "test:link-position-browser",
+        "exitCode": 0,
+        "elapsedMs": 11961
+      },
+      {
+        "test": "test:session-flow-survey-browser",
+        "exitCode": 0,
+        "elapsedMs": 12288
+      },
+      {
+        "test": "test:five-flow-feedback-browser",
+        "exitCode": 0,
+        "elapsedMs": 11653
+      },
+      {
+        "test": "test:five-flow-features-browser",
+        "exitCode": 0,
+        "elapsedMs": 11003
+      },
+      {
+        "test": "test:undo-role-browser",
+        "exitCode": 0,
+        "elapsedMs": 9651
+      },
+      {
+        "test": "test:delivery-browser",
+        "exitCode": 0,
+        "elapsedMs": 17855
+      },
+      {
+        "test": "test:event-export-browser",
+        "exitCode": 0,
+        "elapsedMs": 29682
+      },
+      {
+        "test": "test:data-management-browser",
+        "exitCode": 0,
+        "elapsedMs": 13663
+      },
+      {
+        "test": "test:session-cleanup-browser",
+        "exitCode": 0,
+        "elapsedMs": 9964
+      },
+      {
+        "test": "test:experiment-foundation",
+        "exitCode": 0,
+        "elapsedMs": 4490
+      },
+      {
+        "test": "test:material-catalog",
+        "exitCode": 0,
+        "elapsedMs": 4793
+      },
+      {
+        "test": "test:material-catalog-browser",
+        "exitCode": 0,
+        "elapsedMs": 15817
+      },
+      {
+        "test": "test:run-management",
+        "exitCode": 0,
+        "elapsedMs": 3802
+      },
+      {
+        "test": "test:run-management-browser",
+        "exitCode": 0,
+        "elapsedMs": 14762
+      },
+      {
+        "test": "test:r05-execution",
+        "exitCode": 0,
+        "elapsedMs": 38066
+      },
+      {
+        "test": "test:participant-access",
+        "exitCode": 0,
+        "elapsedMs": 3770
+      },
+      {
+        "test": "test:participant-access-browser",
+        "exitCode": 0,
+        "elapsedMs": 14997
+      },
+      {
+        "test": "test:r08-progress-display-browser",
+        "exitCode": 0,
+        "elapsedMs": 10458
+      },
+      {
+        "test": "test:rehearsal-ui-browser",
+        "exitCode": 0,
+        "elapsedMs": 26937
+      },
+      {
+        "test": "test:learner-layout-browser",
+        "exitCode": 0,
+        "elapsedMs": 198942
+      },
+      {
+        "test": "test:researcher-ui-layout-browser",
+        "exitCode": 0,
+        "elapsedMs": 26432
+      },
+      {
+        "test": "test:r05-analysis-ui-browser",
+        "exitCode": 0,
+        "elapsedMs": 31655
+      },
+      {
+        "test": "test:experiment-learner",
+        "exitCode": 0,
+        "elapsedMs": 112337
+      },
+      {
+        "test": "test:link-direction-api",
+        "exitCode": 0,
+        "elapsedMs": 19901
+      },
+      {
+        "test": "test:experiment-research",
+        "exitCode": 0,
+        "elapsedMs": 134361
+      },
+      {
+        "test": "test:r05-storage",
+        "exitCode": 0,
+        "elapsedMs": 2286
+      }
+    ]
+  },
+  "sourceIntegrity": {
+    "files": 27,
+    "aggregateSha256": "338d6076098359e4c995af088be8d00c0247b2209acc4f587e98c041225f5c15",
+    "unchangedBeforeAfter": true,
+    "perFileReference": "docs/ui-save-fix-20261114-source-fingerprint.json"
+  },
+  "instrumentation": "Dedicated-process NODE_OPTIONS preload observes spawn/exit and fetch rejection codes, rethrows errors, and filters output; no headers, payloads or credentials logged. Observation can affect timing.",
+  "cleanup": "Both exact task-created mock containers, manifests and export caches removed after canonical guard and identity checks; no surviving observed API processes; existing environments preserved"
+}

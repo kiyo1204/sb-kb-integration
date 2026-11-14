@@ -1,0 +1,389 @@
+/* R05 and researcher analysis presentation only. The data maps, canvas,
+   history markers, interaction geometry, and existing shared UI remain intact. */
+[data-r05-analysis-ui] .r05-page .materials-content {
+  display: grid;
+  gap: 14px;
+  padding: 18px 28px 40px;
+}
+
+[data-r05-analysis-ui] .r05-page .session-card {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 20px 24px;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-intro {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.65;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-feedback {
+  margin: 0;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-feedback-error {
+  border-color: #e4c7c1;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-status-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-section-kicker {
+  margin: 0 0 3px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-status-heading h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-run-status {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-run-status.is-active,
+[data-r05-analysis-ui] .r05-page .r05-run-status.is-complete {
+  border-color: #b9cdbd;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-primary-actions,
+[data-r05-analysis-ui] .r05-page .r05-secondary-actions,
+[data-r05-analysis-ui] .r05-page .r05-submit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-primary-actions {
+  margin-top: 14px;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-secondary-actions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-completion-note {
+  margin: 14px 0 0;
+  padding: 11px 13px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-accent);
+  color: var(--ink-soft);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-lesson-section video {
+  display: block;
+  max-height: 420px;
+  margin-block: 12px;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-lesson-section > label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-block: 12px;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-picker > p {
+  margin-block: 4px 12px;
+  color: var(--ink-soft);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-picker label {
+  display: grid;
+  max-width: 420px;
+  gap: 5px;
+  font-weight: 650;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-heading h2 {
+  margin: 0 0 12px;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-submit-state {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-submit-state strong {
+  color: var(--warning);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-submit-state.is-submitted {
+  border-color: #b9cdbd;
+  background: var(--success-soft);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-submit-state.is-submitted strong {
+  color: var(--success);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-submit-state span,
+[data-r05-analysis-ui] .r05-page .r05-map-submit-state time {
+  font-size: 0.75rem;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-history-view-note {
+  margin: 0 0 12px;
+  color: var(--info);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-workspace > .assessment-actions {
+  align-items: flex-end;
+  gap: 10px;
+  margin-block: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+[data-r05-analysis-ui]
+  .r05-page
+  .r05-map-workspace
+  > .assessment-actions
+  label {
+  display: grid;
+  min-width: 148px;
+  gap: 4px;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-workspace > .assessment-actions input,
+[data-r05-analysis-ui]
+  .r05-page
+  .r05-map-workspace
+  > .assessment-actions
+  select {
+  width: 100%;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-map-workspace > .kit-palette {
+  margin-block: 14px;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-submit-actions {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-submit-actions [role="status"] {
+  margin: 0;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-history-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-history-section h3 {
+  margin: 0 0 8px;
+}
+
+[data-r05-analysis-ui] .r05-page .r05-history-empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+[data-r05-analysis-ui] .r05-page .r05-history-section details {
+  padding-block: 5px;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-page {
+  width: min(100%, 1480px);
+  gap: 14px;
+  padding: 22px 28px 40px;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-page > .session-card {
+  margin: 0;
+  padding: 20px 24px;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 0.9fr);
+  align-items: start;
+  gap: 14px 24px;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-heading {
+  min-width: 0;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-heading > p {
+  overflow-wrap: anywhere;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-exports {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+[data-r05-analysis-ui] .stage1-analysis-exports > strong {
+  grid-column: 1 / -1;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-exports > button {
+  min-height: 42px;
+  margin: 0;
+  line-height: 1.45;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: 8px 18px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+
+[data-r05-analysis-ui] .stage1-analysis-header > .session-error,
+[data-r05-analysis-ui] .stage1-analysis-header > [role="status"] {
+  grid-column: 1 / -1;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-load-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  grid-column: 1 / -1;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-load-error > p {
+  flex: 1 1 420px;
+  margin: 0;
+}
+
+[data-r05-analysis-ui] .stage1-analysis-unavailable,
+[data-r05-analysis-ui] .stage1-analysis-loading {
+  margin: 0;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+}
+
+[data-r05-analysis-ui] .stage1-analysis-page .activity-overview > p,
+[data-r05-analysis-ui] .stage1-analysis-page .map-history-section > p {
+  color: var(--ink-soft);
+}
+
+[data-r05-analysis-ui] .stage1-analysis-page .empty-history,
+[data-r05-analysis-ui] .stage1-analysis-page .snapshot-unavailable,
+[data-r05-analysis-ui]
+  .stage1-analysis-page
+  .map-history-section
+  > [role="status"] {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+}
+
+[data-r05-analysis-ui]
+  .stage1-analysis-page
+  .stage1-analysis-exports
+  > button:focus-visible,
+[data-r05-analysis-ui] .stage1-analysis-navigation > a:focus-visible {
+  outline: 3px solid var(--accent-outline);
+  outline-offset: 3px;
+}
+
+@media (max-width: 900px) {
+  [data-r05-analysis-ui] .stage1-analysis-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  [data-r05-analysis-ui] .stage1-analysis-navigation {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 600px) {
+  [data-r05-analysis-ui] .r05-page .materials-content {
+    padding: 12px;
+  }
+
+  [data-r05-analysis-ui] .r05-page .session-card,
+  [data-r05-analysis-ui] .stage1-analysis-page > .session-card {
+    padding: 16px;
+  }
+
+  [data-r05-analysis-ui] .r05-page .r05-status-heading,
+  [data-r05-analysis-ui] .r05-page .r05-map-heading {
+    flex-direction: column;
+  }
+
+  [data-r05-analysis-ui] .r05-page .r05-map-submit-state {
+    width: 100%;
+  }
+
+  [data-r05-analysis-ui] .stage1-analysis-exports {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  [data-r05-analysis-ui] .stage1-analysis-exports > strong {
+    grid-column: auto;
+  }
+}

@@ -46,15 +46,17 @@
 .is-experiment .kit-palette-groups {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 1fr 1fr;
-  gap: 5px;
+  grid-template-rows: repeat(2, 50px);
+  gap: 4px;
 }
 .is-experiment .kit-palette-groups > div {
   display: flex;
+  height: 50px;
   align-items: center;
-  gap: 20px;
+  gap: 12px;
   min-width: 0;
 }
+.is-experiment .kit-palette-groups h3 { flex: 0 0 130px; margin: 0; }
 .is-experiment .kit-palette-list {
   display: flex;
   flex-wrap: nowrap;
@@ -62,7 +64,8 @@
   overflow-y: hidden;
   gap: 10px;
   flex: 1;
-  padding-bottom: 8px;
+  max-height: 50px;
+  padding: 0 0 4px;
 }
 .is-experiment .kit-palette-list li {
   flex: 0 0 150px;
@@ -87,12 +90,27 @@
   max-width: 320px;
 }
 .is-experiment .kit-palette-groups h3 {
-  flex: 0 0 150px;
+  flex: 0 0 130px;
   font-size: 12px;
 }
 
 /* Keep the toolbar, independent part rows and canvas in one working view. */
 .is-experiment .map-editor-header-actions {justify-content:flex-start;align-items:center;padding:10px 16px;}
+.is-experiment .map-editor-save-status {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  margin-left: auto;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: #f5f8f6;
+  color: #2f624a;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.is-experiment .map-editor-save-status.is-saving { background: #f2f4f2; color: #59665e; }
+.is-experiment .map-editor-save-status.is-error { background: #fff2f0; color: #8d2e2e; }
 .is-experiment .map-editor-header-actions .map-editor-tools {margin:0;order:0;}
 .is-experiment .map-editor-history-actions {order:1;}
 .is-experiment .experiment-fit {order:2;}
@@ -113,12 +131,13 @@
 .is-experiment .kit-palette-heading h2 {font-size:13px;max-width:65%;overflow-wrap:anywhere;}
 .is-experiment .kit-palette-search {position:absolute;right:12px;top:5px;max-width:300px;font-size:12px;}
 .is-experiment .kit-palette-heading > p {display:none;}
-.is-experiment .kit-palette-list {max-height:76px;overflow-y:auto;}
-.is-experiment .kit-palette-part {padding:7px 10px;font-size:12px;}
+.is-experiment .kit-palette-list {max-height:50px;overflow-y:hidden;}
+.is-experiment .kit-palette-part {box-sizing:border-box;height:44px;min-height:44px;padding:6px 10px;font-size:12px;}
 .is-experiment .canvas-connection-area {min-height:0;padding:0;}
 .is-experiment .canvas-connection-guidance:empty {display:none;}
-.is-experiment .concept-canvas-viewport {min-height:280px;height:calc(100vh - 480px);max-height:600px;overflow:auto;}
-.is-experiment.is-prior .concept-canvas-viewport {height:calc(100vh - 310px);}
+.is-experiment .concept-canvas-viewport {min-height:280px;height:min(399px, calc(100vh - 300px));max-height:399px;overflow:auto;}
+.is-experiment .is-map-editor-canvas .concept-canvas-viewport {flex:0 0 auto;}
+.is-experiment.is-prior .concept-canvas-viewport {height:min(576px, calc(100vh - 192px));max-height:576px;}
 @media(max-width:700px){
  .is-experiment .kit-palette-search {position:static;}
  .is-experiment .map-editor-header-actions {flex-wrap:wrap;}
@@ -127,8 +146,8 @@
 
 .concept-seed-tag {display:none;}
 .is-experiment .concept-seed-tag {display:block;position:absolute;top:-14px;right:8px;padding:4px 8px;background:#214d3b;color:white;border-radius:6px;font-size:12px;pointer-events:none;}
-.experiment-learner .is-experiment .concept-canvas-viewport {min-height:280px;height:calc(100vh - 480px);max-height:600px;}
-.experiment-learner .is-experiment.is-prior .concept-canvas-viewport {height:calc(100vh - 310px);}
+.experiment-learner .is-experiment .concept-canvas-viewport {min-height:280px;height:min(399px, calc(100vh - 300px));max-height:399px;flex:0 0 auto;}
+.experiment-learner .is-experiment.is-prior .concept-canvas-viewport {height:min(576px, calc(100vh - 192px));max-height:576px;}
 .experiment-learner .is-experiment .canvas-connection-area:has(.canvas-connection-guidance:empty) {display:none;}
 .is-experiment .map-editor-history-actions {display:flex;position:relative;gap:6px;flex-wrap:nowrap;}
 .is-experiment .map-editor-history-actions > span {position:absolute;top:100%;left:0;font-size:11px;white-space:nowrap;}

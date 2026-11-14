@@ -448,10 +448,19 @@ export default function R05Page({ versionId }: { versionId: string }) {
         <a href={"/research/materials/" + versionId}>教材へ戻る</a>
       </header>
       <div className="materials-content">
-        <p className="session-card">
+        <p className="session-card r05-intro">
           研究者専用のテストです。Map・履歴は研究データと分離して保存します。参加者の実施・コードは作成しません。中断・画面を閉じた後の再開はできません。
         </p>
-        {error && <p role="alert">{error}</p>}
+        {error && (
+          <p className="r05-feedback r05-feedback-error" role="alert">
+            {error}
+          </p>
+        )}
+        {busy && (
+          <p className="r05-feedback" role="status" aria-live="polite">
+            処理中です。応答を確認しています。
+          </p>
+        )}
         {pendingDelete && (
           <button disabled={busy || !online} onClick={() => void remove()}>
             削除結果を再確認
@@ -470,47 +479,82 @@ export default function R05Page({ versionId }: { versionId: string }) {
           </button>
         )}
         {!online && (
-          <p role="status">
+          <p className="r05-feedback" role="status">
             オフラインです。接続が戻るまで操作・提出はできません。
           </p>
         )}
         {!view ? (
-          <p>読み込み中…</p>
+          error ? (
+            <section className="session-card r05-load-error">
+              <h2>テスト状態を表示できません</h2>
+              <p role="status">
+                接続と研究者コードを確認し、状態を再取得してください。
+              </p>
+              <button
+                disabled={busy || !online}
+                onClick={() => {
+                  void load()
+                    .then(() => setError(""))
+                    .catch(() =>
+                      setError(
+                        "テスト状態を読み込めません。研究者コードと教材版を確認してください。",
+                      ),
+                    );
+                }}
+              >
+                状態を再取得
+              </button>
+            </section>
+          ) : (
+            <p className="r05-feedback" role="status">
+              読み込み中…
+            </p>
+          )
         ) : (
           <>
-            <section className="session-card">
-              <h2>{view.material.body.title}</h2>
-              <p role="status">
-                {view.acceptance
-                  ? "テスト実施済み（" +
-                    (view.acceptance.submission_kind === "AUTOMATIC"
-                      ? "期限時自動提出"
-                      : "手動提出") +
-                    "）"
-                  : run
-                    ? "テスト状態：" +
-                      ({
-                        LESSON: "授業確認",
-                        SB: "SB作成",
-                        KB: "KB再構成",
-                        INTEGRATION: "統合マップ作成",
-                        COMPLETE: "提出受理・完了",
-                        INTERRUPTED: "中断",
-                      }[run.phase] ?? "確認中")
-                    : "テスト未実施"}
-              </p>
-              {!view.acceptance && (!run || startUnconfirmed) && (
-                <button disabled={busy} onClick={() => void start()}>
-                  {startUnconfirmed ? "開始結果を再確認" : "テストを開始"}
-                </button>
-              )}
+            <section className="session-card r05-status-card">
+              <div className="r05-status-heading">
+                <div>
+                  <p className="r05-section-kicker">教材版</p>
+                  <h2>{view.material.body.title}</h2>
+                </div>
+                <p
+                  role="status"
+                  className={`r05-run-status${view.acceptance ? " is-complete" : run ? " is-active" : " is-empty"}`}
+                >
+                  {view.acceptance
+                    ? "テスト実施済み（" +
+                      (view.acceptance.submission_kind === "AUTOMATIC"
+                        ? "期限時自動提出"
+                        : "手動提出") +
+                      "）"
+                    : run
+                      ? "テスト状態：" +
+                        ({
+                          LESSON: "授業確認",
+                          SB: "SB作成",
+                          KB: "KB再構成",
+                          INTEGRATION: "統合マップ作成",
+                          COMPLETE: "提出受理・完了",
+                          INTERRUPTED: "中断",
+                        }[run.phase] ?? "確認中")
+                      : "テスト未実施"}
+                </p>
+              </div>
+              <div className="r05-primary-actions">
+                {!view.acceptance && (!run || startUnconfirmed) && (
+                  <button disabled={busy} onClick={() => void start()}>
+                    {startUnconfirmed ? "開始結果を再確認" : "テストを開始"}
+                  </button>
+                )}
+              </div>
               {run && !active && !view.acceptance && (
-                <p>
+                <p className="r05-completion-note">
                   この画面では中断したテストを再開できません。Map・履歴の確認と削除ができます。削除完了後に新しいテストを開始できます。
                 </p>
               )}
               {run && (
-                <>
+                <div className="r05-secondary-actions">
                   <button
                     disabled={busy}
                     onClick={() =>
@@ -536,16 +580,16 @@ export default function R05Page({ versionId }: { versionId: string }) {
                         テストを中断
                       </button>
                     )}
-                </>
+                </div>
               )}
               {view.acceptance && (
-                <p>
+                <p className="r05-completion-note">
                   完了記録はテストデータ削除後も保持します。完了済み教材版の再テストはできません。
                 </p>
               )}
             </section>
             {active && run?.phase === "LESSON" && (
-              <section className="session-card">
+              <section className="session-card r05-lesson-section">
                 <h2>授業・動画</h2>
                 <video
                   controls
@@ -570,8 +614,9 @@ export default function R05Page({ versionId }: { versionId: string }) {
               </section>
             )}
             {run && (
-              <section className="session-card">
+              <section className="session-card r05-map-picker">
                 <h2>Map・履歴の確認</h2>
+                <p>活動Mapの保存状態と、記録された操作履歴を確認できます。</p>
                 <label>
                   表示するMap
                   <select
@@ -592,8 +637,27 @@ export default function R05Page({ versionId }: { versionId: string }) {
               </section>
             )}
             {map && state && (
-              <section className="session-card">
-                <h2>{map.map_kind}</h2>
+              <section className="session-card r05-map-workspace">
+                <div className="r05-map-heading">
+                  <h2>{map.map_kind}</h2>
+                  <p
+                    className={`r05-map-submit-state${map.submitted_at ? " is-submitted" : " is-draft"}`}
+                    role="status"
+                  >
+                    <strong>{map.submitted_at ? "提出済み" : "未提出"}</strong>
+                    <span>選択中Map本体の現在の状態</span>
+                    {map.submitted_at && (
+                      <time dateTime={map.submitted_at}>
+                        提出時刻：{new Date(map.submitted_at).toLocaleString()}
+                      </time>
+                    )}
+                  </p>
+                </div>
+                {historyState && (
+                  <p className="r05-history-view-note" role="status">
+                    履歴の状態を表示中です。上の提出状態は選択中Map本体の現在の記録です。
+                  </p>
+                )}
                 <details>
                   <summary>固定教材版の課題説明</summary>
                   <p style={{ whiteSpace: "pre-wrap" }}>
@@ -832,7 +896,7 @@ export default function R05Page({ versionId }: { versionId: string }) {
                   }}
                 />
                 {!readonly && (
-                  <div>
+                  <div className="r05-submit-actions">
                     {run?.phase === "KB" && (
                       <>
                         <button
@@ -865,37 +929,50 @@ export default function R05Page({ versionId }: { versionId: string }) {
                     </button>
                   </div>
                 )}
-                <h3>保存済み操作履歴</h3>
-                {(view.data?.history ?? [])
-                  .filter((h) => h.test_map_id === map.id)
-                  .map((h) => (
-                    <details key={h.id}>
-                      <summary>
-                        {operationNames[h.operation.operationType] ??
-                          h.operation.operationType}{" "}
-                        / {new Date(h.recorded_at).toLocaleString()}
-                      </summary>
-                      <button
-                        onClick={() => setHistoryState(h.operation.before)}
-                      >
-                        変更前を見る
-                      </button>
-                      <button
-                        onClick={() => setHistoryState(h.operation.after)}
-                      >
-                        変更後を見る
-                      </button>
-                    </details>
-                  ))}
-                {historyState && (
-                  <button onClick={() => setHistoryState(null)}>
-                    現在状態へ戻る
-                  </button>
-                )}
+                <section
+                  className="r05-history-section"
+                  aria-labelledby="r05-history-title"
+                >
+                  <h3 id="r05-history-title">保存済み操作履歴</h3>
+                  {(view.data?.history ?? []).filter(
+                    (h) => h.test_map_id === map.id,
+                  ).length === 0 ? (
+                    <p className="r05-history-empty">
+                      このMapの保存済み操作履歴はありません。
+                    </p>
+                  ) : (
+                    (view.data?.history ?? [])
+                      .filter((h) => h.test_map_id === map.id)
+                      .map((h) => (
+                        <details key={h.id}>
+                          <summary>
+                            {operationNames[h.operation.operationType] ??
+                              h.operation.operationType}{" "}
+                            / {new Date(h.recorded_at).toLocaleString()}
+                          </summary>
+                          <button
+                            onClick={() => setHistoryState(h.operation.before)}
+                          >
+                            変更前を見る
+                          </button>
+                          <button
+                            onClick={() => setHistoryState(h.operation.after)}
+                          >
+                            変更後を見る
+                          </button>
+                        </details>
+                      ))
+                  )}
+                  {historyState && (
+                    <button onClick={() => setHistoryState(null)}>
+                      現在状態へ戻る
+                    </button>
+                  )}
+                </section>
               </section>
             )}
             {run && (
-              <section className="session-card">
+              <section className="session-card r05-audit-section">
                 <h2>活動・提出の処理結果</h2>
                 {view.audit?.map((a, i) => (
                   <p key={i}>
