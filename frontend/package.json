@@ -26,11 +26,16 @@
     "test:material-catalog-browser": "tsx scripts/verify-material-catalog-browser.ts",
     "test:run-management-browser": "tsx scripts/verify-run-management-browser.ts",
     "test:participant-access-browser": "tsx scripts/verify-participant-access-browser.ts",
+    "test:r08-progress-display-browser": "tsx scripts/verify-r08-progress-display-browser.ts",
+    "test:rehearsal-ui-browser": "tsx scripts/verify-rehearsal-ui-browser.ts",
+    "test:learner-layout-browser": "tsx scripts/verify-learner-layout-browser.ts",
     "test:experiment-learner-browser": "tsx scripts/verify-experiment-learner-browser.ts",
     "test:r05-browser": "tsx scripts/verify-r05-browser.ts",
     "test:experiment-research-browser": "tsx scripts/verify-experiment-research-browser.ts",
     "test:experiment-end-browser": "tsx scripts/verify-experiment-end-browser.ts",
-    "test:uuid-lan-browser": "tsx scripts/verify-uuid-lan-browser.ts"
+    "test:uuid-lan-browser": "tsx scripts/verify-uuid-lan-browser.ts",
+    "test:researcher-ui-layout-browser": "tsx scripts/verify-researcher-ui-layout-browser.ts",
+    "test:r05-analysis-ui-browser": "tsx scripts/verify-r05-analysis-ui-browser.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",

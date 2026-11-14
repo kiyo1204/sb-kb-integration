@@ -393,7 +393,9 @@ function RunList() {
                         <td>{r.plannedParticipants}</td>
                         <td>{r.registeredSessions}</td>
                         <td>
-                          <span className="material-badge">
+                          <span
+                            className={`material-badge run-state-badge run-state-${r.state.toLowerCase()}`}
+                          >
                             {r.state === "PREPARING"
                               ? "準備中"
                               : r.state === "RUNNING" ? "実施中（模擬）" : r.state === "ENDED" ? "終了" : "未対応の状態"}

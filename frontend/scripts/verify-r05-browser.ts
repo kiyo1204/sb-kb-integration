@@ -132,6 +132,146 @@ try {
   await page.waitForFunction(
     () => document.querySelectorAll(".concept-node").length === 2,
   );
+
+  await page
+    .getByLabel("概念・リンク名", { exact: true })
+    .fill("TEST ONLY endpoint target");
+  await page.getByRole("button", { name: "概念を追加", exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelectorAll(".concept-node").length === 3,
+  );
+  const beforeLink = await (
+    await fetch(endpoint, { headers: { Authorization: "Bearer " + token } })
+  ).json();
+  const sbBeforeLink = beforeLink.data.maps.find(
+    (m: { map_kind: string }) => m.map_kind === "SB",
+  );
+  assert.equal(sbBeforeLink.state.concepts.length, 3);
+  const [linkSource, linkTarget, alternateSource] =
+    sbBeforeLink.state.concepts;
+  await page.getByLabel("始点", { exact: true }).selectOption(linkSource.id);
+  await page.getByLabel("終点", { exact: true }).selectOption(linkTarget.id);
+  await page
+    .getByLabel("概念・リンク名", { exact: true })
+    .fill("TEST ONLY endpoint relation");
+  const addLinkResponse = page.waitForResponse((response) => {
+    const request = response.request();
+    return (
+      new URL(response.url()).pathname.endsWith("/operations") &&
+      request.method() === "POST" &&
+      request.postDataJSON()?.action === "ADD_LINK"
+    );
+  });
+  await page.getByRole("button", { name: "リンクを追加", exact: true }).click();
+  assert.equal((await addLinkResponse).status(), 200);
+  const linkCreatedView = await (
+    await fetch(endpoint, { headers: { Authorization: "Bearer " + token } })
+  ).json();
+  const sbWithLink = linkCreatedView.data.maps.find(
+    (m: { map_kind: string }) => m.map_kind === "SB",
+  );
+  const createdLink = sbWithLink.state.links[0];
+  assert.equal(createdLink.sourceConceptId, linkSource.id);
+  assert.equal(createdLink.targetConceptId, linkTarget.id);
+
+  const sourceHandle = page.locator(
+    ".concept-canvas .link-connector-handle.is-source",
+  );
+  await sourceHandle.waitFor();
+  const endpointGeometry = await sourceHandle.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const canvas = element.closest<HTMLElement>(".concept-canvas");
+    const rect = element.getBoundingClientRect();
+    return {
+      width: style.width,
+      height: style.height,
+      minHeight: style.minHeight,
+      padding: style.padding,
+      canvasZoom: canvas ? Number.parseFloat(getComputedStyle(canvas).zoom) : 0,
+      excludedFromMaterialsButtonRule: !element.matches(
+        ".materials-page button:not(.concept-canvas *)",
+      ),
+      rectWidth: rect.width,
+      rectHeight: rect.height,
+    };
+  });
+  assert.equal(endpointGeometry.excludedFromMaterialsButtonRule, true);
+  assert.equal(endpointGeometry.width, "18px");
+  assert.equal(endpointGeometry.height, "18px");
+  assert.notEqual(endpointGeometry.minHeight, "38px");
+  assert.equal(endpointGeometry.padding, "0px");
+  assert.ok(endpointGeometry.rectWidth > 0);
+  assert.ok(endpointGeometry.canvasZoom > 0);
+  assert.ok(
+    Math.abs(endpointGeometry.rectWidth / endpointGeometry.canvasZoom - 18) <
+      0.5,
+    JSON.stringify(endpointGeometry),
+  );
+  assert.ok(
+    Math.abs(endpointGeometry.rectHeight / endpointGeometry.canvasZoom - 18) <
+      0.5,
+    JSON.stringify(endpointGeometry),
+  );
+
+  const endpointOperations: string[] = [];
+  const recordEndpointOperation = (request: import("playwright").Request) => {
+    if (!new URL(request.url()).pathname.endsWith("/operations")) return;
+    if (request.method() !== "POST") return;
+    endpointOperations.push(request.postDataJSON()?.action ?? "");
+  };
+  page.on("request", recordEndpointOperation);
+  await sourceHandle.click();
+  assert.deepEqual(endpointOperations, []);
+  const afterEndpointClick = await (
+    await fetch(endpoint, { headers: { Authorization: "Bearer " + token } })
+  ).json();
+  const sbAfterEndpointClick = afterEndpointClick.data.maps.find(
+    (m: { map_kind: string }) => m.map_kind === "SB",
+  );
+  assert.deepEqual(sbAfterEndpointClick.state.links, sbWithLink.state.links);
+
+  const alternateNode = page.locator(
+    `[data-concept-id="${alternateSource.id}"]`,
+  );
+  await alternateNode.scrollIntoViewIfNeeded();
+  const handleBox = await sourceHandle.boundingBox();
+  const alternateBox = await alternateNode.boundingBox();
+  assert.ok(handleBox);
+  assert.ok(alternateBox);
+  const reconnectResponse = page.waitForResponse((response) => {
+    const request = response.request();
+    return (
+      new URL(response.url()).pathname.endsWith("/operations") &&
+      request.method() === "POST" &&
+      request.postDataJSON()?.action === "RECONNECT_LINK"
+    );
+  });
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    alternateBox.x + alternateBox.width / 2,
+    alternateBox.y + alternateBox.height / 2,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  assert.equal((await reconnectResponse).status(), 200);
+  assert.deepEqual(endpointOperations, ["RECONNECT_LINK"]);
+  page.off("request", recordEndpointOperation);
+  const afterReconnect = await (
+    await fetch(endpoint, { headers: { Authorization: "Bearer " + token } })
+  ).json();
+  const sbAfterReconnect = afterReconnect.data.maps.find(
+    (m: { map_kind: string }) => m.map_kind === "SB",
+  );
+  const persistedLink = sbAfterReconnect.state.links.find(
+    (link: { id: string }) => link.id === createdLink.id,
+  );
+  assert.equal(persistedLink.sourceConceptId, alternateSource.id);
+  assert.equal(persistedLink.targetConceptId, linkTarget.id);
+
   await page
     .getByRole("button", { name: "このMapを提出", exact: true })
     .click();

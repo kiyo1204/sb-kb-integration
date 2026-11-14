@@ -222,14 +222,24 @@ try {
     .getByRole("button", { name: "Drawerを閉じる", exact: true })
     .click();
   await page.getByRole("button", { name: "全体表示", exact: true }).click();
-  await page.getByText("初期概念は移動・リンク接続ができます。名前変更・削除はできません。", { exact: true }).waitFor();
-  await page.screenshot({ path: join(dir, "sb-unselected.png"), fullPage: true });
+  await page
+    .getByText(
+      "初期概念は移動・リンク接続ができます。名前変更・削除はできません。",
+      { exact: true },
+    )
+    .waitFor();
+  await page.screenshot({
+    path: join(dir, "sb-unselected.png"),
+    fullPage: true,
+  });
   // UI-only missing-seed fixture. No persisted seed or DB constraint is changed.
   const mapGet = /\/api\/maps\/[^/?]+$/;
-  await page.route(mapGet, async route => {
+  await page.route(mapGet, async (route) => {
     if (route.request().method() !== "GET") return route.continue();
     const response = await route.fetch();
-    const body = JSON.stringify(await response.json(), (key, value) => key === "isSeed" ? false : value);
+    const body = JSON.stringify(await response.json(), (key, value) =>
+      key === "isSeed" ? false : value,
+    );
     await route.fulfill({ response, body });
   });
   await page.getByRole("link", { name: /セッション画面へ戻る/ }).click();
@@ -237,11 +247,73 @@ try {
   await page.getByRole("heading", { name: /Scratch-Build/ }).waitFor();
   await page.locator(".concept-node").first().waitFor();
   assert.equal(await page.locator(".experiment-seed-guidance").count(), 0);
-  await page.screenshot({ path: join(dir, "sb-no-seed-fixture.png"), fullPage: true });
+  await page.screenshot({
+    path: join(dir, "sb-no-seed-fixture.png"),
+    fullPage: true,
+  });
   await page.unroute(mapGet);
   await page.getByRole("link", { name: /セッション画面へ戻る/ }).click();
   await page.getByRole("button", { name: "続ける", exact: true }).click();
   await page.locator(".experiment-seed-guidance").waitFor();
+  const reopenCurrentMap = async () => {
+    await page.getByRole("link", { name: /セッション画面へ戻る/ }).click();
+    await page.getByRole("button", { name: "続ける", exact: true }).click();
+    await page.getByRole("heading", { name: /Scratch-Build/ }).waitFor();
+    await page.locator(".experiment-seed-guidance").waitFor();
+  };
+  const scrollSeed = await page.evaluate(async (sessionId) => {
+    const { apiFetch } = await import("/src/auth-client.ts");
+    const flowResponse = await apiFetch(`/api/sessions/${sessionId}/flow`);
+    if (!flowResponse.ok) throw new Error("scroll fixture flow unavailable");
+    const flow = await flowResponse.json();
+    const mapId = flow.currentStage.mapId as string;
+    const mapResponse = await apiFetch(`/api/maps/${mapId}`);
+    if (!mapResponse.ok) throw new Error("scroll fixture map unavailable");
+    const map = await mapResponse.json();
+    const seed = map.concepts.find(
+      (concept: { isSeed?: boolean }) => concept.isSeed,
+    );
+    if (!seed) throw new Error("scroll fixture seed unavailable");
+    const moved = await apiFetch(`/api/concepts/${seed.id}/position`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ positionX: 1250, positionY: 720 }),
+    });
+    if (!moved.ok) throw new Error("scroll fixture position unavailable");
+    return { mapId, seedId: seed.id };
+  }, sid);
+  // Re-enter through the session flow so the active experimental client claim
+  // remains the same while MapPage fetches the persisted state again.
+  await reopenCurrentMap();
+  await page.setViewportSize({ width: 1366, height: 640 });
+  const scrollState = await page.evaluate(() => {
+    const viewport = document.querySelector<HTMLElement>(
+        ".concept-canvas-viewport",
+      ),
+      canvas = document.querySelector<HTMLElement>(".concept-canvas");
+    if (!viewport || !canvas) throw new Error("scroll canvas unavailable");
+    const pageMax = document.documentElement.scrollHeight - window.innerHeight;
+    if (pageMax > 0) window.scrollTo(0, Math.min(100, pageMax));
+    const maxLeft = viewport.scrollWidth - viewport.clientWidth,
+      maxTop = viewport.scrollHeight - viewport.clientHeight;
+    viewport.scrollLeft = maxLeft;
+    viewport.scrollTop = maxTop;
+    return {
+      pageMax,
+      pageScrollY: window.scrollY,
+      scrollLeft: viewport.scrollLeft,
+      maxLeft,
+      scrollTop: viewport.scrollTop,
+      maxTop,
+      zoom: canvas.style.zoom,
+    };
+  });
+  assert.ok(scrollState.maxLeft > 0, "test map must overflow horizontally");
+  assert.ok(scrollState.maxTop > 0, "test map must overflow vertically");
+  assert.ok(scrollState.scrollLeft > 0 && scrollState.scrollTop > 0);
+  assert.equal(scrollState.zoom, "1", "scroll coordinate case uses 100% zoom");
+  if (scrollState.pageMax > 0)
+    assert.ok(scrollState.pageScrollY > 0, "outer page scroll is active");
   const seedNode = page.locator(".concept-node").first(),
     seedBox = await seedNode.boundingBox();
   assert.ok(seedBox);
@@ -262,11 +334,66 @@ try {
   );
   await page.mouse.up();
   assert.equal((await moved).status(), 200);
+  const persistedPosition = await page.evaluate(async ({ mapId, seedId }) => {
+    const { apiFetch } = await import("/src/auth-client.ts");
+    const response = await apiFetch(`/api/maps/${mapId}`);
+    if (!response.ok) throw new Error("saved scroll map unavailable");
+    const map = await response.json();
+    const seed = map.concepts.find(
+      (concept: { id: string }) => concept.id === seedId,
+    );
+    if (!seed) throw new Error("saved scroll seed unavailable");
+    return { positionX: seed.positionX, positionY: seed.positionY };
+  }, scrollSeed);
+  assert.deepEqual(persistedPosition, { positionX: 1290, positionY: 750 });
+  await reopenCurrentMap();
+  const reloadedPosition = await page.evaluate(async ({ mapId, seedId }) => {
+    const { apiFetch } = await import("/src/auth-client.ts");
+    const response = await apiFetch(`/api/maps/${mapId}`);
+    if (!response.ok) throw new Error("reloaded scroll map unavailable");
+    const map = await response.json();
+    const seed = map.concepts.find(
+      (concept: { id: string }) => concept.id === seedId,
+    );
+    if (!seed) throw new Error("reloaded scroll seed unavailable");
+    return { positionX: seed.positionX, positionY: seed.positionY };
+  }, scrollSeed);
+  assert.deepEqual(reloadedPosition, persistedPosition);
+  await page.setViewportSize({ width: 1366, height: 1200 });
+  await page.getByRole("button", { name: "全体表示", exact: true }).click();
+  await page.locator(".experiment-seed-guidance").waitFor();
+  await page
+    .locator(".map-editor-save-status")
+    .filter({ hasText: "保存済み" })
+    .waitFor();
   await page.screenshot({ path: join(dir, "p05.png"), fullPage: true });
-  await seedNode.click();
+  let clickPositionWrites = 0;
+  const countClickPositionWrites = (request: import("playwright").Request) => {
+    if (
+      request.method() === "PATCH" &&
+      /\/concepts\/[^/]+\/position$/.test(new URL(request.url()).pathname)
+    )
+      clickPositionWrites += 1;
+  };
+  page.on("request", countClickPositionWrites);
+  try {
+    await seedNode.click();
+    await page
+      .getByRole("button", { name: "Drawerを閉じる", exact: true })
+      .waitFor();
+  } finally {
+    page.off("request", countClickPositionWrites);
+  }
+  assert.equal(
+    clickPositionWrites,
+    0,
+    "clicking a concept after canvas fit must not save a position change",
+  );
   assert.ok(await page.locator(".experiment-seed-guidance").isVisible());
   await page.screenshot({ path: join(dir, "sb-selected.png"), fullPage: true });
-  await page.getByRole("button", { name: "Drawerを閉じる", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Drawerを閉じる", exact: true })
+    .click();
   await page.context().setOffline(true);
   await page
     .getByText("オフライン：保存・提出はできません。", { exact: false })
@@ -288,9 +415,20 @@ try {
       .getByRole("button", { name: "最終提出", exact: true })
       .isDisabled(),
   );
-  await page.locator("#kb-submission-guidance").filter({hasText:"未確認です"}).waitFor();
-  await page.getByText("最終提出時は、前回の結果にかかわらずサーバーが最新のマップを再判定します。", { exact: true }).waitFor();
-  await page.screenshot({ path: join(dir, "kb-unchecked.png"), fullPage: true });
+  await page
+    .locator("#kb-submission-guidance")
+    .filter({ hasText: "未確認です" })
+    .waitFor();
+  await page
+    .getByText(
+      "最終提出時は、前回の結果にかかわらずサーバーが最新のマップを再判定します。",
+      { exact: true },
+    )
+    .waitFor();
+  await page.screenshot({
+    path: join(dir, "kb-unchecked.png"),
+    fullPage: true,
+  });
   await page.getByRole("button", { name: "一時提出", exact: true }).click();
   await page.locator(".kit-feedback-result-heading").waitFor();
   assert.ok(
@@ -314,12 +452,43 @@ try {
       ),
     "independent scrolling palettes",
   );
-  await page.locator("#kb-submission-guidance").filter({hasText:"確認結果：不一致"}).waitFor();
+  await page
+    .locator("#kb-submission-guidance")
+    .filter({ hasText: "確認結果：不一致" })
+    .waitFor();
   await page.screenshot({ path: join(dir, "kb-mismatch.png"), fullPage: true });
-  // Native mouse drag of a real palette part, then Undo restores its availability.
-  const part = page.locator(".kit-palette-part.is-concept").first(),
+  // Force the existing two-item real palette into a scrollable row in this
+  // test only, then use the scrolled part through the actual learner API.
+  const conceptList = page.locator(".kit-palette-list").first(),
+    part = page.locator(".kit-palette-part.is-concept").nth(1),
     canvas = page.locator(".concept-canvas").first();
+  const paletteWidth = await conceptList.evaluate((list) => {
+    const first = list.firstElementChild as HTMLElement | null;
+    if (!first) throw new Error("palette concept fixture unavailable");
+    first.style.flex = `0 0 ${list.clientWidth}px`;
+    return { clientWidth: list.clientWidth, scrollWidth: list.scrollWidth };
+  });
+  assert.ok(paletteWidth.scrollWidth > paletteWidth.clientWidth);
   await part.scrollIntoViewIfNeeded();
+  const scrolledPart = await conceptList.evaluate((list) => {
+    const item = list.querySelectorAll<HTMLElement>(
+        ".kit-palette-part.is-concept",
+      )[1],
+      viewport = list.getBoundingClientRect(),
+      bounds = item?.getBoundingClientRect();
+    return {
+      scrollLeft: list.scrollLeft,
+      visible:
+        !!bounds &&
+        bounds.right > viewport.left &&
+        bounds.left < viewport.right,
+    };
+  });
+  assert.ok(
+    scrolledPart.scrollLeft > 0,
+    "second Kit Concept is reached by horizontal scrolling",
+  );
+  assert.equal(scrolledPart.visible, true);
   const from = await part.boundingBox(),
     box = await canvas.boundingBox();
   assert.ok(box && from);
@@ -332,21 +501,40 @@ try {
   await page.mouse.move(box.x + 250, box.y + 100, { steps: 15 });
   await page.mouse.move(box.x + 255, box.y + 105);
   await page.mouse.up();
+  await page.waitForFunction(() => {
+    const parts = document.querySelectorAll<HTMLButtonElement>(
+      ".kit-palette-part.is-concept",
+    );
+    return parts[1]?.disabled === true;
+  });
   await page.waitForFunction(
     () =>
-      document.querySelector<HTMLButtonElement>(".kit-palette-part.is-concept")
-        ?.disabled === true,
+      !document
+        .querySelector(".kit-feedback-check-button")
+        ?.hasAttribute("disabled"),
   );
-  await page.waitForFunction(() => !document.querySelector(".kit-feedback-check-button")?.hasAttribute("disabled"));
-  await page.locator("#kb-submission-guidance").filter({hasText:"前回の結果は古く"}).waitFor();
-  assert.ok(await page.getByRole("button", { name: "最終提出", exact: true }).isDisabled());
+  await page
+    .locator("#kb-submission-guidance")
+    .filter({ hasText: "前回の結果は古く" })
+    .waitFor();
+  assert.ok(
+    await page
+      .getByRole("button", { name: "最終提出", exact: true })
+      .isDisabled(),
+  );
   await page.screenshot({ path: join(dir, "kb-stale.png"), fullPage: true });
   await page.getByRole("button", { name: "元に戻す", exact: true }).click();
-  await page.waitForFunction(
-    () =>
-      document.querySelector<HTMLButtonElement>(".kit-palette-part.is-concept")
-        ?.disabled === false,
-  );
+  await page.waitForFunction(() => {
+    const parts = document.querySelectorAll<HTMLButtonElement>(
+      ".kit-palette-part.is-concept",
+    );
+    return parts[1]?.disabled === false;
+  });
+  await conceptList.evaluate((list) => {
+    const first = list.firstElementChild as HTMLElement | null;
+    if (first) first.style.flex = "";
+    list.scrollLeft = 0;
+  });
   await page.screenshot({ path: join(dir, "p06.png"), fullPage: true });
   // Use the same application client for the rest of the synthetic graph, preserving
   // real authentication, edit generation, persistence and API checks.
@@ -435,8 +623,14 @@ try {
     .getByRole("dialog")
     .getByRole("button", { name: "閉じる", exact: true })
     .click();
-  await page.locator("#kb-submission-guidance").filter({hasText:"確認結果：一致"}).waitFor();
-  await page.screenshot({ path: join(dir, "kb-confirmed.png"), fullPage: true });
+  await page
+    .locator("#kb-submission-guidance")
+    .filter({ hasText: "確認結果：一致" })
+    .waitFor();
+  await page.screenshot({
+    path: join(dir, "kb-confirmed.png"),
+    fullPage: true,
+  });
   await page.getByRole("button", { name: "最終提出", exact: true }).click();
   await page.getByRole("region", { name: "P04 課題説明" }).waitFor();
   await page.getByRole("button", { name: "開始する", exact: true }).click();
