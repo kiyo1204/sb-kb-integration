@@ -1,0 +1,120 @@
+{
+  "scope": "modified or untracked backend/frontend source, test scripts, and package config",
+  "files": [
+    {
+      "path": "backend/src/experiment-participant-access.ts",
+      "sha256": "73213d319d9d2dbeb0ece889c6c799814909c2685a1e4858566857bedfb42d27"
+    },
+    {
+      "path": "backend/src/scripts/run-research-event-suite.ts",
+      "sha256": "31b104594bc9c83d20a628e0f3b3431debad9a48b1d884becf6c1bde8e692aa9"
+    },
+    {
+      "path": "backend/src/scripts/verify-participant-access.ts",
+      "sha256": "95b589666a0b0a74dcee91a4d537e2c81488425a58dc215e80cce90318f9b725"
+    },
+    {
+      "path": "frontend/package.json",
+      "sha256": "5f6fa4fdcdd2f1d6bd331efa8b654ab0f88ebd89a50e067f97299a922f7ca793"
+    },
+    {
+      "path": "frontend/scripts/verify-experiment-end-browser.ts",
+      "sha256": "8072eeaa5b7d2d4ca070eb42000ebed1cae8f28f62093fbf24f7116170bdcd4f"
+    },
+    {
+      "path": "frontend/scripts/verify-experiment-learner-browser.ts",
+      "sha256": "03b3e72797a96614933d5595d9433cf0409dec2f29174a2a698be61d697fd05e"
+    },
+    {
+      "path": "frontend/scripts/verify-learner-layout-browser.ts",
+      "sha256": "d04dafe95cb938f713454bde6e6e9f868b0326938320ddbefa47421636745e2f"
+    },
+    {
+      "path": "frontend/scripts/verify-participant-access-browser.ts",
+      "sha256": "adee2b3b7719dd6da037c8227116e45a09d33c0a78bebd760cd5254ad8d61fc7"
+    },
+    {
+      "path": "frontend/scripts/verify-r05-analysis-ui-browser.ts",
+      "sha256": "20c99b540b4372389bb9ed4cbb0fc9693837aa32e50a77d094af4946cca2052a"
+    },
+    {
+      "path": "frontend/scripts/verify-r05-browser.ts",
+      "sha256": "ce919f854868f00dd91665835ccc6300d1a3d2b9c24b68d3d21b901581338fe4"
+    },
+    {
+      "path": "frontend/scripts/verify-r08-progress-display-browser.ts",
+      "sha256": "6b3bf919d1a789f28be65902b2397ecfc922be2c48010d61cfa9de7b726de48e"
+    },
+    {
+      "path": "frontend/scripts/verify-rehearsal-ui-browser.ts",
+      "sha256": "0ba164d1be7d5fc2b70873a667400e534fa06c1f9c1da9d3f5547678684baa38"
+    },
+    {
+      "path": "frontend/scripts/verify-researcher-ui-layout-browser.ts",
+      "sha256": "4010ea7c4550598f936b9f4f39dbe9b59c70903e17b3da02cdb0f44bcd4051d0"
+    },
+    {
+      "path": "frontend/src/experiment-learner.css",
+      "sha256": "32ff10a2e455d3ece523ac7b6d82f28252595e35b5da184f7e4572ae64ba30cd"
+    },
+    {
+      "path": "frontend/src/experiment-participants.css",
+      "sha256": "18c3a83b81abc078fc0b4954d8ddbf1740d11bf5ff10076bea9fc8b674dfddc6"
+    },
+    {
+      "path": "frontend/src/ExperimentParticipantsPage.tsx",
+      "sha256": "2fc63fd64b0bac59362acd3f45aa4b224e80387d2e0bc00607821e8e4d4c68ef"
+    },
+    {
+      "path": "frontend/src/ExperimentRunsPage.tsx",
+      "sha256": "052e856f307fe25922b14c6b8576ea498b947eee64aedd9bfec614984c2533d3"
+    },
+    {
+      "path": "frontend/src/HomePage.tsx",
+      "sha256": "8db3d1dbe6780c9097c377b4d5aa0f4977abbf2cc996a3c6db65a775d0fe6d3f"
+    },
+    {
+      "path": "frontend/src/main.tsx",
+      "sha256": "78b3789e2c54106f862e564b51990972d2ae6d2da3029d83c944ffceafb588c9"
+    },
+    {
+      "path": "frontend/src/MapPage.tsx",
+      "sha256": "d06637d7d13981302c989ec7a53c3bdb5d09923cd6030fa5700e4b6c26745ced"
+    },
+    {
+      "path": "frontend/src/materials.css",
+      "sha256": "f1a1251b6200622e2ac4c77cc294d48953559a8aca01ae6eed72bea47375389f"
+    },
+    {
+      "path": "frontend/src/r05-analysis-ui.css",
+      "sha256": "1ebc2fd473c17ba9f2d22a4f72aa44e1f71cf2c884180595ae8717ca353bb159"
+    },
+    {
+      "path": "frontend/src/R05Page.tsx",
+      "sha256": "13df77342de0166ade85b9dde29f94d8d5eee692b624092067107872c5575431"
+    },
+    {
+      "path": "frontend/src/rehearsal-ui.css",
+      "sha256": "4477b07afca4dcd7ecc0e5513ea7b05e932f83d7617f588820f2a4e964dd49c3"
+    },
+    {
+      "path": "frontend/src/researcher-ui.css",
+      "sha256": "067ac8c7222e82845a2b85890391cdc8e09ec98cdc8179ad78a8b9d7237ad192"
+    },
+    {
+      "path": "frontend/src/Stage1AnalysisPage.tsx",
+      "sha256": "98e52fe7d624ecebfbd1fd808be6ae2305ab40974c7cf355ab0420ed42831d4b"
+    },
+    {
+      "path": "frontend/src/TutorialPage.tsx",
+      "sha256": "1a4e470d48c1024ae941e0622b3985b1912bcefdda2608987a5f4369f0be0a3c"
+    }
+  ],
+  "aggregateSha256": "338d6076098359e4c995af088be8d00c0247b2209acc4f587e98c041225f5c15",
+  "postSuiteVerification": {
+    "fileCount": 27,
+    "recordedPathsMatch": true,
+    "allFileSha256Match": true,
+    "aggregateSha256": "338d6076098359e4c995af088be8d00c0247b2209acc4f587e98c041225f5c15"
+  }
+}

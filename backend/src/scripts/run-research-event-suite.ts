@@ -54,13 +54,36 @@ async function run(test: string, frontend = false) {
     stdio: "inherit",
     windowsHide: true,
   });
-  const [code] = await once(child, "exit");
-  results.push({ test, exitCode: code, elapsedMs: Date.now() - started });
+  const outcome = await new Promise<{
+    exitCode: number;
+    spawnFailed: boolean;
+  }>((resolve) => {
+    let settled = false;
+    const finish = (result: {
+      exitCode: number;
+      spawnFailed: boolean;
+    }) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    child.once("error", () => finish({ exitCode: 1, spawnFailed: true }));
+    child.once("exit", (code) =>
+      finish({ exitCode: code ?? 1, spawnFailed: false }),
+    );
+  });
+  results.push({
+    test,
+    exitCode: outcome.exitCode,
+    elapsedMs: Date.now() - started,
+  });
   await writeFile(
     verificationReportPath("suite-results"),
     JSON.stringify(results, null, 2) + "\n",
   );
-  assert.equal(code, 0, test);
+  if (outcome.spawnFailed)
+    console.error(JSON.stringify({ test, spawnFailed: true }));
+  assert.equal(outcome.exitCode, 0, test);
 }
 try {
   for (const test of [
@@ -131,6 +154,11 @@ try {
   await run("test:r05-execution");
   await run("test:participant-access");
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:participant-access-browser", true);
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:r08-progress-display-browser", true);
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:rehearsal-ui-browser", true);
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:learner-layout-browser", true);
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:researcher-ui-layout-browser", true);
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:r05-analysis-ui-browser", true);
   await stop();
   await run("test:experiment-learner");
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:link-direction-api");

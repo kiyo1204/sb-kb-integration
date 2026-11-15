@@ -81,7 +81,7 @@ export default function App() {
             : undefined
         }
         onAccessCodeChange={setEntry}
-        onAccessCodeSubmit={(event) => void signIn(event)}
+        onAccessCodeSubmit={signIn}
       />
     );
   }

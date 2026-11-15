@@ -18,6 +18,8 @@ type Participant = {
   deviceGeneration: number;
   activeClientId: string | null;
   completedStages: number;
+  activeStageCount: number;
+  currentStageType: string | null;
   clients: Array<{ id: string; createdAt: string }>;
 };
 type View = {
@@ -33,9 +35,48 @@ type View = {
     integrationSeconds: number;
     endedAt?: string | null;
   };
-  startAvailable?:boolean;
+  startAvailable?: boolean;
   participants: Participant[];
 };
+const stageNames: Record<string, { label: string; completedBefore: number }> = {
+  LESSON: { label: "授業", completedBefore: 0 },
+  PRIOR_MAP: { label: "SB", completedBefore: 1 },
+  KB_MAP: { label: "KB", completedBefore: 2 },
+  INTEGRATION_MAP: { label: "統合Map", completedBefore: 3 },
+};
+function currentActivity(p: Participant, ended: boolean): string {
+  if (
+    p.status === "NOT_STARTED" &&
+    p.completedStages === 0 &&
+    p.activeStageCount === 0 &&
+    p.currentStageType === null
+  )
+    return ended ? "実施終了時点で未開始" : "未開始";
+  if (
+    p.status === "COMPLETED" &&
+    p.completedStages === 4 &&
+    p.activeStageCount === 0 &&
+    p.currentStageType === null
+  )
+    return "すべての活動が完了";
+  if (p.status !== "IN_PROGRESS") return "活動情報を確認できません";
+  const stage = p.currentStageType ? stageNames[p.currentStageType] : undefined;
+  if (
+    p.activeStageCount !== 1 ||
+    !stage ||
+    p.completedStages !== stage.completedBefore
+  )
+    return "活動情報を確認できません";
+  return ended ? `終了時：${stage.label}` : stage.label;
+}
+function participantState(p: Participant, ended: boolean): string {
+  if (p.status === "COMPLETED") return "本人完了";
+  if (ended && p.status === "IN_PROGRESS") return "実施終了時に進行中";
+  if (ended && p.status === "NOT_STARTED") return "実施終了時に未開始";
+  if (p.status === "NOT_STARTED") return "未開始";
+  if (p.status === "IN_PROGRESS") return "進行中";
+  return "状態を確認できません";
+}
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await apiFetch("/api/research/experiment-runs" + path, init).catch(
     () => {
@@ -202,20 +243,54 @@ export default function ExperimentParticipantsPage({
                   <a href={`/research/materials/${r.catalogVersionId}`}>
                     {r.materialTitle} v{r.materialVersion}
                   </a>{" "}
-                  / 状態：{r.state==="ENDED" ? "終了" : r.state==="RUNNING" ? "実施中（模擬）" : "準備中"} / 統合制限時間：{r.integrationSeconds}秒
+                  / 状態：
+                  {r.state === "ENDED"
+                    ? "終了"
+                    : r.state === "RUNNING"
+                      ? "実施中（模擬）"
+                      : "準備中"}{" "}
+                  / 統合制限時間：{r.integrationSeconds}秒
                 </p>
               </div>
               <div className="material-actions">
                 <button disabled={busy} onClick={() => void refresh()}>
                   状態を更新
                 </button>
-                <button disabled={busy || r.state!=="RUNNING"} onClick={()=>{if(window.confirm("実施を終了します。活動中の参加者は停止し、未提出マップは未提出のまま保持します。終了後の変更・提出・操作記録は拒否し、参加者は保存済みマップも閲覧できません。研究者の閲覧・出力は残ります。終了しますか？"))void perform(`/${runId}/end`,{confirmed:true});}}>実施を終了</button>
-                <button disabled={!view?.startAvailable || busy || participants.length===0 || r.state!=="PREPARING"} aria-describedby="experiment-start-gate" onClick={()=>void perform(`/${runId}/start`,{})}>
-                  {view?.startAvailable ? "実施開始（模擬検証専用）" : "実施開始（未公開）"}
+                <button
+                  disabled={busy || r.state !== "RUNNING"}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "実施を終了します。活動中の参加者は停止し、未提出マップは未提出のまま保持します。終了後の変更・提出・操作記録は拒否し、参加者は保存済みマップも閲覧できません。研究者の閲覧・出力は残ります。終了しますか？",
+                      )
+                    )
+                      void perform(`/${runId}/end`, { confirmed: true });
+                  }}
+                >
+                  実施を終了
+                </button>
+                <button
+                  disabled={
+                    !view?.startAvailable ||
+                    busy ||
+                    participants.length === 0 ||
+                    r.state !== "PREPARING"
+                  }
+                  aria-describedby="experiment-start-gate"
+                  onClick={() => void perform(`/${runId}/start`, {})}
+                >
+                  {view?.startAvailable
+                    ? "実施開始（模擬検証専用）"
+                    : "実施開始（未公開）"}
                 </button>
               </div>
             </section>
-            {r.endedAt && <p>終了日時：{new Date(r.endedAt).toLocaleString("ja-JP")}。参加者の完了・離脱・撤回記録は変更していません。</p>}
+            {r.endedAt && (
+              <p>
+                終了日時：{new Date(r.endedAt).toLocaleString("ja-JP")}
+                。参加者の完了・離脱・撤回記録は変更していません。
+              </p>
+            )}
             <p id="experiment-start-gate" className="participant-flow-gate">
               新しい学習者フローが未公開のため、コードは研究者の模擬検証用です。実参加者への配布・本番利用・開始はできません。
               {participants.length === 0
@@ -235,7 +310,7 @@ export default function ExperimentParticipantsPage({
                   participants.filter((p) => p.status === "IN_PROGRESS").length,
                 ],
                 [
-                  "完了",
+                  "本人完了",
                   participants.filter((p) => p.status === "COMPLETED").length,
                 ],
               ].map(([name, value]) => (
@@ -247,8 +322,40 @@ export default function ExperimentParticipantsPage({
             </div>
             <section className="material-panel material-series">
               <h2>参加者Session一覧</h2>
-              <p role="group" aria-label="研究用出力"><button type="button" onClick={()=>void downloadApiFile(`/api/research/experiment-runs/${runId}/research.json`).catch(e=>setError(e instanceof Error?e.message:"研究用JSONを取得できませんでした。対象を確認して再試行してください。"))}>実施の研究用JSON</button>
-              <button type="button" onClick={()=>void downloadApiFile(`/api/research/experiment-runs/${runId}/research.csv`).catch(e=>setError(e instanceof Error?e.message:"研究用CSVを取得できませんでした。対象を確認して再試行してください。"))}>実施のMap状態CSV</button></p>
+              <p role="group" aria-label="研究用出力">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void downloadApiFile(
+                      `/api/research/experiment-runs/${runId}/research.json`,
+                    ).catch((e) =>
+                      setError(
+                        e instanceof Error
+                          ? e.message
+                          : "研究用JSONを取得できませんでした。対象を確認して再試行してください。",
+                      ),
+                    )
+                  }
+                >
+                  実施の研究用JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void downloadApiFile(
+                      `/api/research/experiment-runs/${runId}/research.csv`,
+                    ).catch((e) =>
+                      setError(
+                        e instanceof Error
+                          ? e.message
+                          : "研究用CSVを取得できませんでした。対象を確認して再試行してください。",
+                      ),
+                    )
+                  }
+                >
+                  実施のMap状態CSV
+                </button>
+              </p>
               <form className="participant-register" onSubmit={register}>
                 <label htmlFor="participant-label">
                   参加者ラベル（仮名）
@@ -279,10 +386,9 @@ export default function ExperimentParticipantsPage({
                     <thead>
                       <tr>
                         <th>参加者</th>
-                        <th>現在の活動</th>
-                        <th>状態</th>
-                        <th>作業時間</th>
-                        <th>最終操作</th>
+                        <th>活動（現在／終了時）</th>
+                        <th>完了Stage数</th>
+                        <th>参加者状態</th>
                         <th>操作</th>
                       </tr>
                     </thead>
@@ -301,6 +407,9 @@ export default function ExperimentParticipantsPage({
                   </table>
                 </div>
               )}
+              <p className="participant-data-scope">
+                この一覧は取得時点の参加者Session状態、特定できた進行中Stage、完了Stage数、端末登録候補を表示します。作業時間と最終操作時刻はこの一覧では取得していません。保存済みMap・履歴は各参加者のリンクから確認してください。
+              </p>
             </section>
           </>
         )}
@@ -329,23 +438,27 @@ function ParticipantRow({
   const candidates = p.clients.filter((c) => c.id !== p.activeClientId);
   return (
     <tr>
-      <td>{p.label}<br/><a href={`/research/stage1/${p.id}/analysis`}>保存Map・履歴・研究用出力</a></td>
       <td>
-        {p.completedStages}/4活動完了
+        {p.label}
         <br />
-        <small>学習フロー未公開</small>
+        <a href={`/research/stage1/${p.id}/analysis`}>
+          保存Map・履歴・研究用出力
+        </a>
       </td>
+      <td>{currentActivity(p, ended)}</td>
+      <td>{p.completedStages} / 4</td>
       <td>
-        {ended && p.status!=="COMPLETED" ? `終了により停止（終了時：${p.status==="IN_PROGRESS" ? "進行中" : "未開始"}）` : p.status === "NOT_STARTED"
-          ? "未開始"
-          : p.status === "IN_PROGRESS"
-            ? "進行中"
-            : p.status === "COMPLETED"
-              ? "完了"
-              : p.status}
+        <span
+          className={`participant-state participant-state-${p.status.toLowerCase()}`}
+        >
+          {participantState(p, ended)}
+        </span>
+        {ended && p.status !== "COMPLETED" && (
+          <small className="participant-ended-note">
+            実施終了による停止です。参加者Sessionの状態は変更していません。
+          </small>
+        )}
       </td>
-      <td>未計測</td>
-      <td>記録なし</td>
       <td>
         <details>
           <summary>コード・画面管理</summary>

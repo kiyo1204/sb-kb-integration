@@ -441,9 +441,11 @@ export async function participantView(
   const run = await getManagedRun(pool, actor, runId);
   const participants = (
     await pool.query(
-      `SELECT s.id,s.participant_code AS label,s.status,p.registered_at AS "registeredAt",coalesce(a.credential_generation,0) AS "credentialGeneration",coalesce(a.device_generation,0) AS "deviceGeneration",a.active_client_id AS "activeClientId",(SELECT count(*)::int FROM session_stages st WHERE st.session_id=s.id AND st.status='COMPLETED') AS "completedStages",
+      `SELECT s.id,s.participant_code AS label,s.status,p.registered_at AS "registeredAt",coalesce(a.credential_generation,0) AS "credentialGeneration",coalesce(a.device_generation,0) AS "deviceGeneration",a.active_client_id AS "activeClientId",(SELECT count(*)::int FROM session_stages st WHERE st.session_id=s.id AND st.status='COMPLETED') AS "completedStages",active.active_stage_count AS "activeStageCount",active.current_stage_type AS "currentStageType",
  coalesce((SELECT jsonb_agg(jsonb_build_object('id',c.id,'createdAt',c.created_at) ORDER BY c.created_at,c.id) FROM experiment_client_candidates c WHERE c.session_id=s.id AND c.credential_generation=a.credential_generation),'[]'::jsonb) AS clients
- FROM experiment_run_sessions p JOIN sessions s ON s.id=p.session_id LEFT JOIN experiment_participant_access a ON a.session_id=s.id WHERE p.run_id=$1 AND s.protocol_key=$2 ORDER BY p.registered_at,s.id`,
+ FROM experiment_run_sessions p JOIN sessions s ON s.id=p.session_id LEFT JOIN experiment_participant_access a ON a.session_id=s.id
+ LEFT JOIN LATERAL (SELECT count(*)::int AS active_stage_count,CASE WHEN count(*)=1 THEN (array_agg(st.stage_type ORDER BY st.order_index))[1] END AS current_stage_type FROM session_stages st WHERE st.session_id=s.id AND st.status='IN_PROGRESS') active ON true
+ WHERE p.run_id=$1 AND s.protocol_key=$2 ORDER BY p.registered_at,s.id`,
       [runId, EXPERIMENT_PROTOCOL],
     )
   ).rows;

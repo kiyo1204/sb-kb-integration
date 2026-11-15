@@ -1,0 +1,84 @@
+/* Researcher page chrome. The access switch remains available without taking
+   an extra row from the R04 content area. */
+@media (min-width: 761px) {
+  #root:has(.materials-page) {
+    position: relative;
+  }
+  #root:has(.materials-page) > .auth-toolbar {
+    position: absolute;
+    z-index: 2;
+    top: 8px;
+    right: 24px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  #root:has(.materials-page) > .auth-toolbar button {
+    border-color: #d7e2db;
+    background: #fff;
+    color: #214d3b;
+  }
+  #root:has(.materials-page) > .auth-toolbar button:hover {
+    background: #edf4ef;
+  }
+  #root:has(.materials-page) .materials-header {
+    padding-right: 235px;
+  }
+  #root:has(.materials-page) .materials-content {
+    padding-top: 14px;
+  }
+}
+
+/* R04 has one more checklist entry than the reference frame. Keep every item
+   and the completion action in the panel while making the rows more compact. */
+#root:has(.materials-page) .material-checklist {
+  padding: 16px 16px 18px;
+}
+#root:has(.materials-page) .material-checklist h2 {
+  margin-bottom: 12px;
+}
+#root:has(.materials-page) .material-checklist li {
+  margin-bottom: 3px;
+}
+#root:has(.materials-page) .material-checklist li > button {
+  gap: 12px;
+  padding: 3px 5px;
+}
+#root:has(.materials-page) .material-checklist small {
+  margin-top: 0;
+}
+#root:has(.materials-page) .material-checklist > p {
+  margin: 14px 0 8px;
+  line-height: 1.45;
+}
+#root:has(.materials-page)
+  .materials-content
+  :is(p[role="status"], p[role="alert"]) {
+  overflow-wrap: anywhere;
+}
+#root:has(.materials-page)
+  .materials-content
+  > p[role="status"]:not(.run-created-note) {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+#root:has(.materials-page) .run-create-grid p[role="status"] {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+.runs-table .run-state-preparing {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.runs-table .run-state-running {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+.runs-table .run-state-ended {
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+}

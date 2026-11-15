@@ -58,7 +58,7 @@
   flex-shrink: 0;
   flex-wrap: wrap;
 }
-.materials-page button,
+.materials-page button:not(.concept-canvas *),
 .materials-page .home-secondary-button {
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
@@ -70,7 +70,7 @@
   cursor: pointer;
   min-height: 38px;
 }
-.materials-page button:hover:not(:disabled) {
+.materials-page button:not(.concept-canvas *):hover:not(:disabled) {
   background: var(--surface-accent);
 }
 .materials-page .session-primary-button {
@@ -81,7 +81,7 @@
 .materials-page .session-primary-button:hover:not(:disabled) {
   background: var(--accent-hover);
 }
-.materials-page button:disabled {
+.materials-page button:not(.concept-canvas *):disabled {
   background: #edf0ee;
   border-color: #d7deda;
   color: #68766e;

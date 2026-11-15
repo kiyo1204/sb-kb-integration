@@ -64,6 +64,29 @@ try {
   await research.goto(
     vite.resolvedUrls!.local[0] + `research/experiment-runs/${run}`,
   );
+  const completedParticipant = research
+      .getByRole("row")
+      .filter({ hasText: "TEST ONLY browser flow" }),
+    endedParticipant = research
+      .getByRole("row")
+      .filter({ hasText: "TEST ONLY end browser" });
+  await completedParticipant.getByText("本人完了", { exact: true }).waitFor();
+  await completedParticipant
+    .getByText("すべての活動が完了", { exact: true })
+    .waitFor();
+  assert.equal(
+    (await completedParticipant.locator("td").nth(2).innerText()).trim(),
+    "4 / 4",
+  );
+  await endedParticipant.getByText("進行中", { exact: true }).waitFor();
+  assert.equal(
+    (await endedParticipant.locator("td").nth(1).innerText()).trim(),
+    "SB",
+  );
+  assert.equal(
+    (await endedParticipant.locator("td").nth(2).innerText()).trim(),
+    "1 / 4",
+  );
   let confirmed = false;
   research.on("dialog", async (d) => {
     assert.ok(d.message().includes("未提出"));
@@ -77,9 +100,23 @@ try {
     .getByRole("button", { name: "実施を終了", exact: true })
     .click();
   assert.equal((await finished).status(), 200);
-  await research
-    .getByText("終了により停止（終了時：進行中）", { exact: true })
+  await endedParticipant
+    .getByText("実施終了時に進行中", { exact: true })
     .waitFor();
+  await endedParticipant.getByText("終了時：SB", { exact: true }).waitFor();
+  await endedParticipant
+    .getByText(
+      "実施終了による停止です。参加者Sessionの状態は変更していません。",
+      {
+        exact: true,
+      },
+    )
+    .waitFor();
+  await completedParticipant.getByText("本人完了", { exact: true }).waitFor();
+  assert.equal(
+    (await completedParticipant.locator("td").nth(2).innerText()).trim(),
+    "4 / 4",
+  );
   await page.context().setOffline(false);
   await page
     .getByRole("heading", { name: "実施は終了しました", exact: true })
@@ -143,6 +180,28 @@ try {
   await page
     .getByRole("button", { name: "セッションを開始", exact: true })
     .waitFor();
+  const bResearch = await ctx.newPage();
+  await bResearch.goto(
+    vite.resolvedUrls!.local[0] +
+      `research/experiment-runs/${process.env.EXPERIMENT_BROWSER_B_RUN}`,
+  );
+  const bParticipant = bResearch
+    .getByRole("row")
+    .filter({ hasText: "TEST ONLY identity B" });
+  await bParticipant
+    .locator("td")
+    .nth(1)
+    .getByText("未開始", { exact: true })
+    .waitFor();
+  await bParticipant
+    .locator("td")
+    .nth(3)
+    .getByText("未開始", { exact: true })
+    .waitFor();
+  assert.equal(
+    (await bParticipant.locator("td").nth(2).innerText()).trim(),
+    "0 / 4",
+  );
   // Block polls here: the B-specific 409 below must cause the end notice.
   await page.route("**/api/experiment-status", (route) => route.abort());
   releaseA();
@@ -178,6 +237,25 @@ try {
     },
   );
   assert.equal(endB.status, 200);
+  await bResearch
+    .getByRole("button", { name: "状態を更新", exact: true })
+    .click();
+  await bParticipant
+    .locator("td")
+    .nth(1)
+    .getByText("実施終了時点で未開始", { exact: true })
+    .waitFor();
+  await bParticipant
+    .locator("td")
+    .nth(3)
+    .getByText("実施終了時に未開始", { exact: true })
+    .waitFor();
+  await bParticipant
+    .getByText(
+      "実施終了による停止です。参加者Sessionの状態は変更していません。",
+      { exact: true },
+    )
+    .waitFor();
   assert.equal(
     await page.evaluate(async () => {
       const { apiFetch } = await import("/src/auth-client.ts");

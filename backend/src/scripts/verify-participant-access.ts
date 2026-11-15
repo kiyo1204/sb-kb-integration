@@ -236,6 +236,16 @@ try {
   assert.equal(view.participants.length, 2);
   assert.equal(view.run.plannedParticipants, 1);
   assert.equal(view.startAvailable, false);
+  const initialParticipant = view.participants.find(
+    (participant: { id: string }) => participant.id === sid,
+  );
+  assert.equal(initialParticipant.status, "NOT_STARTED");
+  assert.equal(initialParticipant.activeStageCount, 0);
+  assert.equal(initialParticipant.currentStageType, null);
+  assert.equal(initialParticipant.completedStages, 0);
+  checks.push(
+    "researcher participant view reports the persisted not-started Stage state without inventing a current activity",
+  );
   const stored = (
     await pool.query(
       "SELECT s.protocol_key,s.group_activity_seconds,s.research_kit_definition_id,a.code_hash FROM sessions s JOIN experiment_participant_access a ON a.session_id=s.id WHERE s.id=$1",
