@@ -314,6 +314,46 @@ try {
   assert.equal(scrollState.zoom, "1", "scroll coordinate case uses 100% zoom");
   if (scrollState.pageMax > 0)
     assert.ok(scrollState.pageScrollY > 0, "outer page scroll is active");
+  // Opt-in, bounded observations for this synthetic coordinate case only.
+  const coordinateProbe = process.env.EXPERIMENT_SCROLL_DIAGNOSTICS === "1";
+  const positionTraffic: unknown[] = [];
+  const recordPositionRequest = (request: import("playwright").Request) => {
+    try {
+      if (positionTraffic.length >= 20 || request.method() !== "PATCH" ||
+          !/\/concepts\/[^/]+\/position$/.test(new URL(request.url()).pathname)) return;
+      const value = request.postDataJSON();
+      positionTraffic.push({ kind: "request", conceptId: new URL(request.url()).pathname.split("/")[3], positionX: typeof value.positionX === "number" ? value.positionX : null, positionY: typeof value.positionY === "number" ? value.positionY : null });
+    } catch { /* Diagnostic failures must not change the test outcome. */ }
+  };
+  if (coordinateProbe) {
+    try {
+    console.log(JSON.stringify({ check: "scroll-coordinate-runtime", node: process.version, platform: process.platform, browser: browser.version(), viewport: page.viewportSize() }));
+    page.on("request", recordPositionRequest);
+    await page.evaluate(() => {
+      const samples: unknown[] = [];
+      const record = (event: Event) => {
+        try {
+        if (samples.length >= 40) return;
+        const canvas = document.querySelector<HTMLElement>(".concept-canvas");
+        const viewport = document.querySelector<HTMLElement>(".concept-canvas-viewport");
+        const node = document.querySelector<HTMLElement>(".concept-node");
+        if (!canvas || !viewport || !node) return;
+        const rect = canvas.getBoundingClientRect();
+        const pointer = event instanceof PointerEvent ? { x: event.clientX, y: event.clientY, conceptId: (event.target as Element)?.closest?.("[data-concept-id]")?.getAttribute("data-concept-id") } : undefined;
+        const ancestors = [];
+        for (let ancestor = canvas.parentElement; ancestor && ancestors.length < 8; ancestor = ancestor.parentElement) {
+          const bounds = ancestor.getBoundingClientRect();
+          ancestors.push({ tag: ancestor.tagName, className: ancestor.className, x: bounds.x, y: bounds.y, scrollLeft: ancestor.scrollLeft, scrollTop: ancestor.scrollTop });
+        }
+        samples.push({ event: event.type, pointer, canvas: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scaleX: canvas.offsetWidth / rect.width, scaleY: canvas.offsetHeight / rect.height }, zoom: canvas.style.zoom, scrollX: window.scrollX, scrollY: window.scrollY, viewportScroll: { x: viewport.scrollLeft, y: viewport.scrollTop }, ancestors, node: { id: node.dataset.conceptId, left: node.style.left, top: node.style.top } });
+        } catch { /* Observe without affecting pointer dispatch. */ }
+      };
+      const types = ["pointerdown", "pointermove", "pointerup", "scroll"];
+      for (const type of types) document.addEventListener(type, record, { capture: true, passive: true });
+      Object.assign(window, { __scrollCoordinateProbe: samples, __stopScrollCoordinateProbe: () => types.forEach((type) => document.removeEventListener(type, record, true)) });
+    });
+    } catch { /* Setup diagnostics must not replace the original assertion. */ }
+  }
   const seedNode = page.locator(".concept-node").first(),
     seedBox = await seedNode.boundingBox();
   assert.ok(seedBox);
@@ -333,6 +373,10 @@ try {
     { steps: 10 },
   );
   await page.mouse.up();
+  const positionResponse = await moved;
+  if (coordinateProbe) {
+    try { positionTraffic.push({ kind: "waited-response", conceptId: new URL(positionResponse.url()).pathname.split("/")[3], status: positionResponse.status() }); } catch { /* Preserve the response assertion. */ }
+  }
   assert.equal((await moved).status(), 200);
   const persistedPosition = await page.evaluate(async ({ mapId, seedId }) => {
     const { apiFetch } = await import("/src/auth-client.ts");
@@ -345,6 +389,13 @@ try {
     if (!seed) throw new Error("saved scroll seed unavailable");
     return { positionX: seed.positionX, positionY: seed.positionY };
   }, scrollSeed);
+  if (coordinateProbe) {
+    try {
+      console.log(JSON.stringify({ check: "scroll-coordinate-probe", conceptId: scrollSeed.seedId, before: { positionX: 1250, positionY: 720 }, expected: { positionX: 1290, positionY: 750 }, pointerStart: seedBox, apiReadback: persistedPosition, traffic: positionTraffic, samples: await page.evaluate(() => (window as unknown as { __scrollCoordinateProbe: unknown[] }).__scrollCoordinateProbe) }));
+    } catch { /* Preserve the original assertion even if observation fails. */ }
+    page.off("request", recordPositionRequest);
+    try { await page.evaluate(() => (window as unknown as { __stopScrollCoordinateProbe?: () => void }).__stopScrollCoordinateProbe?.()); } catch { /* Best effort diagnostic cleanup only. */ }
+  }
   assert.deepEqual(persistedPosition, { positionX: 1290, positionY: 750 });
   await reopenCurrentMap();
   const reloadedPosition = await page.evaluate(async ({ mapId, seedId }) => {

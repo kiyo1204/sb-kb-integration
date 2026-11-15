@@ -838,12 +838,21 @@ try {
           EXPERIMENT_BROWSER_TOKEN: bp.issuedCode,
           EXPERIMENT_BROWSER_SESSION: bp.sessionId,
           EXPERIMENT_BROWSER_RUN: browserRun.id,
+          // Diagnostic scope is this synthetic browser child, not the suite/API.
+          EXPERIMENT_SCROLL_DIAGNOSTICS: "1",
         },
         stdio: "inherit",
         windowsHide: true,
       },
     );
-    assert.equal((await once(child, "exit"))[0], 0, "learner browser");
+    const browserExit = (await once(child, "exit"))[0];
+    {
+      try {
+        const positions = await pool.query("SELECT c.id, c.position_x, c.position_y FROM concepts c JOIN maps m ON m.id=c.map_id JOIN session_stages st ON st.id=m.session_stage_id WHERE st.session_id=$1 AND m.type='PRIOR' ORDER BY c.id LIMIT 5", [bp.sessionId]);
+        console.log(JSON.stringify({ check: "scroll-coordinate-db", positions: positions.rows }));
+      } catch { console.log("scroll-coordinate-db diagnostic unavailable; browser exit retained"); }
+    }
+    assert.equal(browserExit, 0, "learner browser");
     const endParticipant=(await research(`${root}/${browserRun.id}/participants`,"POST",{participantLabel:"TEST ONLY end browser"},201)).data;
     const bRun=(await research(root,"POST",{name:"TEST ONLY delayed identity",catalogVersionId:mat.id,plannedParticipants:0},201)).data;
     const bParticipant=(await research(`${root}/${bRun.id}/participants`,"POST",{participantLabel:"TEST ONLY identity B"},201)).data;
