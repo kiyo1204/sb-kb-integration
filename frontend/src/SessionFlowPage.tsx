@@ -1,4 +1,5 @@
 import {Survey,ResearchSurvey} from "./Survey";
+import TutorialPage from "./TutorialPage";
 import {LearnerDeliveryStatus,ResearchDeliveryStatus} from "./DeliveryStatus";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, uiText } from "./auth-client";
@@ -139,6 +140,8 @@ function SessionDashboard({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [practicing, setPracticing] = useState(false);
+  const [practiceBlocked, setPracticeBlocked] = useState(false);
   const [activityLogWarning, setActivityLogWarning] = useState(false);
   const noteActivityLogFailure = useCallback(() => setActivityLogWarning(true), []);
   const currentStageId = flow?.currentStage?.id;
@@ -160,6 +163,37 @@ function SessionDashboard({
     setClock(performance.now());
     setFlow(nextFlow);
   }, [sessionId]);
+
+  // Keep the live page's client registration. A rejected access check closes
+  // practice; it never approves a new client or changes Session/Stage state.
+  useEffect(() => {
+    if (!practicing) return;
+    let active = true;
+    let checking = false;
+    const controller = new AbortController();
+    const check = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const response = await apiFetch(`/api/sessions/${sessionId}/flow`, { signal: controller.signal });
+        if (!response.ok) throw new Error("access check rejected");
+      } catch {
+        if (active) {
+          setPracticing(false);
+          setPracticeBlocked(true);
+        }
+      } finally { checking = false; }
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 2000);
+    window.addEventListener("focus", check);
+    return () => {
+      active = false;
+      controller.abort();
+      clearInterval(timer);
+      window.removeEventListener("focus", check);
+    };
+  }, [practicing, sessionId]);
 
   useEffect(() => {
     let active = true;
@@ -416,6 +450,12 @@ function SessionDashboard({
     }
   }
 
+  if (practiceBlocked) {
+    return <main className="page session-page"><section className="session-card" role="alert"><h1>利用状態を確認できません</h1><p>練習を中断しました。通信と、この画面の利用状態を研究者に確認してください。</p></section></main>;
+  }
+  if (practicing) {
+    return <TutorialPage returnHref={`/sessions/${sessionId}`} onExit={() => setPracticing(false)} />;
+  }
   if (loading) {
     return (
       <main className={`page session-page${isLearner ? " is-learner" : ""}`}>
@@ -468,7 +508,28 @@ function SessionDashboard({
             <h2>{flow.session.protocolKey === "SBKB_INTEGRATION_V1" ? "P02：活動の案内" : "セッションを開始してください"}</h2>
             {flow.session.protocolKey === "SBKB_INTEGRATION_V1" && <p>授業・動画、Scratch-Build、Kit-Build、統合マップの順に操作します。各画面の案内を確認して進んでください。この操作案内は正式な研究説明・同意取得を代替しません。</p>}
             <p>開始後、最初の活動から順番に進みます。</p>
-            {isLearner && <p><a className="session-secondary-button" href="/tutorial">操作の練習</a></p>}
+            {isLearner && flow.session.protocolKey === "SBKB_INTEGRATION_V1" ? (
+              <section
+                className="session-practice-card"
+                aria-labelledby="session-practice-heading"
+              >
+                <div>
+                  <h3 id="session-practice-heading">操作の練習</h3>
+                  <p>
+                    必要に応じて、学習を始める前にマップ操作を試せます。練習は通常の学習Sessionとは別で、内容は保存されません。
+                  </p>
+                </div>
+                <button type="button" className="session-secondary-button" onClick={() => setPracticing(true)}>
+                  練習を開く <span aria-hidden="true">→</span>
+                </button>
+              </section>
+            ) : isLearner ? (
+              <p>
+                <a className="session-secondary-button" href="/tutorial">
+                  操作の練習
+                </a>
+              </p>
+            ) : null}
             <button className="session-primary-button" type="button" disabled={busy} onClick={() => void startSession()}>
               {busy ? "開始中…" : "セッションを開始"}
             </button>

@@ -188,18 +188,6 @@ export default function HomePage({
         </div>
         )}
 
-        {accessMode === "signed-out" && (
-          <section className="home-card home-practice-card" aria-labelledby="home-practice-heading">
-            <div>
-              <h2 id="home-practice-heading">コードなしで練習する</h2>
-              <p>アクセスコードなしで、SB・KBの操作を練習できます。</p>
-            </div>
-            <a className="home-secondary-button" href="/tutorial">
-              操作の練習へ <span aria-hidden="true">→</span>
-            </a>
-          </section>
-        )}
-
         {accessMode === "researcher" && (
           <>
             <section

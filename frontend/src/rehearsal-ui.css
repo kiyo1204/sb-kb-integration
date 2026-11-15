@@ -329,27 +329,35 @@
   margin-top: auto;
   padding-top: 12px;
 }
-.home-practice-card {
-  display: flex;
-  width: min(100%, 840px);
-  min-height: 166px;
+.session-practice-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  margin: 28px auto 0;
-  padding: 26px 28px;
+  gap: 16px 24px;
+  margin-top: 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
 }
-.home-practice-card h2 {
+.session-practice-card h3 {
   margin: 0;
   color: var(--ink);
-  font-size: 19px;
+  font-size: 17px;
+  line-height: 1.5;
 }
-.home-practice-card p {
-  margin: 10px 0 0;
+.session-practice-card p {
+  margin: 6px 0 0;
   color: var(--ink-soft);
+  line-height: 1.6;
 }
-.home-practice-card > a {
+.session-practice-card > button {
+  display: inline-flex;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
 }
 .home-page.is-signed-out .home-development-note {
   width: min(100%, 840px);
@@ -444,11 +452,7 @@
   .home-page.is-signed-out .home-access-form {
     margin-top: 30px;
   }
-  .home-practice-card {
-    min-height: 0;
-    align-items: flex-start;
-    flex-direction: column;
-  }
+  .session-practice-card { grid-template-columns: minmax(0, 1fr); align-items: start; }
   .home-page.is-researcher .home-main {
     padding-inline: 24px;
   }
