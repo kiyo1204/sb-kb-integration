@@ -189,6 +189,26 @@ try {
     assert.equal(started.status, 200);
   }
   await refreshConnection("P02：活動の案内");
+  const documentBeforePractice = await page.evaluate(() => performance.timeOrigin);
+  const documentClientChecks: string[] = [];
+  const practiceWrites: string[] = [];
+  const observePractice = (request: import("playwright").Request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/api/") && request.method() !== "GET") practiceWrites.push(path);
+    if (path.endsWith(`/sessions/${sid}/flow`)) documentClientChecks.push(request.headers()["x-experiment-client"] ?? "");
+  };
+  page.on("request", observePractice);
+  await page.getByRole("button", { name: /練習を開く/ }).click();
+  await page.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+  await page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/sessions/${sid}/flow`) && response.status() === 200);
+  await page.getByLabel("概念の名前").fill("TEST ONLY practice");
+  await page.getByRole("button", { name: "概念を追加", exact: true }).click();
+  await page.getByRole("link", { name: "練習を終了", exact: true }).click();
+  await page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+  page.off("request", observePractice);
+  assert.equal(practiceWrites.length, 0, `practice does not write Map, Stage, events or claim a new client; observed endpoint kinds: ${practiceWrites.map(path => path.replace(/[a-f0-9-]{36}/g, ":id")).join(",")}`);
+  assert.equal(await page.evaluate(() => performance.timeOrigin), documentBeforePractice);
+  assert.ok(documentClientChecks.length > 0 && documentClientChecks.every(value => value.length > 0 && value === documentClientChecks[0]), "same registered client for access checks; values not reported");
   await page
     .getByRole("button", { name: "セッションを開始", exact: true })
     .click();

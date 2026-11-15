@@ -13,6 +13,8 @@ type Scenario =
   | "unpublished"
   | "waiting"
   | "ended"
+  | "p02"
+  | "legacy-session"
   | "researcher-populated"
   | "researcher-empty"
   | "researcher-loading"
@@ -52,18 +54,72 @@ function json(route: Route, body: unknown, status = 200) {
   });
 }
 
+function syntheticSessionFlow(
+  sessionId: string,
+  protocolKey: "SBKB_INTEGRATION_V1" | "STAGE1_6",
+  started: boolean,
+) {
+  const lesson = {
+    id: "00000000-0000-4000-8000-000000000021",
+    sessionId,
+    stageType: "LESSON",
+    orderIndex: 0,
+    status: "PENDING",
+    startedAt: null,
+    completedAt: null,
+    mapId: null,
+  };
+  return {
+    session: {
+      id: sessionId,
+      status: started ? "IN_PROGRESS" : "NOT_STARTED",
+      startedAt: started ? "2026-11-15T01:00:00.000Z" : null,
+      completedAt: null,
+      protocolKey,
+      lessonVideoUrl: null,
+      researchKitDefinitionId: null,
+      studyGroup: null,
+      groupActivitySeconds: null,
+    },
+    serverNow: "2026-11-15T01:00:00.000Z",
+    currentMapSubmitted: false,
+    currentIntegrationMapExists: false,
+    currentMapAutoSubmittedAt: null,
+    stages: started ? [lesson] : [],
+    currentStage: started ? lesson : null,
+    nextStage: null,
+  };
+}
+
 async function installApiFixture(
   page: Page,
   scenario: Scenario,
   onSessionListRequest?: () => Promise<void>,
   onAccessRequest?: () => Promise<void>,
 ) {
+  let p02Started = false;
+  let p02ActiveClient: string | null = null;
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/me") {
       if (scenario === "login-pending") await onAccessRequest?.();
       if (scenario === "login-error")
         return json(route, { error: "synthetic_invalid_code" }, 401);
+      if (scenario === "p02")
+        return json(route, {
+          role: "learner",
+          sessionId: "00000000-0000-4000-8000-000000000001",
+          protocolKey: "SBKB_INTEGRATION_V1",
+          flowAvailable: true,
+          runState: "RUNNING",
+        });
+      if (scenario === "legacy-session")
+        return json(route, {
+          role: "learner",
+          sessionId: "00000000-0000-4000-8000-000000000003",
+          protocolKey: "STAGE1_6",
+          flowAvailable: true,
+        });
       if (scenario.startsWith("researcher-") || scenario === "login" || scenario === "login-pending")
         return json(route, { role: "researcher" });
       return json(route, {
@@ -85,14 +141,62 @@ async function installApiFixture(
     }
     if (path === "/api/experiment-status")
       return json(route, {
-        state: scenario === "ended" ? "ENDED" : "PREPARING",
+        state: scenario === "ended" ? "ENDED" : scenario === "p02" ? "RUNNING" : "PREPARING",
       });
-    if (path === "/api/experiment-client/claim")
+    if (path === "/api/experiment-client/claim") {
+      if (scenario === "p02") {
+        const candidate = route.request().headers()["x-experiment-client"] ?? "";
+        if (p02ActiveClient === null) p02ActiveClient = candidate;
+        const ownsClient = candidate === p02ActiveClient;
+        return json(
+          route,
+          {
+            clientId: "00000000-0000-4000-8000-000000000002",
+            ownership: ownsClient ? "OWNED" : "PENDING",
+            deviceGeneration: ownsClient ? 0 : null,
+            ...(!ownsClient ? { error: "experiment_client_in_use" } : {}),
+          },
+          ownsClient ? 200 : 409,
+        );
+      }
       return json(route, {
         clientId: "00000000-0000-4000-8000-000000000002",
         ownership: "OWNED",
         deviceGeneration: 0,
       });
+    }
+    if (scenario === "p02" && path === "/api/experiment-material")
+      return json(route, {
+        sbInstructions: "合成SB案内",
+        kbInstructions: "合成KB案内",
+        integrationInstructions: "合成統合案内",
+      });
+    if (scenario === "p02" && path === "/api/sessions/00000000-0000-4000-8000-000000000001/flow")
+      return json(
+        route,
+        syntheticSessionFlow(
+          "00000000-0000-4000-8000-000000000001",
+          "SBKB_INTEGRATION_V1",
+          p02Started,
+        ),
+      );
+    if (
+      scenario === "p02" &&
+      path === "/api/sessions/00000000-0000-4000-8000-000000000001/start" &&
+      route.request().method() === "POST"
+    ) {
+      p02Started = true;
+      return json(route, { logSaved: true });
+    }
+    if (scenario === "legacy-session" && path === "/api/sessions/00000000-0000-4000-8000-000000000003/flow")
+      return json(
+        route,
+        syntheticSessionFlow(
+          "00000000-0000-4000-8000-000000000003",
+          "STAGE1_6",
+          false,
+        ),
+      );
     return json(
       route,
       { error: "experiment_not_running" },
@@ -137,7 +241,7 @@ async function assertNoHorizontalOverflow(page: Page, name: string, width: numbe
   );
 }
 
-const directory = join(tmpdir(), "sbkb-tutorial-researcher-home-20261114");
+const directory = join(tmpdir(), "sbkb-p02-inline-practice-20261115");
 await mkdir(directory, { recursive: true });
 const vite = await createServer({ server: { host: "127.0.0.1", port: 0 } });
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -179,7 +283,12 @@ try {
       if (state === "login") {
         const input = page.getByLabel("アクセスコード", { exact: true });
         assert.equal(await input.getAttribute("placeholder"), "アクセスコードを入力");
-        assert.equal(await page.getByRole("link", { name: /操作の練習へ/ }).getAttribute("href"), "/tutorial");
+        assert.equal(await page.locator(".home-practice-card").count(), 0);
+        assert.equal(
+          await page.locator('a[href="/tutorial"]').count(),
+          0,
+          "signed-out code entry has no practice entry",
+        );
         await input.focus();
         assert.equal(
           await input.evaluate((element) => getComputedStyle(element).outlineStyle),
@@ -202,6 +311,158 @@ try {
         assert.equal(await page.locator(".map-editor-page").count(), 0);
       await context.close();
     }
+
+    const learnerToken = syntheticAccessCode;
+    const p02Context = await browser.newContext({
+      viewport: { width, height },
+      deviceScaleFactor: 1,
+    });
+    const p02Page = await p02Context.newPage();
+    const p02ApiObservations: Array<{
+      path: string;
+      method: string;
+      hasBearer: boolean;
+    }> = [];
+    p02Page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith("/api/"))
+        p02ApiObservations.push({
+          path,
+          method: request.method(),
+          hasBearer: (request.headers().authorization ?? "").startsWith("Bearer "),
+        });
+    });
+    await installApiFixture(p02Page, "p02");
+    await p02Page.goto(vite.resolvedUrls!.local[0]!);
+    await p02Page.getByLabel("アクセスコード", { exact: true }).fill(learnerToken);
+    await p02Page.getByRole("button", { name: "続行", exact: true }).click();
+    await p02Page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    const practiceCard = p02Page.locator(".session-practice-card");
+    assert.equal(await practiceCard.count(), 1);
+    const practiceLink = practiceCard.getByRole("button", { name: /練習を開く/ });
+    assert.equal(
+      await p02Page.getByRole("button", { name: "セッションを開始", exact: true }).isEnabled(),
+      true,
+      "practice is optional and the normal start action remains available",
+    );
+    assert.equal(await p02Page.locator(".map-editor-page").count(), 0);
+    await assertNoHorizontalOverflow(p02Page, "p02-practice-card", width);
+    await captureBeforeAfter(p02Page, "learner-p02-practice-card", width, directory);
+    let practiceLinkKeyboardFocused = false;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await p02Page.keyboard.press("Tab");
+      if (await practiceLink.evaluate((element) => element.matches(":focus-visible"))) {
+        practiceLinkKeyboardFocused = true;
+        break;
+      }
+    }
+    assert.equal(practiceLinkKeyboardFocused, true);
+    assert.equal(
+      await practiceLink.evaluate((element) => getComputedStyle(element).outlineStyle),
+      "solid",
+      "P02 practice card link has visible keyboard focus",
+    );
+    const beforeTutorialRequestIndex = p02ApiObservations.length;
+    const claimsBeforePractice = p02ApiObservations.filter(request => request.path === "/api/experiment-client/claim").length;
+    await practiceLink.click();
+    assert.equal(new URL(p02Page.url()).pathname, "/");
+    await p02Page.getByRole("heading", { name: "操作の練習" }).waitFor();
+    await p02Page.waitForFunction(
+      (sessionId) =>
+        Array.from(document.querySelectorAll("a")).some(
+          (link) => link.textContent?.includes("練習を終了") && link.getAttribute("href") === `/sessions/${sessionId}`,
+        ),
+      "00000000-0000-4000-8000-000000000001",
+    );
+    assert.equal(
+      await p02Page.evaluate(() => sessionStorage.getItem("stage1-access-token")),
+      learnerToken,
+      "learner authentication survives entry to tutorial",
+    );
+    await p02Page.getByLabel("概念の名前").fill("合成練習概念");
+    await p02Page.getByRole("button", { name: "概念を追加" }).click();
+    assert.equal(await p02Page.locator(".concept-node").count(), 1);
+    const tutorialRequests = p02ApiObservations.slice(beforeTutorialRequestIndex);
+    assert.equal(
+      tutorialRequests.some((request) => request.method !== "GET" || !request.path.endsWith("/flow")),
+      false,
+      "inline practice only reads existing flow access; no learning/map/logging writes",
+    );
+    assert.equal(
+      await p02Page.getByRole("link", { name: "練習を終了" }).getAttribute("href"),
+      "/sessions/00000000-0000-4000-8000-000000000001",
+      "tutorial return points to this learner's session",
+    );
+    await p02Page.getByRole("link", { name: "練習を終了" }).click();
+    await p02Page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    assert.equal(await p02Page.locator(".session-practice-card").count(), 1);
+    assert.equal(p02ApiObservations.filter(request => request.path === "/api/experiment-client/claim").length, claimsBeforePractice, "practice does not regenerate client registration (including StrictMode setup)");
+    assert.equal(
+      await p02Page.evaluate(() => sessionStorage.getItem("stage1-access-token")),
+      learnerToken,
+      "learner authentication and client registration survive inline return",
+    );
+    await p02Context.close();
+
+    for (const failure of ["ended", "switched", "expired"] as const) {
+      const guardContext = await browser.newContext({ viewport: { width, height } });
+      await guardContext.addInitScript(token => sessionStorage.setItem("stage1-access-token", token), learnerToken);
+      const guardPage = await guardContext.newPage();
+      await installApiFixture(guardPage, "p02");
+      await guardPage.goto(vite.resolvedUrls!.local[0]!);
+      await guardPage.getByRole("button", { name: /練習を開く/ }).click();
+      await guardPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+      await guardPage.route("**/api/sessions/*/flow", route => json(route, {
+        error: failure === "ended" ? "experiment_ended" : failure === "switched" ? "experiment_client_stale" : "authentication_required",
+      }, failure === "expired" ? 401 : 409));
+      await guardPage.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await guardPage.getByRole("heading", { name: failure === "ended" ? "実施は終了しました" : "利用状態を確認できません", exact: true }).waitFor();
+      assert.equal(await guardPage.getByRole("heading", { name: "操作の練習", exact: true }).count(), 0);
+      await guardContext.close();
+    }
+
+    const startContext = await browser.newContext({
+      viewport: { width, height },
+      deviceScaleFactor: 1,
+    });
+    await startContext.addInitScript((token) => {
+      sessionStorage.setItem("stage1-access-token", token);
+    }, learnerToken);
+    const startPage = await startContext.newPage();
+    await installApiFixture(startPage, "p02");
+    await startPage.goto(vite.resolvedUrls!.local[0]!);
+    await startPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    const sessionStart = startPage.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/sessions/00000000-0000-4000-8000-000000000001/start" &&
+        response.request().method() === "POST",
+    );
+    await startPage.getByRole("button", { name: "セッションを開始", exact: true }).click();
+    await sessionStart;
+    await startPage.getByRole("button", { name: "開始する", exact: true }).waitFor();
+    assert.equal(await startPage.getByRole("heading", { name: "P02：活動の案内" }).count(), 0);
+    assert.equal(await startPage.locator(".map-editor-page").count(), 0);
+    await startContext.close();
+
+    const legacyContext = await browser.newContext({
+      viewport: { width, height },
+      deviceScaleFactor: 1,
+    });
+    await legacyContext.addInitScript((token) => {
+      sessionStorage.setItem("stage1-access-token", token);
+    }, learnerToken);
+    const legacyPage = await legacyContext.newPage();
+    await installApiFixture(legacyPage, "legacy-session");
+    await legacyPage.goto(vite.resolvedUrls!.local[0]!);
+    await legacyPage.getByRole("button", { name: "セッションを開始", exact: true }).waitFor();
+    assert.equal(await legacyPage.locator(".session-practice-card").count(), 0);
+    assert.equal(
+      await legacyPage.getByRole("link", { name: "操作の練習", exact: true }).getAttribute("href"),
+      "/tutorial",
+      "legacy protocol keeps its existing practice link",
+    );
+    await assertNoHorizontalOverflow(legacyPage, "legacy-session-guide", width);
+    await legacyContext.close();
 
     const tutorialContext = await browser.newContext({
       viewport: { width, height },
@@ -449,7 +710,7 @@ try {
   }
 
   console.log(
-    `Rehearsal UI: PASS (shared code entry/auth request/error/pending; unpublished/waiting/ended; tutorial local-only/mode/reset/exit; researcher two primary cards and retained results/status/rows/loading/empty/error; Edge synthetic fixtures at 1366x768 and 1440x900; screenshots: ${directory}; no API or DB persistence verified)`,
+    `Rehearsal UI: PASS (signed-out code entry without practice card; P02 inline practice/return with unchanged client claims and no learning writes; normal start and legacy link preserved; unpublished/waiting/ended; researcher states; Edge synthetic fixtures at 1366x768 and 1440x900; screenshots: ${directory}; no real API or DB persistence verified)`,
   );
 } finally {
   await browser?.close();

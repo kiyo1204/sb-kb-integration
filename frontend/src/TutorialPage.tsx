@@ -30,7 +30,7 @@ const kitLinks = [
 let sequence = 0;
 const id = () => `practice-${++sequence}`;
 
-export default function TutorialPage({ returnHref }: { returnHref: string }) {
+export default function TutorialPage({ returnHref, onExit }: { returnHref: string; onExit?: () => void }) {
   const [mode, setMode] = useState<"PRIOR" | "KB">("PRIOR");
   const [reset, setReset] = useState(0);
 
@@ -80,7 +80,7 @@ export default function TutorialPage({ returnHref }: { returnHref: string }) {
           >
             最初からやり直す
           </button>
-          <a className="session-secondary-button" href={returnHref}>
+          <a className="session-secondary-button" href={returnHref} onClick={onExit ? (event) => { event.preventDefault(); event.stopPropagation(); onExit(); } : undefined}>
             練習を終了
           </a>
         </nav>
