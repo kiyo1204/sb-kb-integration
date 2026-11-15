@@ -207,3 +207,14 @@ main `19a1898efa86d81318086f9d5fca07f7db7f2320` を基点に、淡いグリー�
 - Windows／Node 24.22.1／Edge 157の実API・新規模擬PostgreSQLで対象1/1成功。実際の観測イベント要求だけを保留し、pointerdown後に通常APIへ解放して通知消去を待ったが、canvas矩形は一定。位置PATCH・API・DBは `(1290,750)`、再読込とFit後クリックの非保存確認も成功。観測イベントを偽のACKで処理していない。
 - 通知行の確保で表示可能領域が変わるため、座標テストは設定したスクロール後に対象概念を表示し、中心のhit-testで対象IDを確認する。期待値・PATCH待機条件は維持。診断は `finally` で例外・タイムアウト時にも回収し、上部領域の高さと表示有無だけを追加観測する。
 - 元のY=812の発生時点と以前のPATCH待機タイムアウトの原因は未確定。新HEADのCI結果を別途確認し、確認目的だけの再実行は行わない。
+
+### 2026-11-15 縦向きリンクとラベルの線ずれ
+- 参加者PCのユーザー報告は、開発版・build版の両方で、縦リンクの「線がリンクラベルからずれる」。保存済み接続・方向の不整合を確認した報告ではない。最新mainは `aee83e0129ba8c7cae9c4dff4566ac1201b06807`（PR #49文書統合）で、調査開始時の製品ソースは稼働基準 `b34ebe5` と同じ。
+- 分離したloopback Webと合成API応答（Windows / Node 24.22.1 / Edge / 1440×900）で再現。保存済みリンクのSVGがラベル中心の左右10pxへ別々に結ばれており、縦配置で上下の線が左右へ食い違う。修正前の縦線の延長とラベル中心の距離は約9.959/9.993px。SVG viewBoxやCSS transformによる一律の座標ずれとは異なる、描画経路そのもののずれを確認した。
+- `MapPage.tsx`のSVGパス2か所をラベル中心へ結ぶよう修正。背景のあるラベルの下を線が通り、縦・斜めでも同じ中心へ整列する。保存座標、方向、認証、ログ、由来、Merge、接続端点の操作は変更しない。取消済みPR #42の操作は追加しない。
+- `verify-link-line-alignment-browser.ts`を追加し、npmコマンドと既存ブラウザーsuiteへ登録。実際のSVG画面変換とDOMラベル矩形を照合し、通常、全体表示（Fit）、スクロール、ラベル移動中/後、合成PATCH保存・再読込、旧4/5/6で確認。修正後の距離は全観測で0.010px未満。旧protocolの確認は同じ共有Mapを使う合成fixtureであり、実Session全行程ではない。
+- 関連検証は `verify-link-position-browser.ts`、`verify-link-direction-browser.ts`（新SB/KB/統合・旧4/5/6の6ケース）、`verify-r05-analysis-ui-browser.ts` が成功。すべて合成応答であり、既存スクリプトのPASS文に「Real Map UI」とあっても実API・DB確認とは扱わない。R05は共有描画を使う。研究者分析の履歴Mapも `ReadOnlyMapSnapshot` 経由で同じ `ConceptCanvas` を使うため対象範囲に含む。今回R05のDB保存や削除は再実行していない。
+- frontend型検査・Lint・新規検証単体型検査・別出力先build、backend型検査・suite runner対象Lint、diff check成功。既存500KB超chunk警告あり。全体suiteは再実行していない。
+- 初回診断は修正前のずれをassertionで検出。修正前記録用実行ではFitの英語名指定を実装の「全体表示」へ訂正。SB fixtureを単純にKB/統合型へ替えた追加確認は必要なKit/初期化条件がなくタイムアウトし、適切なfixtureを持つ既存6ケース回帰で確認した。期待値・待機時間を緩和していない。
+- 前後画像はGit対象外 `.local/link-line-alignment/before.png` / `after.png`、数値は同ディレクトリの `before.json` / `after.json`。同じ合成Map・画面幅の比較であり、参加者PC自体の画像ではない。既存画像や過去の成功記録は変更していない。
+- 稼働中5174/5175/API/DBと比較Sessionは維持。build検査は `.local/link-line-alignment/dist` へ出力し、配信中の `frontend/dist` は上書きしていない。新規DBの作成や既存DB読取りは不要だった。修正版の参加者PCでの確認、実保存値の整合は未確認。ラグとの因果も未確認のため別課題として保持する。

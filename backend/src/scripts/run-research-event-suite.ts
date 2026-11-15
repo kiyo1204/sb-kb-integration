@@ -135,6 +135,7 @@ try {
     await run("test:research-log-ui", true);
     await run("test:stage1-analysis-layout-browser", true);
     await run("test:link-position-browser", true);
+    await run("test:link-line-alignment-browser", true);
     await run("test:session-flow-survey-browser",true);
     await run("test:five-flow-feedback-browser",true);
     await run("test:five-flow-features-browser",true);
