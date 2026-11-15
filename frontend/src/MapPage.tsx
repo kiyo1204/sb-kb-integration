@@ -5734,7 +5734,7 @@ export function ConceptCanvas({
                       ) && (
                         <path
                         className={`concept-edge-path${selectedLinkId === edge.id ? " is-selected" : ""}`}
-                        d={`M ${endpoints.source.x} ${endpoints.source.y} L ${center.x - 10} ${center.y}`}
+                        d={`M ${endpoints.source.x} ${endpoints.source.y} L ${center.x} ${center.y}`}
                         aria-hidden="true"
                         />
                       )}
@@ -5745,7 +5745,7 @@ export function ConceptCanvas({
                       ) && (
                         <path
                         className={`concept-edge-path${selectedLinkId === edge.id ? " is-selected" : ""}`}
-                        d={`M ${center.x + 10} ${center.y} L ${endpoints.target.x} ${endpoints.target.y}`}
+                        d={`M ${center.x} ${center.y} L ${endpoints.target.x} ${endpoints.target.y}`}
                         markerEnd={`url(#${arrowMarkerId}-${selectedLinkId === edge.id ? "selected" : "normal"})`}
                         aria-hidden="true"
                         />
