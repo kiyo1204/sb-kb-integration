@@ -96,6 +96,20 @@
 
 /* Keep the toolbar, independent part rows and canvas in one working view. */
 .is-experiment .map-editor-header-actions {justify-content:flex-start;align-items:center;padding:10px 16px;}
+/* Delivery notices may clear during a drag; reserve their row independently
+   of the toolbar controls so acknowledgement cannot move the canvas. */
+.is-experiment .map-editor-delivery-status {
+  order: 12;
+  flex: 0 0 100%;
+  min-width: 0;
+  min-height: 3em;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.is-experiment .map-editor-delivery-status > p {
+  margin: 0;
+  font: inherit;
+}
 .is-experiment .map-editor-save-status {
   display: inline-flex;
   min-height: 28px;

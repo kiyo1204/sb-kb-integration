@@ -3244,7 +3244,11 @@ function MapEditorShell({
           )}
           {experimentLayout && feedbackControls}
           {isLearner && map.sessionId && (
-            <LearnerDeliveryStatus sessionId={map.sessionId} />
+            experimentLayout ? (
+              <div className="map-editor-delivery-status">
+                <LearnerDeliveryStatus sessionId={map.sessionId} />
+              </div>
+            ) : <LearnerDeliveryStatus sessionId={map.sessionId} />
           )}
           {activityLogWarning && (
             <p className="session-error" role="status">

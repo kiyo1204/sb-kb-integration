@@ -264,6 +264,45 @@ try {
             await page.getByText("保存済み", { exact: true }).waitFor();
           });
       }
+      if (screen !== "lesson") {
+        // Synthetic outbox only: control the actual delivery component without
+        // changing the production sender, acknowledgements, or log definitions.
+        const setSyntheticDelivery = async (state: "empty" | "pending" | "lost") => {
+          await page.evaluate(async ({ sessionId, stageId, state }) => {
+            const { changeState, enqueue } = await import("/src/observation-outbox.ts");
+            await changeState(sessionId, (s) => {
+              s.items = [];
+              s.capacityLost = s.expiredLost = s.rejectedLost = 0;
+              s.storageLost = state === "lost" ? 1 : 0;
+            });
+            if (state === "pending") await enqueue(sessionId, { schemaVersion: 1, eventType: "SCREEN_ENTER", targetType: "SCREEN", stageId, outcome: "SUCCESS", clientTimestamp: new Date().toISOString(), clientTimeQuality: "OBSERVED" });
+            window.dispatchEvent(new Event("stage1-delivery-change"));
+          }, { sessionId, stageId: stageIds[screen], state });
+          await page.waitForFunction((state) => {
+            const notice = Array.from(document.querySelectorAll(".map-editor-header-actions p"))
+              .find((p) => p.textContent?.includes("操作記録：送信待ち"));
+            return Boolean(notice) === (state !== "empty");
+          }, state);
+        };
+        const geometry = () => page.evaluate(() => {
+          const header = document.querySelector(".map-editor-header")!.getBoundingClientRect();
+          const toolbar = document.querySelector(".map-editor-header-actions")!.getBoundingClientRect();
+          const canvas = document.querySelector(".concept-canvas")!.getBoundingClientRect();
+          return { headerHeight: header.height, toolbarHeight: toolbar.height, canvasY: canvas.y };
+        });
+        await setSyntheticDelivery("empty");
+        const empty = await geometry();
+        await setSyntheticDelivery("pending");
+        const visible = await geometry();
+        await setSyntheticDelivery("empty");
+        const cleared = await geometry();
+        console.log(JSON.stringify({ check: "delivery-layout", width, screen, empty, visible, cleared }));
+        assert.deepEqual(visible, empty, "delivery notice must not move the canvas");
+        assert.deepEqual(cleared, empty, "clearing delivery notice must not move the canvas");
+        await setSyntheticDelivery("lost");
+        assert.deepEqual(await geometry(), empty, "delivery loss notice must retain its space");
+        await setSyntheticDelivery("empty");
+      }
       const metrics = await page.evaluate(() => {
         const rect = (selector: string) => {
           const element = document.querySelector(selector);

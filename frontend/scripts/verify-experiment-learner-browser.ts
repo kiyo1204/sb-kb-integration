@@ -23,6 +23,8 @@ const browser = await chromium.launch({
 const dir =
   process.env.LEARNER_SCREENSHOT_DIR ?? join(tmpdir(), "sbkb-learner-preview");
 await mkdir(dir, { recursive: true });
+let releaseDeliveryGate = () => {};
+const deliveryRouteTasks = new Set<Promise<void>>();
 try {
   const page = await browser.newPage({
     viewport: { width: 1366, height: 1200 },
@@ -282,9 +284,24 @@ try {
     if (!moved.ok) throw new Error("scroll fixture position unavailable");
     return { mapId, seedId: seed.id };
   }, sid);
+  // Hold only genuine observation transport; Map PATCHes still use the API.
+  let releaseGate!: () => void;
+  const deliveryGate = new Promise<void>((resolve) => { releaseGate = resolve; });
+  releaseDeliveryGate = releaseGate;
+  const eventPath = `/api/sessions/${sid}/events`;
+  const heldObservation = page.waitForRequest((request) => new URL(request.url()).pathname === eventPath && request.method() === "POST");
+  void heldObservation.catch(() => undefined);
+  await page.route(`**${eventPath}`, (route) => {
+    const task = (async () => { await deliveryGate; await route.continue(); })();
+    deliveryRouteTasks.add(task);
+    return task.finally(() => deliveryRouteTasks.delete(task));
+  });
   // Re-enter through the session flow so the active experimental client claim
   // remains the same while MapPage fetches the persisted state again.
   await reopenCurrentMap();
+  await heldObservation;
+  const deliveryNotice = page.locator(".map-editor-delivery-status p");
+  await deliveryNotice.waitFor({ state: "visible" });
   await page.setViewportSize({ width: 1366, height: 640 });
   const scrollState = await page.evaluate(() => {
     const viewport = document.querySelector<HTMLElement>(
@@ -345,7 +362,11 @@ try {
           const bounds = ancestor.getBoundingClientRect();
           ancestors.push({ tag: ancestor.tagName, className: ancestor.className, x: bounds.x, y: bounds.y, scrollLeft: ancestor.scrollLeft, scrollTop: ancestor.scrollTop });
         }
-        samples.push({ event: event.type, pointer, canvas: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scaleX: canvas.offsetWidth / rect.width, scaleY: canvas.offsetHeight / rect.height }, zoom: canvas.style.zoom, scrollX: window.scrollX, scrollY: window.scrollY, viewportScroll: { x: viewport.scrollLeft, y: viewport.scrollTop }, ancestors, node: { id: node.dataset.conceptId, left: node.style.left, top: node.style.top } });
+        const regions = Array.from(document.querySelectorAll(".map-editor-header, .map-editor-header-actions, .map-editor-header-actions > *, .experiment-state-guidance"), (element) => {
+          const bounds = element.getBoundingClientRect();
+          return { tag: element.tagName, className: element.className, delivery: element.textContent?.startsWith("操作記録：送信待ち") ?? false, y: bounds.y, height: bounds.height, display: getComputedStyle(element).display };
+        }).slice(0, 20);
+        samples.push({ event: event.type, pointer, canvas: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scaleX: canvas.offsetWidth / rect.width, scaleY: canvas.offsetHeight / rect.height }, zoom: canvas.style.zoom, scrollX: window.scrollX, scrollY: window.scrollY, viewportScroll: { x: viewport.scrollLeft, y: viewport.scrollTop }, ancestors, regions, node: { id: node.dataset.conceptId, left: node.style.left, top: node.style.top } });
         } catch { /* Observe without affecting pointer dispatch. */ }
       };
       const types = ["pointerdown", "pointermove", "pointerup", "scroll"];
@@ -354,19 +375,40 @@ try {
     });
     } catch { /* Setup diagnostics must not replace the original assertion. */ }
   }
-  const seedNode = page.locator(".concept-node").first(),
-    seedBox = await seedNode.boundingBox();
+  const seedNode = page.locator(".concept-node").first();
+  let seedBox: { x: number; y: number; width: number; height: number } | null = null;
+  let persistedPosition!: { positionX: number; positionY: number };
+  try {
+  // Fully expose the real target after setting both scroll containers.
+  // The reserved notification row changes the available viewport area.
+  await seedNode.scrollIntoViewIfNeeded();
+  seedBox = await seedNode.boundingBox();
   assert.ok(seedBox);
+  const hit = await page.evaluate(({ x, y }) => {
+    const element = document.elementFromPoint(x, y);
+    return { tag: element?.tagName, conceptId: element?.closest("[data-concept-id]")?.getAttribute("data-concept-id") };
+  }, { x: seedBox.x + seedBox.width / 2, y: seedBox.y + seedBox.height / 2 });
+  console.log(JSON.stringify({ check: "scroll-pointer-target", expectedId: scrollSeed.seedId, hit }));
+  assert.equal(hit.conceptId, scrollSeed.seedId, "drag starts on the intended visible concept");
   const moved = page.waitForResponse(
     (r) =>
       r.request().method() === "PATCH" &&
       /\/concepts\/[^/]+\/position$/.test(new URL(r.url()).pathname),
   );
+  // Retain the original rejection for the awaited assertion while other
+  // controlled UI work is in progress; do not create an unhandled rejection.
+  void moved.catch(() => undefined);
   await page.mouse.move(
     seedBox.x + seedBox.width / 2,
     seedBox.y + seedBox.height / 2,
   );
   await page.mouse.down();
+  const beforeDeliveryClears = await page.locator(".concept-canvas").boundingBox();
+  releaseGate();
+  await deliveryNotice.waitFor({ state: "hidden" });
+  const afterDeliveryClears = await page.locator(".concept-canvas").boundingBox();
+  console.log(JSON.stringify({ check: "delivery-clears-during-drag", before: beforeDeliveryClears, after: afterDeliveryClears }));
+  assert.deepEqual(afterDeliveryClears, beforeDeliveryClears, "observation ACK must not move the canvas during a drag");
   await page.mouse.move(
     seedBox.x + seedBox.width / 2 + 40,
     seedBox.y + seedBox.height / 2 + 30,
@@ -378,7 +420,7 @@ try {
     try { positionTraffic.push({ kind: "waited-response", conceptId: new URL(positionResponse.url()).pathname.split("/")[3], status: positionResponse.status() }); } catch { /* Preserve the response assertion. */ }
   }
   assert.equal((await moved).status(), 200);
-  const persistedPosition = await page.evaluate(async ({ mapId, seedId }) => {
+  persistedPosition = await page.evaluate(async ({ mapId, seedId }) => {
     const { apiFetch } = await import("/src/auth-client.ts");
     const response = await apiFetch(`/api/maps/${mapId}`);
     if (!response.ok) throw new Error("saved scroll map unavailable");
@@ -389,14 +431,16 @@ try {
     if (!seed) throw new Error("saved scroll seed unavailable");
     return { positionX: seed.positionX, positionY: seed.positionY };
   }, scrollSeed);
+  assert.deepEqual(persistedPosition, { positionX: 1290, positionY: 750 });
+  } finally {
   if (coordinateProbe) {
     try {
       console.log(JSON.stringify({ check: "scroll-coordinate-probe", conceptId: scrollSeed.seedId, before: { positionX: 1250, positionY: 720 }, expected: { positionX: 1290, positionY: 750 }, pointerStart: seedBox, apiReadback: persistedPosition, traffic: positionTraffic, samples: await page.evaluate(() => (window as unknown as { __scrollCoordinateProbe: unknown[] }).__scrollCoordinateProbe) }));
     } catch { /* Preserve the original assertion even if observation fails. */ }
-    page.off("request", recordPositionRequest);
+    try { page.off("request", recordPositionRequest); } catch { /* Preserve the original outcome. */ }
     try { await page.evaluate(() => (window as unknown as { __stopScrollCoordinateProbe?: () => void }).__stopScrollCoordinateProbe?.()); } catch { /* Best effort diagnostic cleanup only. */ }
   }
-  assert.deepEqual(persistedPosition, { positionX: 1290, positionY: 750 });
+  }
   await reopenCurrentMap();
   const reloadedPosition = await page.evaluate(async ({ mapId, seedId }) => {
     const { apiFetch } = await import("/src/auth-client.ts");
@@ -700,6 +744,9 @@ try {
     "Experiment learner browser: PASS (real waiting/claim/conflict/start, transport faults separately, P01–P08, offline submit guard, palette mouse/Undo, neutral flow, no survey/feedback during integration)",
   );
 } finally {
+  releaseDeliveryGate();
+  // Complete these route continuations before their browser context closes.
+  await Promise.allSettled([...deliveryRouteTasks]);
   await browser.close();
   await vite.close();
 }
