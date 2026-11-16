@@ -134,7 +134,9 @@ async function installSyntheticApi(
     empty?: boolean;
     failMaterials?: boolean;
     failRuns?: boolean;
-    holdList?: "materials" | "runs";
+    failParticipants?: boolean;
+    holdList?: "materials" | "runs" | "run-material-versions" | "participants";
+    holdRegistration?: boolean;
   } = {},
 ) {
   let markRequested = () => {};
@@ -144,6 +146,14 @@ async function installSyntheticApi(
   let releaseHold = () => {};
   const hold = new Promise<void>((resolve) => {
     releaseHold = resolve;
+  });
+  let markRegistrationRequested = () => {};
+  const registrationRequestSeen = new Promise<void>((resolve) => {
+    markRegistrationRequested = resolve;
+  });
+  let releaseRegistrationHold = () => {};
+  const registrationHold = new Promise<void>((resolve) => {
+    releaseRegistrationHold = resolve;
   });
   await page.addInitScript(() =>
     sessionStorage.setItem(
@@ -176,8 +186,13 @@ async function installSyntheticApi(
     }
     if (path === "/api/research/materials" && request.method() === "POST")
       return json(route, { id: ids.draft }, 201);
-    if (path === "/api/research/experiment-runs/material-versions")
+    if (path === "/api/research/experiment-runs/material-versions") {
+      if (options.holdList === "run-material-versions") {
+        markRequested();
+        await hold;
+      }
       return json(route, { versions: completedVersions });
+    }
     if (
       path === "/api/research/experiment-runs" &&
       request.method() === "GET"
@@ -206,14 +221,51 @@ async function installSyntheticApi(
         201,
       );
     }
+    const participantPath = `/api/research/experiment-runs/${ids.runPreparing}/participants`;
+    if (path === participantPath && request.method() === "GET") {
+      if (options.holdList === "participants") {
+        markRequested();
+        await hold;
+      }
+      if (options.failParticipants)
+        return json(route, { message: "synthetic unavailable" }, 503);
+      return json(route, {
+        run: {
+          ...runs[0],
+          plannedParticipants: 1,
+          registeredSessions: 0,
+        },
+        startAvailable: true,
+        flowMode: "enabled",
+        participants: [],
+      });
+    }
+    if (path === participantPath && request.method() === "POST") {
+      if (options.holdRegistration) {
+        markRegistrationRequested();
+        await registrationHold;
+      }
+      return json(route, { issuedCode: null, codeDelivery: "NOT_APPLICABLE" }, 201);
+    }
     return json(route, { error: "not_found" }, 404);
   });
-  return { requestSeen, release: releaseHold };
+  return {
+    requestSeen,
+    release: releaseHold,
+    registrationRequestSeen,
+    releaseRegistration: releaseRegistrationHold,
+  };
 }
 
-const directory = join(tmpdir(), "sbkb-researcher-ui-20261114-final");
+const directory = join(
+  tmpdir(),
+  "sbkb-researcher-ui-copy-common-terms-20261116-attempt4",
+);
 await mkdir(directory, { recursive: true });
-const vite = await createServer({ server: { host: "127.0.0.1", port: 0 } });
+const vite = await createServer({
+  cacheDir: join(directory, "vite-cache"),
+  server: { host: "127.0.0.1", port: 0 },
+});
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 const metrics: Array<Record<string, unknown>> = [];
 async function captureComparison(
@@ -322,7 +374,7 @@ async function captureComparison(
 async function verifyLoading(
   browserInstance: Awaited<ReturnType<typeof chromium.launch>>,
   path: string,
-  list: "materials" | "runs",
+  list: "materials" | "runs" | "run-material-versions",
 ) {
   const context = await browserInstance.newContext({
     viewport: { width: 1366, height: 768 },
@@ -335,21 +387,136 @@ async function verifyLoading(
   await fixture.requestSeen;
   await page
     .getByRole("status")
-    .filter({
-      hasText:
-        list === "materials"
-          ? "教材を読み込んでいます"
-          : "実施一覧を読み込んでいます",
-    })
+    .getByText(
+      list === "materials"
+        ? "教材を読み込んでいます…"
+        : list === "runs"
+          ? "実施一覧を読み込んでいます…"
+          : "完成教材版を読み込んでいます…",
+      { exact: true },
+    )
     .waitFor();
   fixture.release();
   await page
     .getByRole("heading", {
-      name: list === "materials" ? "教材一覧" : "登録された実施",
+      name:
+        list === "materials"
+          ? "教材一覧"
+          : list === "runs"
+            ? "登録された実施"
+            : "実施を作成",
       exact: true,
     })
     .waitFor();
   await context.close();
+}
+
+async function verifyParticipants(
+  browserInstance: Awaited<ReturnType<typeof chromium.launch>>,
+  viewport: { width: number; height: number },
+) {
+  const path = `/research/experiment-runs/${ids.runPreparing}`;
+  const context = await browserInstance.newContext({ viewport });
+  const page = await context.newPage();
+  const fixture = await installSyntheticApi(page, {
+    holdList: "participants",
+  });
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    requests.push(`${request.method()} ${new URL(request.url()).pathname}`);
+  });
+  await page.goto(new URL(path.slice(1), vite.resolvedUrls!.local[0]!).toString());
+  await fixture.requestSeen;
+  await page
+    .getByText("実施と参加者を読み込んでいます…", { exact: true })
+    .waitFor();
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+    false,
+    `participants: no horizontal overflow at ${viewport.width}px while loading`,
+  );
+  fixture.release();
+  await page
+    .getByText("参加者Sessionはまだありません。", { exact: true })
+    .waitFor();
+  await page.getByRole("button", { name: "状態を更新", exact: true }).waitFor();
+  await page
+    .getByRole("button", { name: "＋ 参加者Session・利用コードを追加", exact: true })
+    .waitFor();
+  assert.equal(
+    await page.getByRole("link", { name: "実施一覧へ戻る" }).getAttribute("href"),
+    "/research/experiment-runs",
+  );
+  await page.getByRole("link", { name: "実施一覧へ戻る" }).focus();
+  assert.equal(
+    await page
+      .getByRole("link", { name: "実施一覧へ戻る" })
+      .evaluate((element) => getComputedStyle(element).outlineStyle),
+    "solid",
+    "participants: back link has visible keyboard focus",
+  );
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+    false,
+    `participants: no horizontal overflow at ${viewport.width}px when loaded`,
+  );
+  assert.ok(
+    requests.includes(
+      `GET /api/research/experiment-runs/${ids.runPreparing}/participants`,
+    ),
+    "participants: existing list API request path is unchanged",
+  );
+  await context.close();
+
+  const errorContext = await browserInstance.newContext({ viewport });
+  const errorPage = await errorContext.newPage();
+  await installSyntheticApi(errorPage, { failParticipants: true });
+  await errorPage.goto(
+    new URL(path.slice(1), vite.resolvedUrls!.local[0]!).toString(),
+  );
+  await errorPage.getByRole("alert").waitFor();
+  assert.equal(
+    await errorPage.getByText("実施と参加者を読み込んでいます…", { exact: true }).count(),
+    0,
+    "participants: loading state is not shown with an error",
+  );
+  assert.equal(
+    await errorPage.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+    false,
+    `participants: no horizontal overflow at ${viewport.width}px in error state`,
+  );
+  await errorContext.close();
+
+  const operationContext = await browserInstance.newContext({ viewport });
+  const operationPage = await operationContext.newPage();
+  const operationFixture = await installSyntheticApi(operationPage, {
+    holdRegistration: true,
+  });
+  await operationPage.goto(
+    new URL(path.slice(1), vite.resolvedUrls!.local[0]!).toString(),
+  );
+  await operationPage.getByText("参加者Sessionはまだありません。", { exact: true }).waitFor();
+  const registerButton = operationPage.getByRole("button", {
+    name: "＋ 参加者Session・利用コードを追加",
+    exact: true,
+  });
+  await operationPage.getByLabel("参加者ラベル（仮名）").fill("合成確認用");
+  assert.equal(await registerButton.isEnabled(), true);
+  const registrationRequest = operationPage.waitForRequest(
+    (request) =>
+      new URL(request.url()).pathname ===
+        `/api/research/experiment-runs/${ids.runPreparing}/participants` &&
+      request.method() === "POST",
+  );
+  await registerButton.click();
+  await registrationRequest;
+  await operationFixture.registrationRequestSeen;
+  assert.equal(await registerButton.isDisabled(), true);
+  operationFixture.releaseRegistration();
+  await operationPage.getByText("管理操作を保存しました。", { exact: true }).waitFor();
+  await operationPage.getByLabel("参加者ラベル（仮名）").fill("合成再操作用");
+  assert.equal(await registerButton.isEnabled(), true);
+  await operationContext.close();
 }
 try {
   await vite.listen();
@@ -514,12 +681,22 @@ try {
   }
   await verifyLoading(browser, "/research/materials", "materials");
   await verifyLoading(browser, "/research/experiment-runs", "runs");
+  await verifyLoading(
+    browser,
+    "/research/experiment-runs/new",
+    "run-material-versions",
+  );
+  for (const viewport of [
+    { width: 1366, height: 768 },
+    { width: 1440, height: 900 },
+  ])
+    await verifyParticipants(browser, viewport);
   await writeFile(
     join(directory, "comparison-metrics.json"),
     JSON.stringify(metrics, null, 2),
   );
   console.log(
-    "Researcher UI layout: PASS (matched before/after screenshots; synthetic materials/runs; 1366x768 and 1440x900; loading/empty/error/form validation/focus/overflow; no API or DB)",
+    "Researcher UI layout: PASS (matched before/after screenshots; synthetic materials/runs/participants; 1366x768 and 1440x900; loading/empty/error/form validation/focus/overflow; no API or DB)",
   );
   console.log(`Screenshots: ${directory}`);
 } finally {

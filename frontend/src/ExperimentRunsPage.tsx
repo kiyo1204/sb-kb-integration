@@ -1,6 +1,7 @@
 import { newClientId } from "./client-identity";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch, uiText } from "./auth-client";
+import { loadingMessage } from "./common-ui-copy";
 import "./materials.css";
 import "./experiment-runs.css";
 type Completed = {
@@ -161,7 +162,7 @@ function CreateRun() {
           <section className="material-panel material-main">
             <h2>実施の設定</h2>
             {materials === null && !error && (
-              <p role="status">完成教材版を読み込んでいます…</p>
+              <p role="status">{loadingMessage("完成教材版")}</p>
             )}
             {materials?.length === 0 && (
               <p role="status">
@@ -342,7 +343,7 @@ function RunList() {
             {error}
           </p>
         )}
-        {loading && <p role="status">実施一覧を読み込んでいます…</p>}
+        {loading && <p role="status">{loadingMessage("実施一覧")}</p>}
         <section className="material-panel material-series">
           <h2>登録された実施</h2>
           <p className="material-muted">

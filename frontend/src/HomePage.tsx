@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch } from "./auth-client";
+import { loadingMessage } from "./common-ui-copy";
 
 type ApiConnectivity = "checking" | "connected" | "unreachable" | "error";
 type DatabaseConnectivity = "checking" | "connected" | "error" | "unknown";
@@ -379,7 +380,7 @@ function ResearchSessions() {
       <button type="button" className="home-refresh-button" onClick={() => setReload(value => value + 1)}>更新</button></div>
     {cleanupMessage && <p role="status">{cleanupMessage} <a href="/research/data-management">確認付きデータ削除</a></p>}
     {error && <p className="home-action-error" role="alert">一覧を取得できませんでした。接続を確認して更新してください。</p>}
-    {!sessions && !error && <p className="home-list-state" role="status">参加Sessionを読み込んでいます…</p>}
+    {!sessions && !error && <p className="home-list-state" role="status">{loadingMessage("参加Session")}</p>}
     {sessions?.length === 0 && <p className="home-list-state" role="status">参加Sessionはまだありません。</p>}
     {sessions && sessions.length > 0 && <div className="research-session-table-wrap"><table className="research-session-table">
       <thead><tr><th scope="col">参加者コード</th><th scope="col">フロー</th><th scope="col">群</th><th scope="col">状態</th><th scope="col">現在の活動</th><th scope="col">開始日時</th><th scope="col">完了日時</th><th scope="col">操作</th></tr></thead>

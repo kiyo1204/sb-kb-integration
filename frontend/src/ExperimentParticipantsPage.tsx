@@ -7,6 +7,7 @@ import {
   type FormEvent,
 } from "react";
 import { apiFetch, uiText, downloadApiFile } from "./auth-client";
+import { loadingMessage } from "./common-ui-copy";
 import "./materials.css";
 import "./experiment-participants.css";
 type Participant = {
@@ -233,7 +234,7 @@ export default function ExperimentParticipantsPage({
             {notice}
           </p>
         )}
-        {!r && !error && <p role="status">実施と参加者を読み込んでいます…</p>}
+        {!r && !error && <p role="status">{loadingMessage("実施と参加者")}</p>}
         {r && (
           <>
             <section className="material-summary">

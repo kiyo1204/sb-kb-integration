@@ -241,9 +241,12 @@ async function assertNoHorizontalOverflow(page: Page, name: string, width: numbe
   );
 }
 
-const directory = join(tmpdir(), "sbkb-researcher-home-legacy-nav-20261116");
+const directory = join(tmpdir(), "sbkb-ui-copy-common-terms-20261116");
 await mkdir(directory, { recursive: true });
-const vite = await createServer({ server: { host: "127.0.0.1", port: 0 } });
+const vite = await createServer({
+  cacheDir: join(directory, "vite-cache"),
+  server: { host: "127.0.0.1", port: 0 },
+});
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 
 try {
