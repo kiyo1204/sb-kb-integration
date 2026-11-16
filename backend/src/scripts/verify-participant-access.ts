@@ -264,6 +264,7 @@ try {
   assert.equal(me.flowAvailable, false);
   assert.deepEqual(Object.keys(me).sort(), [
     "flowAvailable",
+    "flowMode",
     "protocolKey",
     "role",
     "sessionId",

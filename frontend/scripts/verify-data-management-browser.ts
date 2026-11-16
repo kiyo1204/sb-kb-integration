@@ -1,5 +1,8 @@
 import {verifyMockTestUrl} from "../../backend/src/scripts/mock-db.js";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+const { Pool } = createRequire(new URL("../../backend/package.json", import.meta.url))("pg");
+import { createStage1Session } from "../../backend/src/sessions.js";
 import { chromium } from "playwright";
 import { createServer } from "vite";
 import { join } from "node:path";
@@ -8,6 +11,24 @@ const token = process.env.RESEARCHER_API_TOKEN!;
 await verifyMockTestUrl(process.env.DATABASE_URL ?? "");
 assert.ok(/^http:\/\/127\.0\.0\.1:[0-9]+$/.test(process.env.API_BASE_URL ?? ""));
 process.env.API_PROXY_TARGET = process.env.API_BASE_URL;
+// Use a known legacy fixture: new-flow Sessions deliberately reject this management action.
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+let fixtureSessionId: string;
+try {
+  const c = await pool.connect();
+  try {
+    await c.query("BEGIN");
+    fixtureSessionId = (await createStage1Session(c, {
+      participantCode: "TEST ONLY management browser",
+      lessonVideoUrl: "/test-only.mp4",
+      kitDefinitionId: "66666666-6666-4666-8666-666666666662",
+      studyGroup: "CONTROL",
+      groupActivitySeconds: 60,
+    })).id;
+    await c.query("COMMIT");
+  } catch (error) { await c.query("ROLLBACK"); throw error; }
+  finally { c.release(); }
+} finally { await pool.end(); }
 const vite = await createServer({ server: { host: "127.0.0.1", port: 0 } });
 await vite.listen();
 const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL ?? "msedge", headless: true });
@@ -30,12 +51,12 @@ try {
   await page
     .getByRole("heading", { name: "研究ごとの保存期限", exact: true })
     .waitFor();
-  await page
+  const fixtureRow = page.getByText(`セッション：${fixtureSessionId}`, { exact: true }).locator("..");
+  await fixtureRow
     .getByRole("button", {
       name: "このセッションの削除範囲を確認",
       exact: true,
     })
-    .first()
     .click();
   await page
     .getByRole("heading", { name: "削除の最終確認", exact: true })
@@ -54,9 +75,8 @@ try {
     false,
   );
   await page.getByRole("button", { name: "戻る", exact: true }).click();
-  await page
+  await fixtureRow
     .getByRole("button", { name: "仮名IDを再発行…", exact: true })
-    .first()
     .click();
   await page
     .getByRole("heading", { name: "仮名IDの再発行", exact: true })

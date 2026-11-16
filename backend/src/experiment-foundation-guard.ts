@@ -1,4 +1,4 @@
-import { experimentPreviewEnabled } from "./experiment-execution.js";
+import { experimentLearnerEnabled } from "./experiment-execution.js";
 import { principalOf } from "./access-control.js";
 import type { RequestHandler } from "express";
 import type { Pool } from "pg";
@@ -31,7 +31,7 @@ export function experimentStorageGuard(pool: Pool): RequestHandler {
         const bodyOwner=(await pool.query("SELECT session_id FROM session_stages WHERE id=$1",[req.body.sessionStageId])).rows[0];
         if(bodyOwner && (await pool.query("SELECT 1 FROM sessions WHERE id=$1 AND protocol_key=$2",[bodyOwner.session_id,EXPERIMENT_PROTOCOL])).rowCount){
           const actor=principalOf(res);
-          if(!experimentPreviewEnabled()||actor.role!=="learner"||!actor.experiment||actor.sessionId!==bodyOwner.session_id)return res.status(409).json({error:"experiment_storage_only"});
+          if(!experimentLearnerEnabled()||actor.role!=="learner"||!actor.experiment||actor.sessionId!==bodyOwner.session_id)return res.status(409).json({error:"experiment_storage_only"});
         }
       }
       if (uuid.test(id ?? "") && lookups[kind]) {
@@ -49,7 +49,7 @@ export function experimentStorageGuard(pool: Pool): RequestHandler {
           // Read-only researcher analysis is independent of learner publication.
           // Each whitelisted handler validates real Session/Map ownership again.
           if(actor.role==="researcher" && req.method==="GET" && /^\/research\/stage1\/sessions\/[0-9a-f-]{36}\/(analysis|operations\.csv|map-states\.csv|maps\/[0-9a-f-]{36}\/history)$/.test(req.path))return next();
-          if(experimentPreviewEnabled() && actor.role==="learner" && actor.experiment && actor.sessionId===row.session_id && !token) return next();
+          if(experimentLearnerEnabled() && actor.role==="learner" && actor.experiment && actor.sessionId===row.session_id && !token) return next();
           return res
             .status(409)
             .json({

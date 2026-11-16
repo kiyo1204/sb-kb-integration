@@ -1,4 +1,4 @@
-import { experimentPreviewEnabled, validateExperimentRequest, experimentRequestContext } from "./experiment-execution.js";
+import { experimentLearnerMode, experimentLearnerEnabled, validateExperimentRequest, experimentRequestContext } from "./experiment-execution.js";
 import { operationGate, committedReceipt } from "./delivery-reliability.js";
 import {authenticateExperimentToken,ParticipantAccessError,experimentFlowMessage,type ExperimentProof} from "./experiment-participant-access.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -137,10 +137,10 @@ export function accessControl(pool: Pool) {
               if(request.path==="/experiment-status"&&request.method==="GET")return response.json({state:run.state,endedAt:run.ended_at});
               if(run.state==="ENDED" && request.path==="/me" && request.method==="GET")return response.json({role:"learner",sessionId:proof.sessionId,protocolKey:"SBKB_INTEGRATION_V1",flowAvailable:false,runState:"ENDED"});
               if(run.state==="ENDED")return response.status(409).json({error:"experiment_ended",message:"研究者が実施を終了しました。研究者の指示を待ってください。"});
-              if(request.path==="/me"&&request.method==="GET")return response.json({role:"learner",sessionId:proof.sessionId,protocolKey:"SBKB_INTEGRATION_V1",flowAvailable:experimentPreviewEnabled()});
+              if(request.path==="/me"&&request.method==="GET")return response.json({role:"learner",sessionId:proof.sessionId,protocolKey:"SBKB_INTEGRATION_V1",flowAvailable:experimentLearnerEnabled(),flowMode:experimentLearnerMode()});
               if(request.path==="/experiment-client/claim"&&request.method==="POST")return next();
               if(request.path.startsWith("/research/"))return response.status(403).json({error:"forbidden"});
-              if(!experimentPreviewEnabled())return response.status(409).json({error:"experiment_learner_flow_unavailable",message:experimentFlowMessage});
+              if(!experimentLearnerEnabled())return response.status(409).json({error:"experiment_learner_flow_unavailable",message:experimentFlowMessage});
               if(!(await validateExperimentRequest(pool,request,response)))return;
               if(request.path==="/experiment-material"&&request.method==="GET")return next();
 

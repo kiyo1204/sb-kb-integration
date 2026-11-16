@@ -1,4 +1,4 @@
-import { experimentPreviewEnabled } from "./experiment-execution.js";
+import { experimentLearnerMode, experimentAvailabilityMessage, experimentLearnerEnabled } from "./experiment-execution.js";
 import type { Pool, PoolClient } from "pg";
 import {
   createLearnerToken,
@@ -44,7 +44,7 @@ const fail = (code: string, status: number): never => {
   throw new ParticipantAccessError(code, status);
 };
 export const experimentFlowMessage =
-  "新しい学習者フローは未公開です。研究者の模擬検証用です。実参加者へのコード配布・実施開始はできません。";
+  "学習者フローは無効です。管理者が STAGE1_EXPERIMENT_LEARNER_ENABLED=1 を設定してAPIを再作成してください。";
 export function participantFailure(error: unknown) {
   if (
     error instanceof ParticipantAccessError ||
@@ -213,10 +213,10 @@ export async function claimExperimentClient(
         clientId: client.id,
         deviceGeneration: own ? row.device_generation : null,
         ownership: own ? "OWNED" : "PENDING",
-        flowAvailable: false,
+        flowAvailable: own && experimentLearnerEnabled(),
         ...(!own ? { error: "experiment_client_in_use" } : {}),
         message: own
-          ? experimentFlowMessage
+          ? experimentAvailabilityMessage()
           : "別の画面が使用中です。この画面識別子を研究者に伝え、切替を依頼してください。",
       },
     };
@@ -452,8 +452,9 @@ export async function participantView(
   return (await loadResearchTextSafety(pool)).redact({
     run,
     participants,
-    learnerFlowAvailable: experimentPreviewEnabled(),
-    startAvailable: experimentPreviewEnabled(),
-    message: experimentFlowMessage,
+    flowMode: experimentLearnerMode(),
+    learnerFlowAvailable: experimentLearnerEnabled(),
+    startAvailable: experimentLearnerEnabled(),
+    message: experimentAvailabilityMessage(),
   });
 }

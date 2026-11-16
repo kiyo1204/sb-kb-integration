@@ -16,8 +16,10 @@ type ConnectionResult = {
 /** One live page owns one client secret. Internal navigation never reloads it. */
 export default function ExperimentLearnerPage({
   sessionId,
+  flowMode,
 }: {
   sessionId: string;
+  flowMode?: string;
 }) {
   const [secret] = useState(() =>
     btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
@@ -133,9 +135,7 @@ export default function ExperimentLearnerPage({
         }
       }}
     >
-      <p className="experiment-preview-banner">
-        模擬検証専用・通常利用は未公開です。実研究データを入力しないでください。
-      </p>
+      {flowMode !== "enabled" && <p className="experiment-preview-banner">模擬検証専用です。実研究データを入力しないでください。</p>}
       {issue ? (
         <section
           className="session-card"

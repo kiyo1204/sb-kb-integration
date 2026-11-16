@@ -263,7 +263,7 @@ function CreateRun() {
               </p>
             </div>
             <p className="material-muted">
-              この作成画面では参加者Sessionを作りません。作成後の実施詳細から参加者登録・コード管理ができます。学習者フローと開始・終了は未公開です。
+              この作成画面では参加者Sessionを作りません。作成後の実施詳細から参加者登録・コード管理ができます。実施詳細でフローの利用可否を確認し、開始・終了を行ってください。
             </p>
           </aside>
         </div>
@@ -346,7 +346,7 @@ function RunList() {
         <section className="material-panel material-series">
           <h2>登録された実施</h2>
           <p className="material-muted">
-            登録済み数は所属するSessionの数です。予定人数・人物数とは異なります。実施詳細から参加者登録・コード管理ができます。学習者フローと開始・終了は未公開です。
+            登録済み数は所属するSessionの数です。予定人数・人物数とは異なります。実施詳細から参加者登録・コード管理ができます。実施詳細でフローの利用可否を確認し、開始・終了を行ってください。
           </p>
           {runs?.length === 0 && !loading ? (
             <p>
@@ -398,7 +398,7 @@ function RunList() {
                           >
                             {r.state === "PREPARING"
                               ? "準備中"
-                              : r.state === "RUNNING" ? "実施中（模擬）" : r.state === "ENDED" ? "終了" : "未対応の状態"}
+                              : r.state === "RUNNING" ? "実施中" : r.state === "ENDED" ? "終了" : "未対応の状態"}
                           </span>
                         </td>
                         <td>{date(r.createdAt)}</td>

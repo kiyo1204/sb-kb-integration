@@ -21,7 +21,7 @@ import MaterialsPage from "./MaterialsPage";
 import ExperimentRunsPage from "./ExperimentRunsPage";
 import ExperimentParticipantsPage from "./ExperimentParticipantsPage";
 import ExperimentLearnerGate from "./ExperimentLearnerGate";
-type UIPrincipal = {runState?:string;role?:string;sessionId?:string;protocolKey?:string;flowAvailable?:boolean};
+type UIPrincipal = {runState?:string;role?:string;sessionId?:string;protocolKey?:string;flowMode?:string;flowAvailable?:boolean};
 
 export default function App() {
   const [token, updateToken] = useState(getAccessToken());
@@ -142,7 +142,7 @@ export default function App() {
           アクセスコードを切り替える
         </button>
       </div>
-      {principal?.protocolKey === "SBKB_INTEGRATION_V1" ? <ExperimentEndBoundary key={token} initialEnded={principal.runState==="ENDED"}>{principal.flowAvailable && principal.sessionId ? <ExperimentLearnerPage sessionId={principal.sessionId} key={token}/> : <ExperimentLearnerGate key={token}/>}</ExperimentEndBoundary> : <AuthenticatedApp
+      {principal?.protocolKey === "SBKB_INTEGRATION_V1" ? <ExperimentEndBoundary key={token} initialEnded={principal.runState==="ENDED"}>{principal.flowAvailable && principal.sessionId ? <ExperimentLearnerPage flowMode={principal.flowMode} sessionId={principal.sessionId} key={token}/> : <ExperimentLearnerGate key={token}/>}</ExperimentEndBoundary> : <AuthenticatedApp
         homePage={renderHomePage()}
         principalRole={principal?.role}
         learnerSessionId={principal?.role === "learner" ? principal.sessionId : undefined}

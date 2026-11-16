@@ -24,6 +24,7 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       NODE_ENV: development
+      STAGE1_EXPERIMENT_LEARNER_ENABLED: ${STAGE1_EXPERIMENT_LEARNER_ENABLED-0}
       PORT: 3000
       CHOKIDAR_USEPOLLING: "true"
       CHOKIDAR_INTERVAL: "1000"

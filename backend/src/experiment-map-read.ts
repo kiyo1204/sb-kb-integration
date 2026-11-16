@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { Client, type Pool, type PoolClient } from "pg";
 import { principalOf } from "./access-control.js";
-import { experimentPreviewEnabled } from "./experiment-execution.js";
+import { experimentLearnerEnabled } from "./experiment-execution.js";
 import {
   lockCurrentExperimentClient,
   ParticipantAccessError,
@@ -177,7 +177,7 @@ export async function withExperimentMapRead(
     );
     if (run.state === "ENDED")
       throw new ParticipantAccessError("experiment_ended", 409);
-    if (!experimentPreviewEnabled() || run.state !== "RUNNING")
+    if (!experimentLearnerEnabled() || run.state !== "RUNNING")
       throw new ParticipantAccessError("experiment_not_running", 409);
     check();
     await read(db);

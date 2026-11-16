@@ -36,6 +36,7 @@ type View = {
     endedAt?: string | null;
   };
   startAvailable?: boolean;
+  flowMode?: "disabled" | "preview" | "enabled";
   participants: Participant[];
 };
 const stageNames: Record<string, { label: string; completedBefore: number }> = {
@@ -95,7 +96,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     );
   return d;
 }
-function IssuedCode({ code, onClose }: { code: string; onClose: () => void }) {
+function IssuedCode({ code, onClose, enabled }: { code: string; onClose: () => void; enabled: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     dialog.current?.showModal();
@@ -112,7 +113,7 @@ function IssuedCode({ code, onClose }: { code: string; onClose: () => void }) {
     >
       <h2 id="issued-code-title">コードは今回だけ表示します</h2>
       <p>
-        新学習者フローは未公開です。研究者の模擬検証用として扱い、実参加者へ配布しないでください。
+        {enabled ? "対象の参加者本人だけに共有してください。" : "模擬検証用または未公開のコードです。実参加者へ配布しないでください。"}
       </p>
       <code className="issued-participant-code">{code}</code>
       <p>
@@ -185,7 +186,7 @@ export default function ExperimentParticipantsPage({
       setNotice(
         r.codeDelivery === "NOT_REPLAYED"
           ? "受付済みの操作です。Sessionやコードは重複作成していません。コードは再表示しないため、必要なら参加者行から明示的に再発行してください。"
-          : "管理操作を保存しました。学習者フローは引き続き未公開です。",
+          : "管理操作を保存しました。",
       );
       await load();
     } catch (e) {
@@ -247,7 +248,7 @@ export default function ExperimentParticipantsPage({
                   {r.state === "ENDED"
                     ? "終了"
                     : r.state === "RUNNING"
-                      ? "実施中（模擬）"
+                      ? "実施中"
                       : "準備中"}{" "}
                   / 統合制限時間：{r.integrationSeconds}秒
                 </p>
@@ -280,7 +281,7 @@ export default function ExperimentParticipantsPage({
                   onClick={() => void perform(`/${runId}/start`, {})}
                 >
                   {view?.startAvailable
-                    ? "実施開始（模擬検証専用）"
+                    ? view.flowMode === "enabled" ? "実施開始" : "実施開始（模擬検証専用）"
                     : "実施開始（未公開）"}
                 </button>
               </div>
@@ -292,10 +293,11 @@ export default function ExperimentParticipantsPage({
               </p>
             )}
             <p id="experiment-start-gate" className="participant-flow-gate">
-              新しい学習者フローが未公開のため、コードは研究者の模擬検証用です。実参加者への配布・本番利用・開始はできません。
-              {participants.length === 0
-                ? "開始には参加者Sessionが1人以上必要ですが、登録後もフロー公開までは開始できません。"
-                : "人数条件を満たしていても、フロー公開までは開始できません。"}
+              {view?.flowMode === "enabled"
+                ? "学習者フローは有効です。登録した参加者が1人以上いる状態で、研究者が実施を開始してください。"
+                : view?.startAvailable
+                  ? "模擬検証専用です。合成データだけを使用してください。開始には参加者Sessionが1人以上必要です。"
+                  : "学習者フローは無効です。管理者が .env の STAGE1_EXPERIMENT_LEARNER_ENABLED=1 を設定し、APIを再作成する必要があります。"}
             </p>
             <div className="participant-summary-grid">
               {[
@@ -372,7 +374,7 @@ export default function ExperimentParticipantsPage({
                   className="session-primary-button"
                   disabled={busy || r.state === "ENDED" || !label.trim()}
                 >
-                  ＋ 参加者Session・検証用コードを追加
+                  {view?.flowMode === "enabled" ? "＋ 参加者Session・利用コードを追加" : "＋ 参加者Session・検証用コードを追加"}
                 </button>
               </form>
               <p className="material-muted">
@@ -399,6 +401,7 @@ export default function ExperimentParticipantsPage({
                           p={p}
                           runId={runId}
                           busy={busy}
+                          enabled={view?.flowMode === "enabled"}
                           ended={r.state === "ENDED"}
                           perform={perform}
                         />
@@ -417,7 +420,7 @@ export default function ExperimentParticipantsPage({
           <a href="/research/experiment-runs">実施一覧へ戻る</a>
         </p>
       </div>
-      {issued && <IssuedCode code={issued} onClose={() => setIssued(null)} />}
+      {issued && <IssuedCode enabled={view?.flowMode === "enabled"} code={issued} onClose={() => setIssued(null)} />}
     </main>
   );
 }
@@ -426,12 +429,14 @@ function ParticipantRow({
   runId,
   busy,
   ended,
+  enabled,
   perform,
 }: {
   p: Participant;
   runId: string;
   busy: boolean;
   ended: boolean;
+  enabled: boolean;
   perform: (path: string, body: unknown) => Promise<void>;
 }) {
   const [target, setTarget] = useState("");
@@ -474,7 +479,7 @@ function ParticipantRow({
                 window.confirm(
                   p.credentialGeneration
                     ? "同じSessionのコードを再発行します。旧コードを無効化し、利用画面の登録も解除します。Map・Stage・履歴は作り直しません。続行しますか？"
-                    : "研究者の模擬検証用コードを発行します。実参加者へ配布できません。続行しますか？",
+                    : enabled ? "参加者本人の利用コードを発行します。続行しますか？" : "研究者の模擬検証用コードを発行します。実参加者へ配布できません。続行しますか？",
                 )
               )
                 void perform(

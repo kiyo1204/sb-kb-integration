@@ -29,13 +29,15 @@ await new Promise<void>((r) => listener.listen(0, "127.0.0.1", r));
 const port = (listener.address() as { port: number }).port;
 await new Promise<void>((r) => listener.close(() => r()));
 const readGateDir=await mkdtemp(join(tmpdir(),"sbkb-end-read-"));
+const enabledVerification = process.env.VERIFY_EXPERIMENT_ENABLED === "1";
 const base = "http://127.0.0.1:" + port,
   server = spawn(process.execPath, ["--import",pathToFileURL(resolve("src/scripts/experiment-map-read-response-gate.js")).href,"dist/index.js"], {
     env: {
       ...process.env,
       PORT: String(port),
       EXPERIMENT_READ_TEST_GATE_DIR: readGateDir,
-      STAGE1_EXPERIMENT_LEARNER_PREVIEW: "1",
+      STAGE1_EXPERIMENT_LEARNER_PREVIEW: enabledVerification ? "0" : "1",
+      STAGE1_EXPERIMENT_LEARNER_ENABLED: enabledVerification ? "1" : "0",
     },
     stdio: "ignore",
     windowsHide: true,
@@ -112,7 +114,8 @@ async function undo(id: string, action = "UNDO") {
 }
 try {
   assert.ok(ready, "mock preview API ready");
-  process.env.STAGE1_EXPERIMENT_LEARNER_PREVIEW = "1";
+  process.env.STAGE1_EXPERIMENT_LEARNER_PREVIEW = enabledVerification ? "0" : "1";
+  process.env.STAGE1_EXPERIMENT_LEARNER_ENABLED = enabledVerification ? "1" : "0";
   await initializeExperimentPreview(pool);
   let failedStatus = 200,
     failedBody: unknown;
@@ -871,7 +874,7 @@ try {
       {
         syntheticOnly: true,
         protocol: "SBKB_INTEGRATION_V1",
-        normalPublication: false,
+        flowMode: enabledVerification ? "enabled" : "preview",
         checks: [
           "start prerequisite/idempotency/late participant/fixed version",
           "separate Sessions and forbidden researcher access",
@@ -886,10 +889,9 @@ try {
       2,
     ) + "\n",
   );
-  console.log("Experiment learner API flow: PASS (isolated mock preview only)");
+  console.log(`Experiment learner API flow: PASS (synthetic DB, ${enabledVerification ? "enabled" : "preview"})`);
 } finally {
-  server.kill();
-  await once(server, "exit").catch(() => undefined);
+  server.kill(); await once(server, "exit").catch(() => undefined);
   await pool.end();
   await rm(readGateDir,{recursive:true,force:true});
 }

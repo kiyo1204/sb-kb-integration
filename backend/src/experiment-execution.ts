@@ -9,27 +9,51 @@ import {
   type ExperimentProof,
 } from "./experiment-participant-access.js";
 import { isUuid } from "./delivery-reliability.js";
-// Configuration capability only, never a per-run fictitious readiness flag.
-let preview = false;
-export const experimentPreviewEnabled = () => preview;
+// Capability does not replace per-run, credential or device authorization.
+export type ExperimentLearnerMode = "disabled" | "preview" | "enabled";
+let mode: ExperimentLearnerMode = "disabled";
+export const experimentLearnerMode = () => mode;
+export const experimentLearnerEnabled = () => mode !== "disabled";
+// Compatibility for existing isolated verification callers.
+export const experimentPreviewEnabled = experimentLearnerEnabled;
+export function configuredExperimentLearnerMode(env: NodeJS.ProcessEnv): ExperimentLearnerMode {
+  const enabled = env.STAGE1_EXPERIMENT_LEARNER_ENABLED ?? "0";
+  const preview = env.STAGE1_EXPERIMENT_LEARNER_PREVIEW ?? "0";
+  if (!["0", "1"].includes(enabled) || !["0", "1"].includes(preview))
+    throw new Error("experiment_flow_invalid_configuration");
+  if (enabled === "1" && preview === "1") throw new Error("experiment_flow_conflicting_configuration");
+  return enabled === "1" ? "enabled" : preview === "1" ? "preview" : "disabled";
+}
+export const experimentAvailabilityMessage = () => mode === "preview"
+  ? "模擬検証専用です。実研究データを入力しないでください。"
+  : mode === "enabled"
+    ? "学習者フローは有効です。参加者登録後に研究者が実施を開始してください。"
+    : "学習者フローは無効です。管理者が .env の STAGE1_EXPERIMENT_LEARNER_ENABLED=1 を明示し、APIを再作成してください。";
 export async function initializeExperimentPreview(pool: Pool) {
-  if (process.env.STAGE1_EXPERIMENT_LEARNER_PREVIEW !== "1") return;
-  const url = new URL(process.env.DATABASE_URL!);
-  if (
-    process.env.NODE_ENV !== "development" ||
-    process.env.STAGE1_MOCK_DATA !== "ONLY_SYNTHETIC" ||
-    !["127.0.0.1", "localhost"].includes(url.hostname) ||
-    !/^\/stage1_mock_[a-z0-9_]+$/.test(url.pathname)
-  )
-    throw new Error("experiment_preview_requires_isolated_mock");
-  const r = (
-    await pool.query(
-      "SELECT purpose,nonce FROM stage1_mock_guard.marker WHERE singleton",
-    )
-  ).rows[0];
-  if (r?.purpose !== "ONLY_SYNTHETIC" || !/^[a-f0-9]{64}$/.test(r.nonce))
-    throw new Error("experiment_preview_requires_isolated_mock");
-  preview = true;
+  mode = "disabled";
+  const requested = configuredExperimentLearnerMode(process.env);
+  if (requested === "disabled") return;
+  if (requested === "preview") {
+    let url: URL;
+    try { url = new URL(process.env.DATABASE_URL!); }
+    catch { throw new Error("experiment_preview_requires_isolated_mock"); }
+    if (process.env.NODE_ENV !== "development" || process.env.STAGE1_MOCK_DATA !== "ONLY_SYNTHETIC" ||
+        !["127.0.0.1", "localhost"].includes(url.hostname) || !/^\/stage1_mock_[a-z0-9_]+$/.test(url.pathname))
+      throw new Error("experiment_preview_requires_isolated_mock");
+    try {
+      const r = (await pool.query("SELECT purpose,nonce FROM stage1_mock_guard.marker WHERE singleton")).rows[0];
+      if (r?.purpose !== "ONLY_SYNTHETIC" || !/^[a-f0-9]{64}$/.test(r.nonce)) throw new Error();
+    } catch { throw new Error("experiment_preview_requires_isolated_mock"); }
+  }
+  try {
+    await pool.query(`SELECT r.started_at,r.ended_at,a.device_generation,a.credential_generation
+      FROM experiment_runs r,experiment_participant_access a,experiment_start_receipts s,
+      experiment_end_audit e,experiment_client_candidates c,experiment_run_catalog x,
+      experiment_material_versions v,r05_test_runs t LIMIT 0`);
+    const schema = await pool.query("SELECT 1 FROM pgmigrations WHERE name='1791160000000_add_experiment_end'");
+    if (!schema.rowCount) throw new Error();
+  } catch { throw new Error("experiment_flow_schema_unavailable"); }
+  mode = requested;
 }
 type Context = {
   proof: ExperimentProof;
@@ -63,7 +87,7 @@ export async function guardExperimentTransaction(c: PoolClient) {
     x.generation,
   );
   if(row.state==="ENDED")throw new ParticipantAccessError("experiment_ended",409);
-  if (!preview || row.state !== "RUNNING")
+  if (!experimentLearnerEnabled() || row.state !== "RUNNING")
     throw new Error("experiment_not_running");
 }
 export async function guardExperimentSystemMap(c: PoolClient, mapId: string) {
@@ -74,7 +98,7 @@ export async function guardExperimentSystemMap(c: PoolClient, mapId: string) {
     )
   ).rows[0];
   if (!r) return;
-  if (!preview) throw new Error("experiment_unpublished");
+  if (!experimentLearnerEnabled()) throw new Error("experiment_unpublished");
   const row = (
     await c.query(
       "SELECT r.state FROM experiment_participant_access a JOIN experiment_run_sessions p ON p.session_id=a.session_id JOIN experiment_runs r ON r.id=p.run_id WHERE a.session_id=$1 FOR UPDATE OF a FOR SHARE OF r",
@@ -90,7 +114,7 @@ export async function validateExperimentRequest(
 ) {
   const p = principalOf(res);
   if (p.role !== "learner" || !p.experiment) return true;
-  if (!preview) {
+  if (!experimentLearnerEnabled()) {
     res.status(409).json({ error: "experiment_learner_flow_unavailable" });
     return false;
   }
@@ -136,7 +160,7 @@ export async function validateExperimentRequest(
 export function registerExperimentExecutionRoutes(app: Express, pool: Pool) {
   app.get("/api/experiment-material", async (_req, res) => {
     const p = principalOf(res);
-    if (p.role !== "learner" || !p.experiment || !preview)
+    if (p.role !== "learner" || !p.experiment || !experimentLearnerEnabled())
       return res.status(404).json({ error: "not_found" });
     try {
       const row = (
@@ -154,13 +178,13 @@ export function registerExperimentExecutionRoutes(app: Express, pool: Pool) {
   app.post("/api/research/experiment-runs/:runId/start", async (req, res) => {
     if (principalOf(res).role !== "researcher")
       return res.status(403).json({ error: "forbidden" });
-    if (!preview)
+    if (!experimentLearnerEnabled())
       return res
         .status(409)
         .json({
           error: "experiment_learner_flow_unavailable",
           message:
-            "新フローの通常利用は未公開です。専用模擬環境でのみ検証できます。",
+            experimentAvailabilityMessage(),
         });
     const id = req.params.runId,
       key = req.header("Idempotency-Key");
