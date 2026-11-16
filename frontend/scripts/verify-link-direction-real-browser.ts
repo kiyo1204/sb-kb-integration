@@ -95,10 +95,11 @@ try {
     await page.getByRole("button", { name: "＋ リンク", exact: true }).click();
     await page
       .getByLabel("リンクラベル", { exact: true })
-      .fill("MOCK direction new");
+      .fill("MOCK direction new " + mapId);
     await page.getByRole("button", { name: "接続を開始", exact: true }).click();
   }
   async function drag(selector: string, id: string) {
+    await page.getByRole("button", { name: "全体表示", exact: true }).click();
     const handle = page.locator(selector),
       target = page.locator(`[data-concept-id="${id}"]`);
     await handle.scrollIntoViewIfNeeded();
@@ -140,8 +141,58 @@ try {
   assert.ok((await cancelled).ok());
   assert.deepEqual(await snapshot(), initial);
   await add();
+  async function addNodeKeepingPending() {
+    const pending = page.locator(".is-temporary");
+    const read = () =>
+      pending.evaluate((el) => ({
+        id: el.getAttribute("data-connector-id"),
+        text: el.textContent,
+        left: (el as HTMLElement).style.left,
+        top: (el as HTMLElement).style.top,
+        source: el
+          .querySelector(".is-source")
+          ?.classList.contains("is-connected"),
+        target: el
+          .querySelector(".is-target")
+          ?.classList.contains("is-connected"),
+      }));
+    const before = await read();
+    const persisted = await snapshot();
+    await page.getByRole("button", { name: "＋ 概念", exact: true }).click();
+    assert.deepEqual(await read(), before);
+    await page
+      .getByRole("button", { name: "キャンセル", exact: true })
+      .last()
+      .click();
+    assert.deepEqual(await read(), before);
+    await page.getByRole("button", { name: "＋ 概念", exact: true }).click();
+    await page
+      .getByLabel("概念名", { exact: true })
+      .fill("MOCK pending preserve");
+    const created = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" &&
+        new URL(r.url()).pathname === `/api/maps/${mapId}/concepts`,
+    );
+    await page.getByRole("button", { name: "概念を追加", exact: true }).click();
+    assert.equal((await created).status(), 201);
+    await page.locator(".map-editor-drawer-form").waitFor({ state: "hidden" });
+    assert.deepEqual(await read(), before);
+    assert.deepEqual(
+      await snapshot(),
+      persisted,
+      "node creation does not mutate persisted links",
+    );
+  }
+  await addNodeKeepingPending();
+  await drag(".is-temporary .is-target", b);
+  await page.mouse.up();
+  await addNodeKeepingPending();
+  await page.locator(".temporary-connector-cancel").click();
+  await add();
   await drag(".is-temporary .is-source", a);
   await page.mouse.up();
+  await addNodeKeepingPending();
   const created = page.waitForResponse(
     (r) =>
       r.request().method() === "POST" &&
@@ -155,6 +206,20 @@ try {
   assert.equal(link.sourceConceptId, a);
   assert.equal(link.targetConceptId, b);
   await page.locator(".is-temporary").waitFor({ state: "detached" });
+  const savedBeforeNode = await snapshot();
+  await page.getByRole("button", { name: "＋ 概念", exact: true }).click();
+  await page.getByLabel("概念名", { exact: true }).fill("MOCK with saved link");
+  const nodeResponse = page.waitForResponse(
+    (r) => r.request().method() === "POST" && r.url().endsWith("/concepts"),
+  );
+  await page.getByRole("button", { name: "概念を追加", exact: true }).click();
+  assert.equal((await nodeResponse).status(), 201);
+  await page.locator(".map-editor-drawer-form").waitFor({ state: "hidden" });
+  assert.deepEqual(
+    await snapshot(),
+    savedBeforeNode,
+    "fully connected saved links survive node creation",
+  );
   await enter();
   const saved = `[data-connector-id="${link.id}"]`;
   await page.locator(saved).waitFor();
@@ -207,8 +272,16 @@ try {
       path: process.env.DIRECTION_SCREENSHOT,
       fullPage: true,
     });
+  await add();
+  await enter();
+  assert.equal(
+    await page.locator(".is-temporary").count(),
+    0,
+    "full navigation discards unsaved temporary state",
+  );
+  assert.equal(mutations.length, 2);
   console.log(
-    "PASS real learner integration browser: create/reload, reconnect/reload, Esc then pointerup unchanged, separate cancellation telemetry",
+    "PASS real learner Map browser: pending retention and completed links through node create, reload, reconnect; navigation clears temporary state; create/reload, reconnect/reload, Esc then pointerup unchanged, separate cancellation telemetry",
   );
 } finally {
   await browser.close();

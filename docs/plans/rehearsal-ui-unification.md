@@ -244,3 +244,12 @@ main `19a1898efa86d81318086f9d5fca07f7db7f2320` を基点に、淡いグリー�
 - frontend `typecheck`・`lint`・`build`と `git diff --check` は成功。buildには既存傾向の500KB超chunk警告（今回の生成JS 554.73 kB）がある。検証は合成応答のみで、実API・DB、実機や参加者PCでは確認していない。
 - 対象: `common-ui-copy.ts`、`HomePage.tsx`、`ExperimentRunsPage.tsx`、`ExperimentParticipantsPage.tsx`、既存合成検証 `verify-rehearsal-ui-browser.ts` と `verify-researcher-ui-layout-browser.ts`、本計画書。
 - 次の展開範囲は別画面単位とし、授業・SB・KB・統合・R05・分析などには今回の共通定義を適用していない。
+
+
+### 2026-11-16 ノード追加時の未接続リンク保持
+- 基準mainは PR #54 統合 `4da98478b3de1dc82711b030117f81bb1d5e150e`。参加者からの報告画面はSB。分離worktreeの実Map画面・合成応答で「＋リンク」→未接続→「＋概念」を操作すると、概念追加API前に一時コネクタが1件から0件になるassertion失敗を再現した。DB削除を観測した証拠ではない。
+- 原因は共有 `MapEditorShell.openAddConcept` が親の `linkCreation` とfeedbackを消していたこと。2行の消去のみを除去し、同じMapの概念追加・取消・失敗で既存の一時ID、ラベル、位置、接続済み側を維持する。ConceptCanvas内の状態、保存・方向・由来・ログ・認可・提出は変更しない。SB/統合の自由リンクは既存どおり同時に1件。KBの自由追加は作らず、既存パレットの部品配置を検証する。
+- 合成Edgeブラウザーで、新フローSB/KB/統合と旧4/5/6の関連6ケースを確認。両端未接続・始点のみ・終点のみ、概念追加取消・503失敗・成功後の保持、接続完成・再接続・再読込を対象とした。KBは未使用部品の配置で保持を確認。別Mapへの通常ページ遷移では一時状態が残らないことも確認した。これは実機参加者PCでの確認ではない。
+- 実API＋ガード照合済み新規PostgreSQLで、SB/統合の実画面から概念追加・取消、一時リンク保持、接続完成、保存済みリンクを残す概念追加、API読戻し・再読込、DB接続方向、ADD_LINK/RECONNECT_LINK/CANCELLEDの既存assertionを確認。Node 22.23.5 / Windows / Edgeで対象選択1/1成功。全体suiteは実行していない。
+- 失敗経緯はローカル記録に保持。初回は再利用依存の不足、Node 24.15.0のrunner異常終了3221226505があり成功に含めない。拡張fixtureでは画面切替後の古い世代による409、登録client IDの指定誤り400、追加概念と対象の重なり・可視範囲、継承リンクの同名衝突、SQLパラメーター不一致を修正した。認可・保存・方向assertionの緩和やタイムアウト延長はしていない。
+- frontend型検査・Lint・build、変更検証Lint、backend型検査・Lint・build成功。buildの既存傾向のchunk警告554.71 kBあり。複数KB一時リンク2件の同時保持と別Mapへの非漏出も合成応答で成功。R05専用画面での追加回帰、参加者PCでの修正版操作は未確認。未接続リンクは既存の画面内状態のままで、再読込時の永続化を追加しない。稼働環境への反映・コミットは行わない。
