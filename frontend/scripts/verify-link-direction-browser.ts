@@ -88,9 +88,24 @@ try {
         "mock-only-browser-fixture-not-a-real-code",
       ),
     );
+    let rejectDelete = false;
+    let deletes = 0;
     await page.route("**/api/**", async (route) => {
       const req = route.request(),
         path = new URL(req.url()).pathname;
+      if (req.method() === "DELETE") {
+        deletes++;
+        if (rejectDelete)
+          return route.fulfill({
+            status: 503,
+            json: { message: "synthetic delete failure" },
+          });
+        if (type !== "KB")
+          map.concepts = map.concepts.filter((c) => c.id !== id(2));
+        map.links = [];
+        map.kitLinks[0].used = false;
+        return route.fulfill({ json: { id: type === "KB" ? id(7) : id(2) } });
+      }
       if (path === "/api/me")
         return route.fulfill({ json: { role: "researcher" } });
       if (path === "/api/maps/" + id(999))
@@ -431,6 +446,50 @@ try {
     await page.locator(saved).waitFor();
     assert.equal(map.links[0].sourceConceptId, id(2));
     assert.equal(map.links[0].targetConceptId, id(4));
+    if (type === "KB") {
+      await page.locator(saved + " .link-connector-label").click();
+      await page.getByText("選択中のリンク：", { exact: false }).waitFor();
+    } else {
+      await page.locator(`[data-concept-id="${id(2)}"]`).focus();
+      await page.keyboard.press("Enter");
+      await page.getByText("選択中の概念：", { exact: false }).waitFor();
+    }
+    const deletion = page
+      .locator(".map-editor-drawer")
+      .getByRole("button", {
+        name: type === "KB" ? "Linkを削除" : "削除",
+        exact: true,
+      });
+    page.once("dialog", (d) => d.dismiss());
+    await deletion.click();
+    assert.equal(deletes, 0);
+    rejectDelete = true;
+    page.once("dialog", (d) => d.accept());
+    await deletion.click();
+    await page.getByText("synthetic delete failure", { exact: true }).waitFor();
+    assert.equal(await page.locator(saved).count(), 1);
+    assert.equal(await deletion.isEnabled(), true);
+    rejectDelete = false;
+    page.once("dialog", (d) => {
+      if (type !== "KB") assert.ok(d.message().includes("リンク1件"));
+      return d.accept();
+    });
+    await deletion.click();
+    await page.locator(".map-editor-drawer").waitFor({ state: "detached" });
+    await page.reload();
+    await page.locator(".concept-canvas").waitFor();
+    assert.equal(await page.locator(saved).count(), 0);
+    assert.equal(deletes, 2);
+    if (type === "KB")
+      assert.equal(
+        await page.locator(".kit-palette-part.is-link:not(:disabled)").count(),
+        2,
+      );
+    else
+      assert.equal(
+        await page.locator(`[data-concept-id="${id(2)}"]`).count(),
+        0,
+      );
     await add();
     await page.goto(vite.resolvedUrls!.local[0] + "maps/" + id(999));
     await page.locator(".concept-canvas").waitFor();

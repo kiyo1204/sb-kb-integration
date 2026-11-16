@@ -2955,7 +2955,7 @@ function MapEditorShell({
             map.sessionProtocolKey ?? "",
           )
           ? mergeReleaseNotice
-          : `「${activeConcept.label}」を削除しますか？`,
+          : `「${activeConcept.label}」を削除しますか？この概念に接続するリンク${map.links.filter((link) => link.sourceConceptId === activeConcept.id || link.targetConceptId === activeConcept.id).length}件も削除されます。`,
       )
     ) {
       void onCancelOperation("DELETE_CONCEPT", activeConcept.id);
@@ -3392,7 +3392,8 @@ function MapEditorShell({
               {map.type === "KB"
                 ? "部品をマップへドラッグし、リンクの両端を概念へ接続します。"
                 : "概念とリンクを追加し、リンクの両端を概念へドラッグして接続します。"}{" "}
-              矢印の先が関係先です。
+              矢印の先が関係先です。リンクをクリックすると編集・削除できます。
+              {canEditConceptStructure && " 概念もクリックすると編集・削除できます（初期概念は保護されます）。"}
             </p>
           )}
           {!experimentLayout && creationTools}
@@ -3582,6 +3583,13 @@ function MapEditorShell({
                   className="map-editor-drawer-form"
                   onSubmit={(event) => void handleConceptSave(event)}
                 >
+                  <p className="map-editor-drawer-hint">
+                    選択中の概念：<strong>{activeConcept.label}</strong>
+                    {!activeConcept.isSeed && !activeConcept.isMergeResult && (
+                      <>。削除すると、この概念に接続するリンク
+                        {map.links.filter((link) => link.sourceConceptId === activeConcept.id || link.targetConceptId === activeConcept.id).length}件も削除されます。</>
+                    )}
+                  </p>
                   <label htmlFor="map-editor-concept-edit-label">概念名</label>
                   <input
                     id="map-editor-concept-edit-label"
@@ -3652,6 +3660,10 @@ function MapEditorShell({
                 className="map-editor-drawer-form"
                 onSubmit={(event) => void handleLinkLabelSave(event)}
               >
+                <p className="map-editor-drawer-hint">
+                  選択中のリンク：<strong>{activeLink.label}</strong>
+                  {map.type === "KB" && "。削除すると対応するリンク部品をパレットから再配置できます。"}
+                </p>
                 {canEditLinkLabel ? (
                   <>
                     <label htmlFor="map-editor-link-edit-label">
