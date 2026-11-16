@@ -449,7 +449,7 @@ try {
         );
         for (const [state, label] of [
           ["preparing", "準備中"],
-          ["running", "実施中（模擬）"],
+          ["running", "実施中"],
           ["ended", "終了"],
         ] as const) {
           assert.equal(await page.locator(`.run-state-${state}`).count(), 1);

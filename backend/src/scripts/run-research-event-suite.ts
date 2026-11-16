@@ -87,6 +87,7 @@ async function run(test: string, frontend = false) {
 }
 try {
   for (const test of [
+    "test:experiment-flow-config",
     "test:test-target-guards",
     "test:event-catalog",
     "test:research-event-schema",
@@ -162,6 +163,7 @@ try {
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:r05-analysis-ui-browser", true);
   await stop();
   await run("test:experiment-learner");
+  await run("test:experiment-enablement");
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:link-direction-api");
   await run("test:experiment-research");
   await run("test:r05-storage");

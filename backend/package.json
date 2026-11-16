@@ -59,7 +59,9 @@
     "test:link-direction-api": "tsx src/scripts/verify-link-direction-api.ts",
     "test:r05-storage": "tsx src/scripts/verify-r05-storage.ts",
     "test:r05-execution": "tsx src/scripts/verify-r05-execution.ts",
-    "test:experiment-research": "tsx src/scripts/verify-experiment-research.ts"
+    "test:experiment-research": "tsx src/scripts/verify-experiment-research.ts",
+    "test:experiment-flow-config": "tsx src/scripts/verify-experiment-flow-config.ts",
+    "test:experiment-enablement": "tsx src/scripts/verify-experiment-enablement.ts"
   },
   "dependencies": {
     "express": "^5.1.0",

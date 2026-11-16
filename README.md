@@ -161,3 +161,18 @@ Kit-Build手法の論文引用、既存実装の調査、ライセンスの扱�
 
 
 研究イベントの監査残課題対応（Link位置v5・Kit確認v6・旧下書き隔離・検証結果）は [追補報告](docs/parent-followup.md) を参照してください。開発・模擬データ用で、既存DBへ自動適用・リセットする変更ではありません。
+
+
+### 通常Composeで新しい4活動フローを明示的に有効化する
+
+既定は無効です。教材管理・実施準備ができても、無効時は研究者の開始、参加者の活動・Map編集・提出、自動提出は許可しません。`.env` に `STAGE1_EXPERIMENT_LEARNER_ENABLED=1` を明示し、対象APIを `docker compose up -d --no-deps --force-recreate api` で再作成すると有効になります。省略または `0` で無効に戻せます。再作成前に未保存操作を保全し、実施中の設定変更は避けてください。
+
+有効化前に、対象DB・バックアップを識別し、既存の `docker compose run --rm api npm run db:migrate -- up` の適用手順を別途確認してください。API起動はmigrationやデータ変換を行いません。既存schema（全migration、最新 `1791160000000_add_experiment_end`）の読取検査が失敗すると `experiment_flow_schema_unavailable` で起動を拒否します。既存DBへ適用する承認を兼ねる手順ではありません。
+
+設定は `0` / `1` のみです。不正値は `experiment_flow_invalid_configuration`、両設定がともに `1` の場合のみ `experiment_flow_conflicting_configuration` で拒否します。`ENABLED=0` と `PREVIEW=1`、または `ENABLED=1` と `PREVIEW=0` は競合しません（ここでの短縮名は上記の環境変数を指します）。`.env` の編集だけや `docker compose restart api` ではコンテナ環境変数は更新されません。必ず前記のAPI再作成を行ってください。通常有効化はDBサービス名 `db` への接続を使用でき、模擬DB名や `STAGE1_MOCK_DATA=ONLY_SYNTHETIC` は不要です。従来の `STAGE1_EXPERIMENT_LEARNER_PREVIEW=1` は引き続き隔離されたdevelopment・loopback模擬DB・markerを要求し、通常Composeの有効化には使用しません。
+
+通常起動は `docker compose up -d --build`、LANは既存の `compose.lan.yaml` とWeb用アドレス設定を使ってください。API・DBのホスト公開はloopback限定です。IPアドレスは本人認証に使用しません。研究者は教材を完成登録し、実施を作成、参加者を1人以上登録して「実施開始」を確定します。開始前・終了後の学習拒否、本人所属・コード世代・画面世代、研究者による利用画面切替は維持されます。終了済みの回は再開せず、新しい実施を作成してください。
+
+無効化は設定を `0` に戻し、対象APIだけを再作成します。研究者による終了・保存済み分析・JSON/CSV出力は維持します。停止は対象プロジェクトの `docker compose stop`。復旧では旧アプリ成果物へ戻し、DBを保持します。`down -v`、DB初期化、破壊的down migrationを復旧操作に使わないでください。
+
+LANで開始可能な設定は、実研究利用の準備完了を意味しません。HTTPの通信保護、アクセス制限、バックアップ・復元、既存DB適用・復旧の確認は別途必要です。
