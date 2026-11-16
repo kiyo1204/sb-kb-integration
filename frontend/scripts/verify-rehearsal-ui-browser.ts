@@ -241,7 +241,7 @@ async function assertNoHorizontalOverflow(page: Page, name: string, width: numbe
   );
 }
 
-const directory = join(tmpdir(), "sbkb-p02-inline-practice-20261115");
+const directory = join(tmpdir(), "sbkb-researcher-home-legacy-nav-20261116");
 await mkdir(directory, { recursive: true });
 const vite = await createServer({ server: { host: "127.0.0.1", port: 0 } });
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -566,6 +566,50 @@ try {
       await homePage.locator('a[href="/research/stage1/new"]').count(),
       1,
     );
+    const legacyFlow = homePage.locator(".home-researcher-legacy-details");
+    const legacySummary = legacyFlow.locator("summary");
+    const legacyCreateLink = homePage.locator('a[href="/research/stage1/new"]');
+    assert.equal((await legacySummary.textContent())?.trim(), "旧フローの作成");
+    assert.equal(
+      await homePage
+        .locator('.home-research-primary-grid a[href="/research/stage1/new"]')
+        .count(),
+      0,
+    );
+    assert.equal(
+      await legacyFlow.evaluate(
+        (element) => (element as HTMLDetailsElement).open,
+      ),
+      false,
+    );
+    assert.equal(await legacyCreateLink.isVisible(), false);
+    await legacySummary.focus();
+    assert.equal(
+      await legacySummary.evaluate(
+        (element) => getComputedStyle(element).outlineStyle,
+      ),
+      "solid",
+    );
+    await legacySummary.press("Enter");
+    assert.equal(
+      await legacyFlow.evaluate(
+        (element) => (element as HTMLDetailsElement).open,
+      ),
+      true,
+    );
+    assert.equal(await legacyCreateLink.isVisible(), true);
+    assert.equal(
+      await legacyCreateLink.getAttribute("href"),
+      "/research/stage1/new",
+    );
+    await legacySummary.press("Enter");
+    assert.equal(
+      await legacyFlow.evaluate(
+        (element) => (element as HTMLDetailsElement).open,
+      ),
+      false,
+    );
+    await legacySummary.evaluate((element) => element.blur());
     for (const path of [
       "/research/data-management",
       "/research/events",
@@ -577,6 +621,12 @@ try {
         path === "/research/data-management" ? 2 : 1,
       );
     }
+    assert.equal(
+      await homePage
+        .locator('a[href="/research/goal-maps"]')
+        .isVisible(),
+      true,
+    );
     assert.equal(
       await homePage
         .locator(
