@@ -288,24 +288,34 @@ export default function HomePage({
                 className="home-researcher-utilities"
                 aria-label="その他の研究者機能"
               >
-                <span>その他の研究者機能</span>
-                <div className="home-researcher-utility-links">
-                  <a className="home-secondary-link" href="/research/stage1/new">
-                    従来形式のSessionを作成
-                  </a>
-                  <a className="home-secondary-link" href="/research/data-management">
-                    研究データ・保存期限・明示削除
-                  </a>
-                  <a className="home-secondary-link" href="/research/events">
-                    研究イベントの時系列ログ
-                  </a>
-                  <a className="home-secondary-link" href="/research/event-exports">
-                    研究イベントを絞り込み出力
-                  </a>
+                <section className="home-researcher-utility-group">
+                  <h3>教材準備の補助</h3>
+                  <p>教材準備に使うゴールマップとKitを管理します。</p>
                   <a className="home-secondary-link" href="/research/goal-maps">
-                    ゴールマップを作成・管理
+                    ゴールマップ・Kitを管理
                   </a>
-                </div>
+                </section>
+                <details className="home-researcher-legacy-details">
+                  <summary>旧フローの作成</summary>
+                  <p>新しい実施管理とは別形式のSessionを作成します。</p>
+                  <a className="home-secondary-link" href="/research/stage1/new">
+                    旧形式のSessionを作成
+                  </a>
+                </details>
+                <section className="home-researcher-utility-group">
+                  <h3>研究データ・ログ</h3>
+                  <div className="home-researcher-utility-links">
+                    <a className="home-secondary-link" href="/research/data-management">
+                      研究データ・保存期限・明示削除
+                    </a>
+                    <a className="home-secondary-link" href="/research/events">
+                      研究イベントの時系列ログ
+                    </a>
+                    <a className="home-secondary-link" href="/research/event-exports">
+                      研究イベントを絞り込み出力
+                    </a>
+                  </div>
+                </section>
               </nav>
             </section>
             <ResearchSessions />

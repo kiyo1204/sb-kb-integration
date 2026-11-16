@@ -55,7 +55,7 @@
 .stage1-analysis-page pre { max-width: 100%; overflow: auto; }
 .stage1-analysis-page details > summary { cursor: pointer; padding-block: 8px; }
 .home-access-form :focus-visible,
-.home-main :is(a, button):focus-visible,
+.home-main :is(a, button, summary):focus-visible,
 .materials-content :focus-visible,
 .session-card :is(button, a, input, select, summary):focus-visible {
   outline: 3px solid var(--accent);
@@ -104,25 +104,46 @@
   gap: 8px;
 }
 .home-researcher-utilities {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 14px 2px 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0 0;
+}
+.home-researcher-utility-group,
+.home-researcher-legacy-details {
+  min-width: 0;
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
-.home-researcher-utilities > span {
+.home-researcher-utility-group h3,
+.home-researcher-legacy-details summary {
+  margin: 0 0 8px;
   color: var(--ink-soft);
   font-size: 13px;
   font-weight: 650;
 }
+.home-researcher-utility-group > p,
+.home-researcher-legacy-details > p {
+  margin: 0 0 8px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.home-researcher-legacy-details summary {
+  min-height: 32px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+.home-researcher-legacy-details[open] summary {
+  margin-bottom: 8px;
+}
 .home-researcher-utility-links {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 .home-researcher-utilities .home-secondary-link {
   min-height: 32px;
@@ -460,6 +481,9 @@
   .home-research-secondary-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
+  }
+  .home-researcher-utilities {
+    grid-template-columns: minmax(0, 1fr);
   }
   .home-research-primary-grid .home-workflow-card {
     min-height: 0;
