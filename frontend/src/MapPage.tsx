@@ -2854,8 +2854,6 @@ function MapEditorShell({
 
   function openAddConcept() {
     if (!canCreateConcept) return;
-    setLinkCreation(null);
-    setLinkCreationFeedback(null);
     setConceptLabel("");
     setDrawerFeedback(null);
     setDrawer({ kind: "add-concept" });

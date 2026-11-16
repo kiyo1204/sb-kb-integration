@@ -140,6 +140,71 @@ try {
   await call(`/session-stages/${stage("LESSON")}/complete`, {});
   await call(`/session-stages/${stage("PRIOR_MAP")}/start`, {});
   const sb = await call(`/session-stages/${stage("PRIOR_MAP")}/prior-map`, {});
+  async function verifyBrowser(targetMapId: string, ids: string[]) {
+    const child = spawn(
+      process.execPath,
+      [
+        "node_modules/tsx/dist/cli.mjs",
+        "scripts/verify-link-direction-real-browser.ts",
+      ],
+      {
+        cwd: "../frontend",
+        env: {
+          ...process.env,
+          API_BASE_URL: base,
+          DIRECTION_SESSION: p.sessionId,
+          DIRECTION_RUN: run.id,
+          DIRECTION_MAP: targetMapId,
+          DIRECTION_CONCEPTS: JSON.stringify(ids),
+          DIRECTION_CODE: p.issuedCode,
+        },
+        stdio: "inherit",
+        windowsHide: true,
+      },
+    );
+    assert.equal((await once(child, "exit"))[0], 0, "real browser assertions");
+  }
+  const sbIds: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const c = await call("/maps/" + sb.id + "/concepts", {
+      label: "MOCK pending SB",
+      positionX: 80 + i * 310,
+      positionY: 650,
+    });
+    sbIds.push(c.id);
+  }
+  await verifyBrowser(sb.id, sbIds);
+  // Browser reloads use the existing researcher-approved screen switch.
+  // Return ownership to this fixture client before continuing Stage setup.
+  auth = researcher;
+  const currentParticipant = (
+    await call(
+      "/research/experiment-runs/" + run.id + "/participants",
+      undefined,
+      "GET",
+    )
+  ).participants.find((row: { id: string }) => row.id === p.sessionId);
+  const switched = await call(
+    "/research/experiment-runs/" +
+      run.id +
+      "/participants/" +
+      p.sessionId +
+      "/client-switch",
+    {
+      clientId: claim.clientId,
+      expectedDeviceGeneration: currentParticipant.deviceGeneration,
+    },
+  );
+  extra["X-Experiment-Generation"] = String(switched.deviceGeneration);
+  extra["X-Experiment-Origin-Generation"] = String(switched.deviceGeneration);
+  auth = p.issuedCode;
+  const sbLinks = (
+    await pool.query(
+      "SELECT source_concept_id AS source,target_concept_id AS target FROM links WHERE map_id=$1",
+      [sb.id],
+    )
+  ).rows;
+  assert.deepEqual(sbLinks, [{ source: sbIds[0], target: sbIds[2] }]);
   await call(`/maps/${sb.id}/submit`, {});
   await call(`/session-stages/${stage("KB_MAP")}/start`, {});
   const kb = await call(`/kits/${goal.kitDefinitionId}/kb-map`, {
@@ -178,36 +243,15 @@ try {
     const c = await call(`/maps/${map.id}/concepts`, {
       label,
       positionX: 80 + i * 310,
-      positionY: 350,
+      positionY: 650,
     });
     ids.push(c.id);
   }
-  const child = spawn(
-    process.execPath,
-    [
-      "node_modules/tsx/dist/cli.mjs",
-      "scripts/verify-link-direction-real-browser.ts",
-    ],
-    {
-      cwd: "../frontend",
-      env: {
-        ...process.env,
-        API_BASE_URL: base,
-        DIRECTION_SESSION: p.sessionId,
-        DIRECTION_RUN: run.id,
-        DIRECTION_MAP: map.id,
-        DIRECTION_CONCEPTS: JSON.stringify(ids),
-        DIRECTION_CODE: p.issuedCode,
-      },
-      stdio: "inherit",
-      windowsHide: true,
-    },
-  );
-  assert.equal((await once(child, "exit"))[0], 0, "real browser assertions");
+  await verifyBrowser(map.id, ids);
   const links = (
     await pool.query(
-      "SELECT source_concept_id AS source,target_concept_id AS target FROM links WHERE map_id=$1 AND label='MOCK direction new'",
-      [map.id],
+      "SELECT source_concept_id AS source,target_concept_id AS target FROM links WHERE map_id=$1 AND label=$2",
+      [map.id, "MOCK direction new " + map.id],
     )
   ).rows;
   assert.deepEqual(links, [{ source: ids[0], target: ids[2] }]);
