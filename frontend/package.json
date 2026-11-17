@@ -11,6 +11,7 @@
     "format": "prettier --write src index.html vite.config.ts package.json tsconfig.json eslint.config.js",
     "format:check": "prettier --check src index.html vite.config.ts package.json tsconfig.json eslint.config.js",
     "test:delivery-browser": "tsx scripts/verify-delivery-browser.ts",
+    "test:observation-context-browser": "tsx scripts/verify-observation-context-browser.ts",
     "test:event-export-browser": "tsx scripts/verify-event-export-browser.ts",
     "test:data-management-browser": "tsx scripts/verify-data-management-browser.ts",
     "test:session-cleanup-browser": "tsx scripts/verify-session-cleanup-browser.ts",

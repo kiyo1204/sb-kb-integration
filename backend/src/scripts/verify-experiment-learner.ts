@@ -830,6 +830,7 @@ try {
       )
     ).data;
     const cli = process.env.npm_execpath!;
+    const practiceObservationTimestamp = new Date().toISOString();
     const child = spawn(
       process.execPath,
       [cli, "run", "test:experiment-learner-browser"],
@@ -841,6 +842,7 @@ try {
           EXPERIMENT_BROWSER_TOKEN: bp.issuedCode,
           EXPERIMENT_BROWSER_SESSION: bp.sessionId,
           EXPERIMENT_BROWSER_RUN: browserRun.id,
+          EXPERIMENT_PRACTICE_OBSERVATION_TIMESTAMP: practiceObservationTimestamp,
           // Diagnostic scope is this synthetic browser child, not the suite/API.
           EXPERIMENT_SCROLL_DIAGNOSTICS: "1",
         },
@@ -856,6 +858,17 @@ try {
       } catch { console.log("scroll-coordinate-db diagnostic unavailable; browser exit retained"); }
     }
     assert.equal(browserExit, 0, "learner browser");
+    const practiceDelivery = await pool.query(
+      `SELECT count(*)::int AS events, count(r.event_id)::int AS receipts
+       FROM research_events e
+       LEFT JOIN client_event_receipts r ON r.session_id=e.session_id AND r.event_id=e.event_id
+       WHERE e.session_id=$1 AND e.event_type='SCREEN_ENTER' AND e.client_timestamp=$2::timestamptz`,
+      [bp.sessionId, practiceObservationTimestamp],
+    );
+    assert.deepEqual(practiceDelivery.rows[0], {events:1,receipts:1}, "exact pre-practice observation has one saved event and receipt");
+    const practiceReport = await pool.query("SELECT count(*)::int AS reports FROM client_delivery_reports WHERE session_id=$1", [bp.sessionId]);
+    assert.ok(practiceReport.rows[0].reports > 0, "own Session delivery metadata persisted");
+    console.log(JSON.stringify({check:"practice-delivery-db",events:1,receipts:1,ownSessionReportPresent:true}));
     const endParticipant=(await research(`${root}/${browserRun.id}/participants`,"POST",{participantLabel:"TEST ONLY end browser"},201)).data;
     const bRun=(await research(root,"POST",{name:"TEST ONLY delayed identity",catalogVersionId:mat.id,plannedParticipants:0},201)).data;
     const bParticipant=(await research(`${root}/${bRun.id}/participants`,"POST",{participantLabel:"TEST ONLY identity B"},201)).data;

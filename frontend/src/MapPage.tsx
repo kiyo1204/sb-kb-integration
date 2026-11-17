@@ -14,9 +14,8 @@ import {
   type PointerEvent as ReactPointerEvent,
   type CSSProperties,
 } from "react";
-import { apiFetch, uiText } from "./auth-client";
+import { apiFetch, uiText, captureObservationContext, isObservationContextCurrent } from "./auth-client";
 import {
-  sendObservedLearningEvent,
   useObservedLearningScreen,
 } from "./learning-events";
 
@@ -506,12 +505,13 @@ export default function MapPage({
     state.status === "success" ? state.map.sessionStageId : null;
   const observationMapId = state.status === "success" ? state.map.id : null;
   const observationMapType = state.status === "success" ? state.map.type : null;
-  useObservedLearningScreen(
+  const postObservedLearningEvent=useObservedLearningScreen(
     learnerSessionId ?? "",
     observationStageId,
     observationMapId,
     isLearner && !!learnerSessionId && state.status === "success",
     noteActivityLogFailure,
+    state.status === "success" && state.map.sessionProtocolKey === "SBKB_INTEGRATION_V1",
   );
   const [integrationDeadline, setIntegrationDeadline] = useState<number | null>(
     null,
@@ -543,6 +543,7 @@ export default function MapPage({
   const mapEditorMutationsRef = useRef({ inFlight: 0, failed: false });
   const undoRedoRequestRef = useRef(0);
   const kitFeedbackRequestRef = useRef(0);
+  useEffect(()=>()=>{kitFeedbackRequestRef.current++;},[mapId]);
   const kitFeedbackSignature =
     state.status === "success" && state.map.type === "KB"
       ? kitMapSignature(state.map)
@@ -616,6 +617,8 @@ export default function MapPage({
       return;
     const targetMapId = state.map.id;
     const requestId = ++kitFeedbackRequestRef.current;
+    const context=captureObservationContext(state.map.sessionId??"",state.map.sessionProtocolKey==="SBKB_INTEGRATION_V1");
+    const current=()=>requestId===kitFeedbackRequestRef.current&&isObservationContextCurrent(context);
     setKitFeedbackChecking(true);
     setKitFeedbackDialog({ status: "loading" });
     try {
@@ -623,6 +626,7 @@ export default function MapPage({
         `/api/maps/${encodeURIComponent(targetMapId)}/kit-feedback`,
       );
       const result: unknown = await response.json().catch(() => null);
+      if(!current())return;
       if (!response.ok) {
         if (
           result &&
@@ -631,7 +635,7 @@ export default function MapPage({
           result.logSaved === false
         )
           noteActivityLogFailure();
-        if (requestId === kitFeedbackRequestRef.current)
+        if (current())
           setKitFeedbackDialog({
             status: "error",
             message:
@@ -651,11 +655,11 @@ export default function MapPage({
       const verifiedSignature = await fetchCurrentKitMapSignature(
         targetMapId,
       ).catch(() => null);
-      if (requestId !== kitFeedbackRequestRef.current) return;
+      if (!current()) return;
       setKitBuildFeedback({ result, verifiedSignature, requestId });
       setKitFeedbackDialog({ status: "result", fromSubmission: false });
     } catch {
-      if (requestId === kitFeedbackRequestRef.current) {
+      if (current()) {
         setKitFeedbackDialog({
           status: "error",
           message:
@@ -663,7 +667,7 @@ export default function MapPage({
         });
       }
     } finally {
-      if (requestId === kitFeedbackRequestRef.current)
+      if (current())
         setKitFeedbackChecking(false);
     }
   }
@@ -678,26 +682,16 @@ export default function MapPage({
       kitFeedbackDialog?.status !== "result"
     )
       return;
-    let active = true;
-    void sendObservedLearningEvent(learnerSessionId, {
+    void postObservedLearningEvent({
       eventType: "FEEDBACK_DISPLAY",
       targetType: "FEEDBACK",
       stageId: observationStageId!,
       mapId: observationMapId!,
-    })
-      .then((saved) => {
-        if (active && !saved) noteActivityLogFailure();
-      })
-      .catch(() => {
-        if (active) noteActivityLogFailure();
-      });
-    return () => {
-      active = false;
-    };
+    });
   }, [
     isLearner,
     kitFeedbackDialog,
-    noteActivityLogFailure,
+    postObservedLearningEvent,
     state.status,
     learnerSessionId,
     observationStageId,
