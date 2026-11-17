@@ -253,3 +253,13 @@ main `19a1898efa86d81318086f9d5fca07f7db7f2320` を基点に、淡いグリー�
 - 実API＋ガード照合済み新規PostgreSQLで、SB/統合の実画面から概念追加・取消、一時リンク保持、接続完成、保存済みリンクを残す概念追加、API読戻し・再読込、DB接続方向、ADD_LINK/RECONNECT_LINK/CANCELLEDの既存assertionを確認。Node 22.23.5 / Windows / Edgeで対象選択1/1成功。全体suiteは実行していない。
 - 失敗経緯はローカル記録に保持。初回は再利用依存の不足、Node 24.15.0のrunner異常終了3221226505があり成功に含めない。拡張fixtureでは画面切替後の古い世代による409、登録client IDの指定誤り400、追加概念と対象の重なり・可視範囲、継承リンクの同名衝突、SQLパラメーター不一致を修正した。認可・保存・方向assertionの緩和やタイムアウト延長はしていない。
 - frontend型検査・Lint・build、変更検証Lint、backend型検査・Lint・build成功。buildの既存傾向のchunk警告554.71 kBあり。複数KB一時リンク2件の同時保持と別Mapへの非漏出も合成応答で成功。R05専用画面での追加回帰、参加者PCでの修正版操作は未確認。未接続リンクは既存の画面内状態のままで、再読込時の永続化を追加しない。稼働環境への反映・コミットは行わない。
+
+### 2026-11-16 Map削除操作の案内
+- 目的・範囲: main `51c5a01c4bfbad09f0d346ac1476c8bdaeabdf40` から分離し、既存の選択編集欄で削除対象と影響を見つけやすくする。API・schema・認可・保存・ログ・Undo/Redoは変更しない。対象は `frontend/src/MapPage.tsx`、既存 `verify-link-direction-browser.ts`、本計画書。
+- 既存契約: SB/統合では概念・保存済みリンクを選択して既存ボタンと確認からDELETEする。概念DELETEは接続リンクもFKで削除し、フロントも同じリンクを除く。初期概念・KB概念・保護されたMerge由来は既存UI/API制約を維持する。対応protocolのMerge結果削除は既存の直近Merge解除説明を優先する。KBの保存済みリンクDELETE後は対応部品がパレットへ戻る。一時リンクは作成中止で、DBリンクDELETEではない。Undo/Redoは既存の利用可能状態と履歴に従い、今回新たな適用範囲を設けない。
+- 実装: 学習者Mapの既存案内へクリックによる編集・削除の入口を追記。編集欄に選択中の概念/リンクの現在ラベルを表示し、通常概念の接続リンク件数を欄内と既存確認へ表示。KBリンクには再配置の案内を表示。新しい削除ハンドラー・キーボード削除は追加しない。既存の処理中無効化と失敗表示を再利用する。
+- 検証方針: 合成6ケースで既存ボタンの取消（DELETEなし）、503失敗（要素保持・再操作可）、成功・再読込、接続リンク削除、KB部品戻しと一時リンク保持を確認。専用新規模擬DBで既存stage1、map-api-v2、experiment-learner、link-direction-apiを選択し、削除・Undo/Redo・ログ・認可・初期概念・提出/終了制限を確認する。共有ConceptCanvasやR05の削除処理自体は変更しない。
+- リスクと対策: 件数は確認時の保存済みMapの接続リンクだけを数える。一時リンクは再読込保存されない既存仕様を維持する。Merge解除に通常の一括削除説明を適用しない。取り消す場合は今回の表示差分だけを戻し、DB復旧を行わない。
+- 完了条件: 対象表示検証・選択API回帰・frontend型検査/Lint/build・差分検査の成功と制約の記録。参加者PCは未確認。稼働環境へ未反映、未コミットで保持する。
+- 結果: Windows / Node 22.23.5 / Playwright Edgeで合成6/6成功。既存API検証の対象選択単一実行4/4（stage1:integration、map-api-v2、experiment-learner、link-direction-api）が終了コード0。削除・接続リンク・Undo/Redo・ログ、初期概念/KB/提出済み/他Session/終了後の既存拒否と、一時リンク保持を確認。失敗表示・再操作の新しいUI検証は合成503であり、実通信障害や参加者PCでの確認ではない。専用R05画面は今回のMapEditorShell表示変更を通らず、専用回帰を追加しない。高速二重クリックを新たに計測したものではなく、既存処理中ガードを維持している。全体suiteは実行していない。
+- frontend型検査/Lint/buildと変更検証Lint、API検証用backend build、git diff --check成功。buildのchunk警告555.61 kB。初回migrationはNode 22のnpm解決先不足で失敗し、既存npmパスの明示後に完了（失敗は成功に含めない）。結果集計はローカル記録に保管。今回作成DBはcontainer ID・purpose・nonce・bindをmanifestと照合して削除し、既存環境は保持した。
