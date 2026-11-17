@@ -5699,6 +5699,8 @@ app.patch("/api/links/:linkId/label", async (request, response) => {
   }
 });
 
+class LinkConnectionConflictError extends Error {}
+
 app.patch("/api/links/:linkId/reconnect", async (request, response) => {
   const { linkId } = request.params;
 
@@ -5732,6 +5734,21 @@ app.patch("/api/links/:linkId/reconnect", async (request, response) => {
     });
   }
 
+  const expected = payload.expectedConnection;
+  if (expected !== undefined && (
+    typeof expected !== "object" || expected === null || Array.isArray(expected) ||
+    !("sourceConceptId" in expected) || !("targetConceptId" in expected) ||
+    typeof expected.sourceConceptId !== "string" || !uuidPattern.test(expected.sourceConceptId) ||
+    typeof expected.targetConceptId !== "string" || !uuidPattern.test(expected.targetConceptId)
+  )) {
+    return response.status(400).json({
+      error: "invalid_expected_connection",
+      message: "expectedConnectionには保存元の両端の有効なUUIDを指定してください。",
+    });
+  }
+
+  const expectedConnection = expected as { sourceConceptId: string; targetConceptId: string } | undefined;
+
   const timestamp = validateClientTimestamp(payload.clientTimestamp);
   if (!timestamp.valid) {
     return response.status(400).json({
@@ -5750,6 +5767,13 @@ app.patch("/api/links/:linkId/reconnect", async (request, response) => {
 
         const current = await getLinkForUpdate(client, linkId, mapId);
         if (!current) return { kind: "link_not_found" };
+
+        // Receipt replay happens before this callback. Reject stale edits only
+        // after the existing authorization, Map and Link locks are acquired.
+        if (expectedConnection && (current.sourceConceptId !== expectedConnection.sourceConceptId.toLowerCase() ||
+          current.targetConceptId !== expectedConnection.targetConceptId.toLowerCase())) {
+          throw new LinkConnectionConflictError();
+        }
 
         const membershipResult = await client.query<{
           sourceMapId: string | null;
@@ -5859,6 +5883,13 @@ app.patch("/api/links/:linkId/reconnect", async (request, response) => {
         "sourceとtargetはLinkと同じMapに所属するConceptを選んでください。",
     });
   } catch (error) {
+    if (error instanceof LinkConnectionConflictError) {
+      return response.status(409).json({
+        error: "link_connection_conflict",
+        operationCommitted: false,
+        message: "保存元の接続が変更されています。接続は未保存です。編集を取消し、最新の接続を確認してください。",
+      });
+    }
     const readOnlyResponse = readOnlyMapResponse(response, error);
     if (readOnlyResponse) return readOnlyResponse;
 

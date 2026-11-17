@@ -5,6 +5,7 @@ import {
   useEffect,
   useId,
   useImperativeHandle,
+  useLayoutEffect,
   type Ref,
   useMemo,
   useRef,
@@ -14,7 +15,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type CSSProperties,
 } from "react";
-import { apiFetch, uiText } from "./auth-client";
+import { apiFetch, uiText, getAuthenticationRevision } from "./auth-client";
 import {
   sendObservedLearningEvent,
   useObservedLearningScreen,
@@ -49,7 +50,21 @@ type MapLink = {
   targetConceptId: string;
   label: string;
   kitLinkItemId?: string | null;
+  provenance?: unknown;
 };
+
+class LinkReconnectError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) { super(message); }
+}
+type ExpectedConnection = Pick<MapLink, "sourceConceptId" | "targetConceptId">;
+type ReconnectionDraft = TemporaryConnector & { original: MapLink; mapId: string; authenticationRevision: number; conflicted?: boolean };
+function sameSavedLink(a: MapLink | undefined, b: MapLink) {
+  return !!a && a.id === b.id && a.mapId === b.mapId &&
+    a.sourceConceptId === b.sourceConceptId && a.targetConceptId === b.targetConceptId &&
+    a.label === b.label && a.labelPositionX === b.labelPositionX &&
+    a.labelPositionY === b.labelPositionY && a.kitLinkItemId === b.kitLinkItemId &&
+    JSON.stringify(a.provenance) === JSON.stringify(b.provenance);
+}
 
 type CancellableMapEventType =
   | "ADD_CONCEPT"
@@ -81,7 +96,7 @@ type KitPalettePart =
 
 type TemporaryConnector = {
   id: string;
-  kind: "kit" | "map";
+  kind: "kit" | "map" | "reconnect";
   kitLinkItemId: string | null;
   label: string;
   position: Point;
@@ -1716,6 +1731,7 @@ export default function MapPage({
     link: MapLink,
     sourceConceptId: string,
     targetConceptId: string,
+    expectedConnection?: ExpectedConnection,
   ) {
     const response = await apiFetch(
       `/api/links/${encodeURIComponent(link.id)}/reconnect`,
@@ -1726,6 +1742,7 @@ export default function MapPage({
           sourceConceptId,
           targetConceptId,
           clientTimestamp: new Date().toISOString(),
+          ...(expectedConnection ? { expectedConnection } : {}),
         }),
       },
     );
@@ -1733,6 +1750,7 @@ export default function MapPage({
     if (!response.ok) {
       const errorBody = (await response.json().catch(() => null)) as {
         message?: unknown;
+        error?: unknown;
       } | null;
       const message =
         response.status === 404
@@ -1741,7 +1759,7 @@ export default function MapPage({
             ? uiText(errorBody.message)
             : "Linkを再接続できませんでした。時間をおいて再度お試しください。";
 
-      throw new Error(message);
+      throw new LinkReconnectError(message, response.status, typeof errorBody?.error === "string" ? errorBody.error : undefined);
     }
 
     const updated = (await response.json()) as UpdatedMapLink;
@@ -1759,13 +1777,13 @@ export default function MapPage({
     }
 
     setState((current) =>
-      current.status === "success"
+      current.status === "success" && current.map.id === link.mapId
         ? {
             status: "success",
             map: {
               ...current.map,
               links: current.map.links.map((currentLink) =>
-                currentLink.id === link.id
+                sameSavedLink(currentLink, link)
                   ? {
                       ...currentLink,
                       sourceConceptId: updated.sourceConceptId,
@@ -2296,6 +2314,7 @@ export default function MapPage({
   ) {
     return (
       <MapEditorShell
+        key={state.map.id}
         map={state.map}
         isLearner={isLearner && state.map.sessionId !== null}
         activityLogWarning={activityLogWarning}
@@ -2388,9 +2407,10 @@ export default function MapPage({
         onSaveLinkLabel={(link, label) =>
           trackMapEditorMutation(() => saveLinkLabel(link, label))
         }
-        onReconnectLink={(link, sourceConceptId, targetConceptId) =>
+        onSavedMapRefresh={(latest) => setState(current => current.status === "success" && current.map.id === latest.id ? { status: "success", map: latest } : current)}
+        onReconnectLink={(link, sourceConceptId, targetConceptId, expectedConnection) =>
           trackMapEditorMutation(() =>
-            reconnectLink(link, sourceConceptId, targetConceptId),
+            reconnectLink(link, sourceConceptId, targetConceptId, expectedConnection),
           )
         }
         onDeleteLink={(linkId) =>
@@ -2720,6 +2740,7 @@ function MapEditorShell({
   onCreateLink,
   onSaveLinkLabel,
   onReconnectLink,
+  onSavedMapRefresh,
   onDeleteLink,
   onKitConceptDrop,
   onKitLinkCreate,
@@ -2772,7 +2793,9 @@ function MapEditorShell({
     link: MapLink,
     sourceConceptId: string,
     targetConceptId: string,
+    expectedConnection?: ExpectedConnection,
   ) => Promise<void>;
+  onSavedMapRefresh: (latest: MapResponse) => void;
   onDeleteLink: (linkId: string) => Promise<void>;
   onKitConceptDrop?: (
     kitConceptItemId: string,
@@ -2822,6 +2845,117 @@ function MapEditorShell({
   const isSaving =
     saveStatus === "saving" || positionSaving || drawerSaving || additionalBusy;
   const interactionLocked = readOnly || additionalBusy;
+  const [reconnectionDraft, setReconnectionDraft] = useState<ReconnectionDraft | null>(null);
+  const [reconnectionNotice, setReconnectionNotice] = useState<string | null>(null);
+  const reconnectionRef = useRef<ReconnectionDraft | null>(null);
+  const [reconnectionBlocked, setReconnectionBlocked] = useState(false);
+  const reconnectionAllowed = map.sessionProtocolKey === "SBKB_INTEGRATION_V1" &&
+    map.type === "PRIOR" && isLearner && !readOnly && !reconnectionBlocked && map.status === "DRAFT";
+  const validReconnection = reconnectionAllowed && reconnectionDraft?.mapId === map.id &&
+    (sameSavedLink(map.links.find(l => l.id === reconnectionDraft?.id), reconnectionDraft.original) ||
+      (reconnectionDraft.saving && sameSavedLink(map.links.find(l => l.id === reconnectionDraft.id), { ...reconnectionDraft.original, sourceConceptId: reconnectionDraft.sourceConceptId ?? "", targetConceptId: reconnectionDraft.targetConceptId ?? "" })))
+    ? reconnectionDraft : null;
+  useLayoutEffect(() => { reconnectionRef.current = validReconnection; }, [validReconnection]);
+  if (reconnectionDraft && !validReconnection) {
+    setReconnectionDraft(null);
+    setReconnectionNotice("接続編集を停止しました。保存済みリンクまたは画面の利用状態が変わりました。");
+  }
+  useEffect(() => () => { reconnectionRef.current = null; }, []);
+  function beginReconnection(link: MapLink, position: Point) {
+    if (!reconnectionAllowed || interactionLocked || drawerSaving || positionSaving || linkCreation) return;
+    if (reconnectionRef.current) {
+      setReconnectionNotice("接続編集中のリンクを完成または取消してから、別の接続を編集してください。");
+      return;
+    }
+    const draft: ReconnectionDraft = { id: link.id, mapId: map.id, original: { ...link }, authenticationRevision: getAuthenticationRevision(),
+      kind: "reconnect", kitLinkItemId: link.kitLinkItemId ?? null, label: link.label,
+      position, sourceConceptId: null, targetConceptId: null, saving: false, error: null };
+    reconnectionRef.current = draft;
+    setReconnectionDraft(draft);
+    setReconnectionNotice(null);
+    setDrawer({ kind: "closed" });
+  }
+  async function cancelReconnection() {
+    const current = reconnectionRef.current;
+    if (!current || current.saving) return;
+    if (current.conflicted) {
+      const pending = { ...current, saving: true };
+      reconnectionRef.current = pending;
+      setReconnectionDraft(pending);
+      try {
+        const response = await apiFetch(`/api/maps/${encodeURIComponent(current.mapId)}`);
+        if (!response.ok) throw new Error("最新の接続を確認できません。接続は未保存です。再読込して確認してください。");
+        const latest = await response.json() as MapResponse;
+        if (reconnectionRef.current !== pending || pending.authenticationRevision !== getAuthenticationRevision()) return;
+        if (latest.id !== pending.mapId) throw new Error("最新のマップを確認できませんでした。");
+        onSavedMapRefresh(latest);
+      } catch (error) {
+        if (reconnectionRef.current !== pending) return;
+        const failed = { ...current, error: error instanceof Error ? error.message : "最新の接続を確認できませんでした。" };
+        reconnectionRef.current = failed;
+        setReconnectionDraft(failed);
+        return;
+      }
+    }
+    reconnectionRef.current = null;
+    setReconnectionDraft(null);
+    setReconnectionNotice("接続編集を取消し、保存済みの接続へ戻しました。");
+  }
+  async function updateReconnection(connector: TemporaryConnector) {
+    const before = reconnectionRef.current;
+    if (!before || before.id !== connector.id || before.saving || before.conflicted || before.authenticationRevision !== getAuthenticationRevision()) return;
+    const next = { ...before, sourceConceptId: connector.sourceConceptId,
+      targetConceptId: connector.targetConceptId, error: null };
+    reconnectionRef.current = next;
+    setReconnectionDraft(next);
+    if (!next.sourceConceptId || !next.targetConceptId) return;
+    const pending = { ...next, saving: true };
+    reconnectionRef.current = pending;
+    setReconnectionDraft(pending);
+    try {
+      const response = await apiFetch(`/api/maps/${encodeURIComponent(map.id)}`);
+      if (reconnectionRef.current !== pending) return;
+      if (pending.authenticationRevision !== getAuthenticationRevision()) return;
+      if (!response.ok) throw new LinkReconnectError("保存元を確認できません。接続は未保存です。接続状態を確認してください。", response.status);
+      const latest = await response.json() as MapResponse;
+      if (reconnectionRef.current !== pending) return;
+      if (latest.id !== map.id) throw new Error("保存元のマップを確認できませんでした。");
+      if (pending.authenticationRevision !== getAuthenticationRevision()) return;
+      if (latest.status !== "DRAFT" || !sameSavedLink(latest.links.find(l => l.id === pending.id), pending.original)) {
+        reconnectionRef.current = null;
+        setReconnectionDraft(null);
+        onSavedMapRefresh(latest);
+        setReconnectionNotice("保存元のリンクが変更または削除されたため、接続編集を停止しました。再読込して確認してください。");
+        return;
+      }
+      await onReconnectLink(pending.original, next.sourceConceptId, next.targetConceptId, {
+        sourceConceptId: pending.original.sourceConceptId,
+        targetConceptId: pending.original.targetConceptId,
+      });
+      if (reconnectionRef.current !== pending) return;
+      reconnectionRef.current = null;
+      setReconnectionDraft(null);
+      setReconnectionNotice("接続を保存しました。");
+    } catch (error) {
+      if (reconnectionRef.current !== pending) return;
+      if (error instanceof LinkReconnectError && error.status === 409 && error.code === "link_connection_conflict") {
+        const conflicted = { ...next, conflicted: true, error: error.message };
+        reconnectionRef.current = conflicted;
+        setReconnectionDraft(conflicted);
+        return;
+      }
+      if (error instanceof LinkReconnectError && [401, 403, 404, 409, 410].includes(error.status)) {
+        reconnectionRef.current = null;
+        setReconnectionDraft(null);
+        setReconnectionBlocked(true);
+        setReconnectionNotice("接続編集を停止しました。利用権限または保存元を確認できません。再読込して確認してください。");
+        return;
+      }
+      const failed = { ...next, error: error instanceof Error ? error.message : "接続を保存できませんでした。" };
+      reconnectionRef.current = failed;
+      setReconnectionDraft(failed);
+    }
+  }
   const hasSaveError =
     saveStatus === "error" || positionFeedback?.type === "error";
 
@@ -2860,7 +2994,7 @@ function MapEditorShell({
   }
 
   function openAddLink() {
-    if (!canCreateLink) return;
+    if (!canCreateLink || reconnectionRef.current) return;
     setLinkCreation(null);
     setLinkCreationFeedback(null);
     setLinkLabel("");
@@ -2877,6 +3011,7 @@ function MapEditorShell({
 
   function openLinkEditor(link: MapLink) {
     if (interactionLocked || linkCreation) return;
+    if (reconnectionRef.current) return;
     setLinkLabel(link.label);
     setDrawerFeedback(null);
     setDrawer({ kind: "edit-link", linkId: link.id });
@@ -3092,12 +3227,13 @@ function MapEditorShell({
   }
 
   async function handleSubmitMap() {
+    if (reconnectionRef.current) return;
     await onSubmit();
     setDrawer({ kind: "closed" });
     setLinkCreation(null);
   }
 
-  const canvasFitRef=useRef<{fit:()=>void}>(null);
+  const canvasFitRef=useRef<{fit:()=>void; editConnection?: (link: MapLink) => void}>(null);
   const experimentLayout=map.sessionProtocolKey==="SBKB_INTEGRATION_V1";
   const experimentKB = experimentLayout && isLearner && map.type === "KB";
   const kbSubmissionHint = readOnly
@@ -3118,7 +3254,7 @@ function MapEditorShell({
                   ? "確認結果：不一致。マップを編集し、「一時提出」で再確認してください。"
                   : !canSubmit ||
                       drawer.kind !== "closed" ||
-                      linkCreation !== null
+                      (linkCreation !== null || validReconnection !== null)
                     ? "確認結果：一致。編集中の操作を完了し、オンラインで保存状態を確認すると最終提出できます。"
     : "確認結果：一致。「最終提出」でこのマップを提出できます。";
   const creationTools = !interactionLocked &&
@@ -3131,7 +3267,7 @@ function MapEditorShell({
                 </button>
               )}
               {canCreateLink && (
-                <button type="button" onClick={openAddLink}>
+                <button type="button" disabled={validReconnection !== null} onClick={openAddLink}>
                   ＋ リンク
                 </button>
               )}
@@ -3268,7 +3404,7 @@ function MapEditorShell({
             role="status"
             aria-live="polite"
           >
-            {experimentLayout && drawer.kind !== "closed"
+            {validReconnection ? "接続編集中・未保存" : experimentLayout && drawer.kind !== "closed"
               ? "入力編集中：保存または閉じて確認"
               : hasSaveError
               ? "保存エラー"
@@ -3287,7 +3423,7 @@ function MapEditorShell({
                   isSaving ||
                   submitting ||
                   drawer.kind !== "closed" ||
-                  linkCreation !== null ||
+                  (linkCreation !== null || validReconnection !== null) ||
                   !undoRedoState.canUndo
                 }
                 title={undoRedoState.undoOperation?.operationType}
@@ -3302,7 +3438,7 @@ function MapEditorShell({
                   isSaving ||
                   submitting ||
                   drawer.kind !== "closed" ||
-                  linkCreation !== null ||
+                  (linkCreation !== null || validReconnection !== null) ||
                   !undoRedoState.canRedo
                 }
                 title={undoRedoState.redoOperation?.operationType}
@@ -3332,7 +3468,7 @@ function MapEditorShell({
                 drawerSaving ||
                 !canSubmit ||
                 (experimentLayout && drawer.kind !== "closed") ||
-                linkCreation !== null
+                (linkCreation !== null || validReconnection !== null)
               }
               onClick={() => void handleSubmitMap()}
             >
@@ -3355,6 +3491,19 @@ function MapEditorShell({
         </div>
       </header>
 
+      {validReconnection && (
+        <section className="map-editor-link-creation-status" aria-label="保存済みリンクの接続編集">
+          <div role="status"><strong>接続編集中・未保存</strong>：{validReconnection.label}。
+            両端を接続すると保存します。接続完成または取消まで提出・元に戻す・やり直すはできません。
+            再読込すると保存済みの接続へ戻ります。
+            {validReconnection.error && <p role="alert">{validReconnection.error}</p>}
+          </div>
+          {validReconnection.error && !validReconnection.conflicted && validReconnection.sourceConceptId && validReconnection.targetConceptId &&
+            <button type="button" onClick={() => void updateReconnection(validReconnection)}>接続の保存を再試行</button>}
+          <button type="button" disabled={validReconnection.saving} onClick={cancelReconnection}>接続編集を取消</button>
+        </section>
+      )}
+      {reconnectionNotice && <p role="status">{reconnectionNotice}</p>}
       {readOnly && (
         <p className="map-editor-read-only" role="status">
           提出済みの{submittedMapName}です。内容は読み取り専用です。
@@ -3384,7 +3533,7 @@ function MapEditorShell({
       {supplementalContent}
 
       <section
-        className={`map-editor-workspace${drawer.kind !== "closed" ? " has-drawer" : ""}`}
+        className={`map-editor-workspace${drawer.kind !== "closed" ? " has-drawer" : ""}${map.sessionProtocolKey === "SBKB_INTEGRATION_V1" && isLearner && map.type === "PRIOR" && drawer.kind === "edit-link" ? " is-sb-link-selection" : ""}`}
       >
         <div className="map-editor-canvas-column">
           {isLearner && !readOnly && (
@@ -3393,6 +3542,7 @@ function MapEditorShell({
                 ? "部品をマップへドラッグし、リンクの両端を概念へ接続します。"
                 : "概念とリンクを追加し、リンクの両端を概念へドラッグして接続します。"}{" "}
               矢印の先が関係先です。リンクをクリックすると編集・削除できます。
+              {reconnectionAllowed && " 線またはラベルのダブルクリック、または選択欄の「接続を編集」で両端を接続し直せます。"}
               {canEditConceptStructure && " 概念もクリックすると編集・削除できます（初期概念は保護されます）。"}
             </p>
           )}
@@ -3455,6 +3605,10 @@ function MapEditorShell({
             onDragStart={() => undefined}
             onPositionSave={onPositionSave}
             onLinkPositionSave={onLinkPositionSave}
+            reconnectionDraft={validReconnection}
+            onReconnectionStart={reconnectionAllowed ? beginReconnection : undefined}
+            onReconnectionUpdate={updateReconnection}
+            onReconnectionCancel={cancelReconnection}
             linkCreation={linkCreation}
             onMapLinkCreate={handleMapLinkCreate}
             onMapLinkCreationCancel={(id) => {
@@ -3664,6 +3818,8 @@ function MapEditorShell({
                   選択中のリンク：<strong>{activeLink.label}</strong>
                   {map.type === "KB" && "。削除すると対応するリンク部品をパレットから再配置できます。"}
                 </p>
+                {reconnectionAllowed && <button type="button" disabled={drawerSaving || interactionLocked || validReconnection !== null || linkCreation !== null}
+                  onClick={() => canvasFitRef.current?.editConnection?.(activeLink)}>接続を編集</button>}
                 {canEditLinkLabel ? (
                   <>
                     <label htmlFor="map-editor-link-edit-label">
@@ -3889,6 +4045,10 @@ export function ConceptCanvas({
   onLinkPositionSave,
   onMapConceptSelect,
   onMapLinkSelect,
+  reconnectionDraft = null,
+  onReconnectionStart,
+  onReconnectionUpdate,
+  onReconnectionCancel,
   linkCreation = null,
   onMapLinkCreate,
   onMapLinkCreationCancel,
@@ -3902,7 +4062,7 @@ export function ConceptCanvas({
   mapId: string;
   mapType: MapResponse["type"];
   allowMergeRelease?: boolean;
-  fitRef?: Ref<{fit:()=>void}>;
+  fitRef?: Ref<{fit:()=>void; editConnection?: (link: MapLink) => void}>;
   concepts: Concept[];
   links: MapLink[];
   kitDefinitionName: string | null;
@@ -3948,6 +4108,10 @@ export function ConceptCanvas({
   onLinkPositionSave?: (linkId: string, position: Point) => Promise<boolean>;
   onMapConceptSelect?: (concept: Concept) => void;
   onMapLinkSelect?: (link: MapLink) => void;
+  reconnectionDraft?: ReconnectionDraft | null;
+  onReconnectionStart?: (link: MapLink, position: Point) => void;
+  onReconnectionUpdate?: (connector: TemporaryConnector) => void;
+  onReconnectionCancel?: () => void;
   linkCreation?: { id: string; label: string } | null;
   onMapLinkCreate?: (
     sourceConceptId: string,
@@ -3962,8 +4126,8 @@ export function ConceptCanvas({
   ) => void;
 }) {
   const edges = useMemo(
-    () => mapLinksToEdges(links, concepts, mapId),
-    [concepts, links, mapId],
+    () => mapLinksToEdges(links.filter(l => l.id !== reconnectionDraft?.id), concepts, mapId),
+    [concepts, links, mapId, reconnectionDraft],
   );
   const conceptsById = useMemo(
     () => new Map(concepts.map((concept) => [concept.id, concept])),
@@ -4140,9 +4304,10 @@ export function ConceptCanvas({
           error: null,
         }
     : null;
-  const temporaryConnectors = mapTemporaryConnector
+  const creationConnectors = mapTemporaryConnector
     ? [...kitTemporaryConnectors, mapTemporaryConnector]
     : kitTemporaryConnectors;
+  const temporaryConnectors = reconnectionDraft ? [...creationConnectors, reconnectionDraft] : creationConnectors;
   const pendingConnectors = temporaryConnectors.filter(
     (connector) => !connector.sourceConceptId || !connector.targetConceptId,
   );
@@ -4227,7 +4392,7 @@ export function ConceptCanvas({
       observer.observe(element),
     );
     return () => observer.disconnect();
-  }, [links, kitTemporaryConnectors, mapTemporaryConnectorState, linkCreation]);
+  }, [links, kitTemporaryConnectors, mapTemporaryConnectorState, linkCreation, reconnectionDraft]);
 
   const canvasWidth = Math.max(
     960,
@@ -4263,25 +4428,6 @@ export function ConceptCanvas({
     ),
   );
 
-  useImperativeHandle(
-    fitRef,
-    () => ({
-      fit: () => {
-        const viewport = canvasViewportRef.current;
-        if (!viewport) return;
-    if(!viewport.clientWidth||!viewport.clientHeight)return;
-        setCanvasZoom(
-          Math.min(
-            1,
-            viewport.clientWidth / canvasWidth,
-            viewport.clientHeight / canvasHeight,
-          ),
-        );
-    viewport.scrollTo({left:0,top:0});
-      },
-    }),
-    [canvasWidth, canvasHeight],
-  );
   const supportsKitPalette = mapType === "KB" || mapType === "INTEGRATION";
   const normalizedKitPartQuery = kitPartQuery.trim().toLowerCase();
   const visibleKitConcepts = normalizedKitPartQuery
@@ -4479,7 +4625,7 @@ export function ConceptCanvas({
     endpoint: "source" | "target",
     start: Point,
   ) {
-    if (readOnly || !event.isPrimary || event.button !== 0) return;
+    if (readOnly || (kind === "saved" && reconnectionDraft) || !event.isPrimary || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     const handleBounds = event.currentTarget.getBoundingClientRect();
@@ -4567,6 +4713,7 @@ export function ConceptCanvas({
     clientX: number,
     clientY: number,
   ) {
+    if (readOnly) return;
     const conceptId = conceptAtPoint(clientX, clientY);
     if (!conceptId || !conceptsById.has(conceptId)) return;
 
@@ -4613,6 +4760,10 @@ export function ConceptCanvas({
       (candidate) => candidate.id === connection.id,
     );
     if (!connector || connector.saving) return;
+    if (connector.kind === "reconnect") {
+      if (!readOnly) onReconnectionUpdate?.({ ...connector, [connection.endpoint === "source" ? "sourceConceptId" : "targetConceptId"]: conceptId });
+      return;
+    }
     const updated: TemporaryConnector = {
       ...connector,
       [connection.endpoint === "source"
@@ -5261,6 +5412,14 @@ export function ConceptCanvas({
     setConceptPosition(conceptId, drag.originalPosition);
   }
 
+  function editConnection(link: MapLink) {
+    if (readOnly || positionSaving || activeConnectorDragRef.current?.moved || suppressConnectorClickRef.current) return;
+    const edge = edges.find(e => e.id === link.id);
+    if (!edge) return;
+    const geometry = geometryForEdge(edge);
+    if (!geometry) return;
+    onReconnectionStart?.(link, linkConnectorPositions.get(link.id) ?? { x: geometry.labelX, y: geometry.labelY });
+  }
   function geometryForEdge(edge: LinkEdge) {
     const parallelEdges = edges.filter(
       (candidate) =>
@@ -5272,6 +5431,26 @@ export function ConceptCanvas({
     const offset = (parallelIndex - (parallelEdges.length - 1) / 2) * 24;
     return getEdgeGeometry(edge, offset, positions, nodeSizes);
   }
+
+  useImperativeHandle(
+    fitRef,
+    () => ({
+      editConnection: (link: MapLink) => editConnection(link),
+      fit: () => {
+        const viewport = canvasViewportRef.current;
+        if (!viewport) return;
+    if(!viewport.clientWidth||!viewport.clientHeight)return;
+        setCanvasZoom(
+          Math.min(
+            1,
+            viewport.clientWidth / canvasWidth,
+            viewport.clientHeight / canvasHeight,
+          ),
+        );
+    viewport.scrollTo({left:0,top:0});
+      },
+    }),
+  );
 
   function updateConnectorPosition(
     kind: "temporary" | "saved",
@@ -5306,7 +5485,7 @@ export function ConceptCanvas({
       !event.isPrimary ||
       event.button !== 0 ||
       (kind === "temporary" &&
-        temporaryConnectors.find((connector) => connector.id === id)?.saving)
+        (temporaryConnectors.find((connector) => connector.id === id)?.saving || temporaryConnectors.find((connector) => connector.id === id)?.kind === "reconnect"))
     ) {
       return;
     }
@@ -5725,6 +5904,7 @@ export function ConceptCanvas({
                       );
                       if (link) selectLink(link);
                     }}
+                    onDoubleClick={(event) => { event.stopPropagation(); const link = links.find(l => l.id === edge.id); if (link) editConnection(link); }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
@@ -5980,6 +6160,7 @@ export function ConceptCanvas({
                   onPointerDown={(event) =>
                     beginConnectorDrag(event, "saved", edge.id, center)
                   }
+                  onDoubleClick={(event) => { event.stopPropagation(); editConnection(link); }}
                   onClick={() => {
                     if (suppressConnectorClickRef.current) {
                       suppressConnectorClickRef.current = false;
@@ -6008,7 +6189,7 @@ export function ConceptCanvas({
           })}
           {temporaryConnectors.map((connector) => (
             <div
-              className={`link-connector is-temporary${connector.saving ? " is-saving" : ""}`}
+              className={`link-connector ${connector.kind === "reconnect" ? "is-reconnecting" : "is-temporary"}${connector.saving ? " is-saving" : ""}`}
               key={connector.id}
               data-connector-id={connector.id}
               ref={(element) => {
@@ -6026,7 +6207,7 @@ export function ConceptCanvas({
                 className={`link-connector-handle is-source${connector.sourceConceptId ? " is-connected" : ""}${connectionPreview?.kind === "temporary" && connectionPreview.id === connector.id && connectionPreview.endpoint === "source" ? " is-connecting" : ""}`}
                 data-endpoint-label="始点"
                 aria-label={`${connector.label}の始点を接続${connector.sourceConceptId ? "済み" : "、未接続"}`}
-                disabled={connector.saving}
+                disabled={readOnly || connector.saving}
                 onPointerDown={(event) =>
                   beginConnection(event, "temporary", connector.id, "source", {
                     x: connector.position.x - 12,
@@ -6037,8 +6218,8 @@ export function ConceptCanvas({
               <button
                 type="button"
                 className="link-connector-label"
-                aria-label={`${connector.label}の中央をドラッグして移動`}
-                disabled={connector.saving}
+                aria-label={connector.kind === "reconnect" ? `${connector.label}の接続編集中` : `${connector.label}の中央をドラッグして移動`}
+                disabled={readOnly || connector.saving}
                 onPointerDown={(event) =>
                   beginConnectorDrag(
                     event,
@@ -6055,7 +6236,7 @@ export function ConceptCanvas({
                 className={`link-connector-handle is-target${connector.targetConceptId ? " is-connected" : ""}${connectionPreview?.kind === "temporary" && connectionPreview.id === connector.id && connectionPreview.endpoint === "target" ? " is-connecting" : ""}`}
                 data-endpoint-label="矢印の先"
                 aria-label={`${connector.label}の矢印の先を接続${connector.targetConceptId ? "済み" : "、未接続"}`}
-                disabled={connector.saving}
+                disabled={readOnly || connector.saving}
                 onPointerDown={(event) =>
                   beginConnection(event, "temporary", connector.id, "target", {
                     x: connector.position.x + 12,
@@ -6066,10 +6247,12 @@ export function ConceptCanvas({
               <button
                 type="button"
                 className="temporary-connector-cancel"
-                aria-label={`${connector.label}をキャンセル`}
-                disabled={connector.saving}
+                aria-label={connector.kind === "reconnect" ? `${connector.label}の接続編集を取消` : `${connector.label}をキャンセル`}
+                disabled={readOnly || connector.saving}
                 onClick={() => {
-                  if (connector.kind === "map") {
+                  if (connector.kind === "reconnect") {
+                    onReconnectionCancel?.();
+                  } else if (connector.kind === "map") {
                     setMapTemporaryConnectorState((current) =>
                       current?.id === connector.id ? null : current,
                     );
@@ -6086,7 +6269,7 @@ export function ConceptCanvas({
               >
                 ×
               </button>
-              {connector.error && (
+              {connector.error && connector.kind !== "reconnect" && (
                 <span className="temporary-connector-error" role="alert">
                   {connector.error}
                 </span>

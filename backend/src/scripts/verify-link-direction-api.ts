@@ -204,7 +204,12 @@ try {
       [sb.id],
     )
   ).rows;
-  assert.deepEqual(sbLinks, [{ source: sbIds[0], target: sbIds[2] }]);
+  assert.deepEqual(sbLinks, [{ source: sbIds[1], target: sbIds[2] }]);
+  const sbHistory = (await pool.query("SELECT event_type,target_id FROM research_events WHERE map_id=$1 AND outcome='SUCCESS' AND event_type IN ('ADD_LINK','DELETE_LINK','RECONNECT_LINK') ORDER BY sequence_number",[sb.id])).rows;
+  assert.equal(sbHistory.filter(e=>e.event_type==='ADD_LINK').length,1);
+  assert.equal(sbHistory.filter(e=>e.event_type==='DELETE_LINK').length,0);
+  assert.equal(sbHistory.filter(e=>e.event_type==='RECONNECT_LINK').length,4);
+  assert.equal(new Set(sbHistory.map(e=>e.target_id)).size,1);
   await call(`/maps/${sb.id}/submit`, {});
   await call(`/session-stages/${stage("KB_MAP")}/start`, {});
   const kb = await call(`/kits/${goal.kitDefinitionId}/kb-map`, {
