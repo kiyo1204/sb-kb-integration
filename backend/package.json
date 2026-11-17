@@ -29,6 +29,7 @@
     "test:integration-invariants": "tsx src/scripts/verify-integration-invariants.ts",
     "test:safe-server-error": "tsx src/scripts/verify-safe-server-error.ts",
     "test:delivery-reliability": "tsx src/scripts/verify-delivery-reliability.ts",
+    "test:observation-origin": "tsx src/scripts/verify-observation-origin.ts",
     "test:event-export": "tsx src/scripts/verify-event-export.ts",
     "samples:event-export": "tsx src/scripts/generate-event-export-samples.ts",
     "test:event-export-samples": "tsx src/scripts/verify-event-export-samples.ts",

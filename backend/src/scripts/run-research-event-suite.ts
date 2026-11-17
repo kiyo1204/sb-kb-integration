@@ -130,6 +130,7 @@ try {
   await run("test:autosubmit-deadlock");
   await stop();
   await run("test:delivery-reliability");
+  await run("test:observation-origin");
   await run("test:event-scale");
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") {
     await start();
@@ -142,6 +143,7 @@ try {
     await run("test:five-flow-features-browser",true);
     await run("test:undo-role-browser", true);
     await run("test:delivery-browser", true);
+    await run("test:observation-context-browser", true);
     await run("test:event-export-browser", true);
     await run("test:data-management-browser", true);
     await run("test:session-cleanup-browser", true);

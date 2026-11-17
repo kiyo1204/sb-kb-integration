@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { createServer } from "vite";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 const base = process.env.API_BASE_URL!,
@@ -25,6 +25,13 @@ const dir =
 await mkdir(dir, { recursive: true });
 let releaseDeliveryGate = () => {};
 const deliveryRouteTasks = new Set<Promise<void>>();
+const practiceTrace: { case: string; phase: string; kind: string }[] = [];
+const practiceGates = new Set<() => void>();
+const practiceRouteTasks = new Set<Promise<void>>();
+function tracePractice(testCase: string, phase: string, kind: string) {
+  if (practiceTrace.length >= 40) return;
+  practiceTrace.push({ case: testCase, phase, kind });
+}
 try {
   const page = await browser.newPage({
     viewport: { width: 1366, height: 1200 },
@@ -189,26 +196,344 @@ try {
     assert.equal(started.status, 200);
   }
   await refreshConnection("P02：活動の案内");
-  const documentBeforePractice = await page.evaluate(() => performance.timeOrigin);
+  const documentBeforePractice = await page.evaluate(
+    () => performance.timeOrigin,
+  );
   const documentClientChecks: string[] = [];
-  const practiceWrites: string[] = [];
-  const observePractice = (request: import("playwright").Request) => {
-    const path = new URL(request.url()).pathname;
-    if (path.startsWith("/api/") && request.method() !== "GET") practiceWrites.push(path);
-    if (path.endsWith(`/sessions/${sid}/flow`)) documentClientChecks.push(request.headers()["x-experiment-client"] ?? "");
-  };
-  page.on("request", observePractice);
-  await page.getByRole("button", { name: /練習を開く/ }).click();
-  await page.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
-  await page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/sessions/${sid}/flow`) && response.status() === 200);
-  await page.getByLabel("概念の名前").fill("TEST ONLY practice");
-  await page.getByRole("button", { name: "概念を追加", exact: true }).click();
-  await page.getByRole("link", { name: "練習を終了", exact: true }).click();
-  await page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
-  page.off("request", observePractice);
-  assert.equal(practiceWrites.length, 0, `practice does not write Map, Stage, events or claim a new client; observed endpoint kinds: ${practiceWrites.map(path => path.replace(/[a-f0-9-]{36}/g, ":id")).join(",")}`);
-  assert.equal(await page.evaluate(() => performance.timeOrigin), documentBeforePractice);
-  assert.ok(documentClientChecks.length > 0 && documentClientChecks.every(value => value.length > 0 && value === documentClientChecks[0]), "same registered client for access checks; values not reported");
+  // Count request starts, not response completions. Existing delivery is not
+  // practice generation: validate its owner, exact queued event and counters.
+  const settleDelivery = () =>
+    page.evaluate(async (sessionId) => {
+      const outbox = await import("/src/observation-outbox.ts");
+      const auth = await import("/src/auth-client.ts");
+      return outbox.flush(sessionId, auth.apiFetch);
+    }, sid);
+  const queueSnapshot = () =>
+    page.evaluate(async (sessionId) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const open = indexedDB.open("stage1-observation-outbox", 1);
+        open.onsuccess = () => resolve(open.result);
+        open.onerror = () => reject(new Error("test queue read failed"));
+      });
+      try {
+        return await new Promise<{
+          next: number;
+          acknowledged: number;
+          clientId: string;
+          items: {
+            id: string;
+            order: number;
+            event: unknown;
+            experimentOrigin: { clientId: string; generation: number };
+          }[];
+        }>((resolve, reject) => {
+          const read = db
+            .transaction("sessions", "readonly")
+            .objectStore("sessions")
+            .get(sessionId);
+          read.onsuccess = () => resolve(read.result);
+          read.onerror = () => reject(new Error("test queue read failed"));
+        });
+      } finally {
+        db.close();
+      }
+    }, sid);
+  const flowSnapshot = () =>
+    page.evaluate(async (sessionId) => {
+      const { apiFetch } = await import("/src/auth-client.ts");
+      const response = await apiFetch(`/api/sessions/${sessionId}/flow`);
+      if (!response.ok) throw new Error("test flow read failed");
+      const flow = await response.json();
+      return JSON.stringify({ session: flow.session, stages: flow.stages });
+    }, sid);
+  for (const testCase of ["empty", "existing-observation"] as const) {
+    assert.equal(await settleDelivery(), true);
+    assert.equal((await queueSnapshot()).items.length, 0);
+    if (testCase === "existing-observation") {
+      // A valid pre-practice observation, never an action from the tutorial.
+      await page.evaluate(async ({sessionId, timestamp}) => {
+        const { apiFetch, getExperimentObservationOrigin } =
+          await import("/src/auth-client.ts");
+        const outbox = await import("/src/observation-outbox.ts");
+        const response = await apiFetch(`/api/sessions/${sessionId}/flow`);
+        if (!response.ok) throw new Error("fixture flow unavailable");
+        const flow = await response.json();
+        const origin = getExperimentObservationOrigin(sessionId);
+        if (!origin) throw new Error("fixture origin unavailable");
+        // getSessionFlow exposes neither currentStage nor nextStage before
+        // Session start. Select its own first pending LESSON from stages.
+        const stage = flow.stages.find((item: {orderIndex:number}) => item.orderIndex === 0);
+        if (flow.session.status !== "NOT_STARTED" || stage?.stageType !== "LESSON" || stage.status !== "PENDING" || !stage.id)
+          throw new Error("fixture first pending lesson unavailable");
+        await outbox.enqueue(
+          sessionId,
+          {
+            schemaVersion: 1,
+            eventType: "SCREEN_ENTER",
+            targetType: "SCREEN",
+            stageId: stage.id,
+            outcome: "SUCCESS",
+            clientTimestamp: timestamp,
+            clientTimeQuality: "OBSERVED",
+          },
+          origin,
+        );
+      }, {sessionId:sid,timestamp:process.env.EXPERIMENT_PRACTICE_OBSERVATION_TIMESTAMP!});
+    }
+    const beforeQueue = await queueSnapshot();
+    const beforeFlow = await flowSnapshot();
+    const deliveryResults: { status: number; saved: boolean }[] = [];
+    const forwardReport = (route: import("playwright").Route) => {
+      const task = (async () => {
+        // Read the real upstream response before forwarding unchanged; avoid
+        // a later CDP Network.getResponseBody lookup for this probe.
+        const response = await route.fetch();
+        const body = await response.json();
+        deliveryResults.push({ status: response.status(), saved: body.reportSaved === true });
+        await route.fulfill({ response });
+      })();
+      practiceRouteTasks.add(task);
+      void task.finally(() => practiceRouteTasks.delete(task)).catch(() => undefined);
+      return task;
+    };
+    const ownReportRoute = `**/api/sessions/${sid}/delivery-status`;
+    await page.route(ownReportRoute, forwardReport);
+    let phase = "before-practice";
+    const mutations: import("playwright").Request[] = [];
+    const observePractice = (request: import("playwright").Request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith("/api/") && request.method() !== "GET")
+        mutations.push(request);
+      if (path === `/api/sessions/${sid}/flow`)
+        documentClientChecks.push(
+          request.headers()["x-experiment-client"] ?? "",
+        );
+      if (path === `/api/sessions/${sid}/delivery-status`)
+        tracePractice(testCase, phase, "delivery-request-start");
+    };
+    page.on("request", observePractice);
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    practiceGates.add(release);
+    let entered = () => {};
+    const held = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const holdIdentity = (route: import("playwright").Route) => {
+      const task = (async () => {
+        tracePractice(testCase, phase, "retry-identity-request-start");
+        entered();
+        await gate;
+        await route.continue();
+      })();
+      practiceRouteTasks.add(task);
+      void task
+        .finally(() => practiceRouteTasks.delete(task))
+        .catch(() => undefined);
+      return task;
+    };
+    await page.route("**/api/me", holdIdentity);
+    if (testCase === "empty") {
+      // The production online handler uses the same retry callback as its
+      // initial effect and 15s interval. Let this chain cross practice entry.
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+      await held;
+    }
+    const accessChecked = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/sessions/${sid}/flow` &&
+        response.status() === 200,
+    );
+    await page.getByRole("button", { name: /練習を開く/ }).click();
+    await page
+      .getByRole("heading", { name: "操作の練習", exact: true })
+      .waitFor();
+    await accessChecked;
+    phase = "practice";
+    tracePractice(testCase, phase, "practice-open");
+    if (testCase === "existing-observation") {
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+      await held;
+    }
+    const delivered = page.waitForResponse((response) => {
+      if (
+        new URL(response.url()).pathname !==
+        `/api/sessions/${sid}/delivery-status`
+      )
+        return false;
+      return (
+        response.request().postDataJSON().pending === 0 &&
+        response.status() === 200
+      );
+    });
+    tracePractice(testCase, phase, "release-identity-response");
+    release();
+    practiceGates.delete(release);
+    await delivered;
+    tracePractice(testCase, phase, "delivery-response-complete");
+    assert.equal(await settleDelivery(), true);
+    await page.unroute("**/api/me", holdIdentity);
+    await page.getByLabel("概念の名前").fill("TEST ONLY practice");
+    await page.getByRole("button", { name: "概念を追加", exact: true }).click();
+    await page.getByLabel("リンクの名前").fill("TEST ONLY practice relation");
+    await page
+      .getByRole("button", { name: "リンクを追加", exact: true })
+      .click();
+    await page.getByRole("link", { name: "練習を終了", exact: true }).click();
+    await page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    phase = "returned";
+    const afterQueue = await queueSnapshot();
+    assert.equal(
+      afterQueue.next,
+      beforeQueue.next,
+      "practice must not enqueue any observation",
+    );
+    assert.equal(
+      afterQueue.items.length,
+      0,
+      "pre-existing observation is ACKed, not discarded",
+    );
+    assert.equal(
+      afterQueue.acknowledged,
+      beforeQueue.acknowledged + beforeQueue.items.length,
+    );
+    assert.equal(
+      afterQueue.clientId === beforeQueue.clientId,
+      true,
+      "stream retained",
+    );
+    assert.equal(
+      (await flowSnapshot()) === beforeFlow,
+      true,
+      "practice leaves Session/Stages unchanged",
+    );
+    page.off("request", observePractice);
+    await Promise.all([...practiceRouteTasks]);
+    await page.unroute(ownReportRoute, forwardReport);
+    assert.ok(deliveryResults.length > 0 && deliveryResults.every(result => result.status === 200 && result.saved), "own Session reports accepted by the real API");
+    const reports = mutations.filter(
+      (r) =>
+        new URL(r.url()).pathname === `/api/sessions/${sid}/delivery-status`,
+    );
+    const observations = mutations.filter(
+      (r) => new URL(r.url()).pathname === `/api/sessions/${sid}/events`,
+    );
+    assert.ok(
+      reports.length > 0,
+      "delivery report actually crosses the monitored practice window",
+    );
+    const reportKeys = [
+      "clientId",
+      "reportSequence",
+      "pending",
+      "retrying",
+      "acknowledged",
+      "capacityLost",
+      "expiredLost",
+      "rejectedLost",
+      "storageLost",
+      "attempts",
+      "lastResponse",
+    ];
+    for (const report of reports) {
+      const body = report.postDataJSON();
+      assert.equal(report.method(), "POST");
+      assert.equal(
+        report.headers()["authorization"] === `Bearer ${token}`,
+        true,
+        "own authenticated Session only",
+      );
+      assert.equal(
+        body.clientId === beforeQueue.clientId,
+        true,
+        "own existing stream only",
+      );
+      assert.equal(
+        Object.keys(body).sort().join() === [...reportKeys].sort().join(),
+        true,
+        "only delivery metadata, no practice content",
+      );
+      for (const key of reportKeys.filter(
+        (k) => !["clientId", "lastResponse"].includes(k),
+      ))
+        assert.ok(Number.isSafeInteger(body[key]) && body[key] >= 0);
+      assert.ok(
+        ["NONE", "ACK", "NETWORK", "RETRYABLE", "REJECTED", "SENDING"].includes(
+          body.lastResponse,
+        ),
+      );
+    }
+    assert.equal(
+      observations.length,
+      beforeQueue.items.length,
+      "only exact pre-practice queued observations may be sent",
+    );
+    for (const request of observations) {
+      const item = beforeQueue.items.find(
+        (i) => i.id === request.headers()["idempotency-key"],
+      );
+      assert.ok(item, "no newly generated practice event");
+      assert.equal(request.method(), "POST");
+      assert.equal(
+        request.headers()["authorization"] === `Bearer ${token}`,
+        true,
+      );
+      assert.equal(
+        request.headers()["x-client-stream-id"] === beforeQueue.clientId,
+        true,
+      );
+      assert.equal(
+        request.headers()["x-client-sequence"] === String(item.order),
+        true,
+      );
+      assert.equal(
+        request.headers()["x-experiment-origin-client"] ===
+          item.experimentOrigin.clientId,
+        true,
+      );
+      assert.equal(
+        request.headers()["x-experiment-origin-generation"] ===
+          String(item.experimentOrigin.generation),
+        true,
+      );
+      assert.equal(
+        JSON.stringify(request.postDataJSON()) === JSON.stringify(item.event),
+        true,
+        "pre-existing content unchanged",
+      );
+    }
+    assert.equal(
+      mutations.length,
+      reports.length + observations.length,
+      "no Map/Stage/claim/other mutation, including other Sessions",
+    );
+    console.log(
+      JSON.stringify({
+        check: "practice-delivery-contract",
+        case: testCase,
+        queuedBefore: beforeQueue.items.length,
+        pendingAfter: afterQueue.items.length,
+        newObservations: afterQueue.next - beforeQueue.next,
+        receivedExisting: afterQueue.acknowledged - beforeQueue.acknowledged,
+        reportRequests: reports.length,
+        eventRequests: observations.length,
+        otherMutations: 0,
+      }),
+    );
+  }
+  assert.equal(
+    await page.evaluate(() => performance.timeOrigin),
+    documentBeforePractice,
+  );
+  assert.ok(
+    documentClientChecks.length > 0 &&
+      documentClientChecks.every(
+        (value) => value.length > 0 && value === documentClientChecks[0],
+      ),
+    "same registered client for access checks; values not reported",
+  );
   await page
     .getByRole("button", { name: "セッションを開始", exact: true })
     .click();
@@ -764,6 +1089,18 @@ try {
     "Experiment learner browser: PASS (real waiting/claim/conflict/start, transport faults separately, P01–P08, offline submit guard, palette mouse/Undo, neutral flow, no survey/feedback during integration)",
   );
 } finally {
+  for (const release of practiceGates) release();
+  await Promise.allSettled([...practiceRouteTasks]);
+  if (process.env.PRACTICE_DELIVERY_DIAGNOSTICS_FILE) {
+    await writeFile(
+      process.env.PRACTICE_DELIVERY_DIAGNOSTICS_FILE,
+      JSON.stringify({ records: practiceTrace, limit: 40 }, null, 2) + "\n",
+    ).catch(() =>
+      console.warn(
+        "practice metadata diagnostic unavailable; primary result retained",
+      ),
+    );
+  }
   releaseDeliveryGate();
   // Complete these route continuations before their browser context closes.
   await Promise.allSettled([...deliveryRouteTasks]);

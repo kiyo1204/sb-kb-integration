@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiFetch, bindExperimentClient } from "./auth-client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  apiFetch,
+  bindExperimentClient,
+  registerExperimentClientOwner,
+  releaseExperimentClientOwner,
+  isExperimentClientOwnerCurrent,
+} from "./auth-client";
 import SessionFlowPage from "./SessionFlowPage";
 import MapPage from "./MapPage";
 import "./experiment-learner.css";
@@ -32,7 +38,18 @@ export default function ExperimentLearnerPage({
     [issue, setIssue] = useState<ExperimentAccessIssue | null>(null),
     [busy, setBusy] = useState(false),
     [clientId, setClientId] = useState("");
-  const connect = useCallback(async (): Promise<ConnectionResult> => {
+  const ownerRef = useRef<ReturnType<
+    typeof registerExperimentClientOwner
+  > | null>(null);
+  const requestRef = useRef(0);
+  const connect = useCallback(async (): Promise<ConnectionResult | null> => {
+    const owner = ownerRef.current;
+    const request = ++requestRef.current;
+    const current = () =>
+      !!owner &&
+      isExperimentClientOwnerCurrent(owner) &&
+      request === requestRef.current;
+    if (!current()) return null;
     const claim = await apiFetch("/api/experiment-client/claim", {
       method: "POST",
       headers: {
@@ -42,13 +59,14 @@ export default function ExperimentLearnerPage({
       body: "{}",
     });
     const c = await claim.json().catch(() => null);
+    if (!current()) return null;
     if (
       !claim.ok ||
       c?.ownership !== "OWNED" ||
       typeof c.clientId !== "string" ||
       !Number.isInteger(c.deviceGeneration)
     ) {
-      bindExperimentClient(null);
+      bindExperimentClient(null, owner!);
       return {
         clientId: typeof c?.clientId === "string" ? c.clientId : "",
         material: null,
@@ -60,12 +78,16 @@ export default function ExperimentLearnerPage({
             : "unavailable",
       };
     }
-    bindExperimentClient({
-      secret,
-      generation: c.deviceGeneration,
-      clientId: c.clientId,
-    });
+    bindExperimentClient(
+      {
+        secret,
+        generation: c.deviceGeneration,
+        clientId: c.clientId,
+      },
+      owner!,
+    );
     const r = await apiFetch("/api/experiment-material");
+    if (!current()) return null;
     if (!r.ok)
       return {
         clientId: c.clientId,
@@ -76,6 +98,7 @@ export default function ExperimentLearnerPage({
         ),
       };
     const d = await r.json();
+    if (!current()) return null;
     if (
       ![d?.sbInstructions, d?.kbInstructions, d?.integrationInstructions].every(
         (v) => typeof v === "string",
@@ -95,25 +118,30 @@ export default function ExperimentLearnerPage({
       },
     };
   }, [secret]);
-  const apply = useCallback((r: ConnectionResult) => {
+  const apply = useCallback((r: ConnectionResult | null) => {
+    if (!r) return;
     setClientId(r.clientId);
     setMaterial(r.material);
     setIssue(r.issue);
   }, []);
   useEffect(() => {
+    const owner = registerExperimentClientOwner(sessionId);
+    ownerRef.current = owner;
     let active = true;
     void connect()
       .then((r) => {
-        if (active) apply(r);
+        if (active && isExperimentClientOwnerCurrent(owner)) apply(r);
       })
       .catch(() => {
-        if (active) setIssue("unavailable");
+        if (active && isExperimentClientOwnerCurrent(owner))
+          setIssue("unavailable");
       });
     return () => {
       active = false;
-      bindExperimentClient(null);
+      releaseExperimentClientOwner(owner);
+      if (ownerRef.current === owner) ownerRef.current = null;
     };
-  }, [connect, apply]);
+  }, [connect, apply, sessionId]);
   const navigate = useCallback((next: string) => {
     history.pushState(null, "", next);
     setPath(next);
@@ -135,7 +163,11 @@ export default function ExperimentLearnerPage({
         }
       }}
     >
-      {flowMode !== "enabled" && <p className="experiment-preview-banner">模擬検証専用です。実研究データを入力しないでください。</p>}
+      {flowMode !== "enabled" && (
+        <p className="experiment-preview-banner">
+          模擬検証専用です。実研究データを入力しないでください。
+        </p>
+      )}
       {issue ? (
         <section
           className="session-card"
@@ -158,14 +190,22 @@ export default function ExperimentLearnerPage({
           <button
             disabled={busy}
             onClick={() => {
+              const owner = ownerRef.current;
+              if (!owner || !isExperimentClientOwnerCurrent(owner)) return;
               setBusy(true);
               void connect()
-                .then(apply)
-                .catch(() => {
-                  setMaterial(null);
-                  setIssue("unavailable");
+                .then((r) => {
+                  if (isExperimentClientOwnerCurrent(owner)) apply(r);
                 })
-                .finally(() => setBusy(false));
+                .catch(() => {
+                  if (isExperimentClientOwnerCurrent(owner)) {
+                    setMaterial(null);
+                    setIssue("unavailable");
+                  }
+                })
+                .finally(() => {
+                  if (isExperimentClientOwnerCurrent(owner)) setBusy(false);
+                });
             }}
           >
             接続状態を更新
