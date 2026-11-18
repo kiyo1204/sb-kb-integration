@@ -43,6 +43,23 @@ async function call(path: string, body?: unknown, method = "POST") {
   assert.ok(r.ok, method + " " + path + " HTTP " + r.status);
   return r.json();
 }
+async function verifyBrowser<T>(fixture: Record<string, string>) {
+  let evidence: T | undefined;
+  const child = spawn(
+    process.execPath,
+    ["--import", "./node_modules/tsx/dist/loader.mjs", "scripts/verify-observation-context-browser.ts"],
+    {
+      cwd: "../frontend",
+      env: { ...process.env, API_BASE_URL: base, ...fixture },
+      stdio: ["ignore", "inherit", "inherit", "ipc"],
+      windowsHide: true,
+    },
+  );
+  child.on("message", (message) => { evidence = message as T; });
+  assert.equal((await once(child, "exit"))[0], 0, "observation browser verification");
+  assert.ok(evidence);
+  return evidence;
+}
 try {
   let ready = false;
   for (let i = 0; i < 150; i++) {
@@ -141,35 +158,9 @@ try {
       generation: claim.deviceGeneration,
     });
   }
-  let evidence:
-    { sessionId: string; keys: string[]; expectedReceipts: number } | undefined;
-  const child = spawn(
-    process.execPath,
-    [
-      "--import",
-      "./node_modules/tsx/dist/loader.mjs",
-      "scripts/verify-observation-context-browser.ts",
-    ],
-    {
-      cwd: "../frontend",
-      env: {
-        ...process.env,
-        API_BASE_URL: base,
-        OBSERVATION_FIXTURES: JSON.stringify(fixtures),
-      },
-      stdio: ["ignore", "inherit", "inherit", "ipc"],
-      windowsHide: true,
-    },
-  );
-  child.on("message", (m) => {
-    evidence = m as typeof evidence;
+  const evidence = await verifyBrowser<{ sessionId: string; keys: string[] }>({
+    OBSERVATION_FIXTURES: JSON.stringify(fixtures),
   });
-  assert.equal(
-    (await once(child, "exit"))[0],
-    0,
-    "captured origin real browser",
-  );
-  assert.ok(evidence);
   const receipt = (
     await pool.query(
       "SELECT count(*)::int n FROM client_event_receipts WHERE session_id=$1 AND event_key=ANY($2::uuid[])",
@@ -241,6 +232,25 @@ try {
     ).rows[0].n,
     0,
   );
+  const observationCount = async () => (await pool.query(
+    "SELECT count(*)::int n FROM research_events WHERE session_id=$1 AND schema_version=1",
+    [a.sessionId],
+  )).rows[0].n;
+  const beforeHold = await observationCount();
+  const hold = await verifyBrowser<{ normal: string; held: string[] }>({
+    OBSERVATION_SWITCHED: JSON.stringify({
+      old: a,
+      current: { ...a, secret: newSecret, clientId: pending.clientId, generation: switched.deviceGeneration },
+    }),
+  });
+  assert.equal(new Set(hold.held).size, 2);
+  assert.ok(!hold.held.includes(hold.normal));
+  const matchingReceipts = (await pool.query(
+    "SELECT event_key FROM client_event_receipts WHERE session_id=$1 AND event_key=ANY($2::uuid[])",
+    [a.sessionId, [hold.normal, ...hold.held]],
+  )).rows.map((row) => row.event_key);
+  assert.deepEqual(matchingReceipts, [hold.normal]);
+  assert.equal(await observationCount(), beforeHold + 1, "only the accepted record added a v1 event");
   await call(`/research/experiment-runs/${run.id}/end`, { confirmed: true });
   const ended = await fetch(base + `/api/sessions/${a.sessionId}/events`, {
     method: "POST",
@@ -250,7 +260,7 @@ try {
   assert.equal(ended.status, 409);
   assert.equal((await ended.json()).error, "experiment_ended");
   console.log(
-    "PASS real DB: exact original keys replay once; receipt/v1 counts 2/2; real generation switch and ended observations remain rejected",
+    "PASS real DB: exact original keys replay once; receipt/v1 counts 2/2; real generation hold adds no event/receipt, valid ACK adds one, and ended observations remain rejected",
   );
 } finally {
   if (server.exitCode === null) {

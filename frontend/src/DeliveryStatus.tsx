@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "./auth-client";
-import { queueStatus } from "./observation-outbox";
+import { queueStatus, QueueUpgradeBlockedError } from "./observation-outbox";
 type Queue = Awaited<ReturnType<typeof queueStatus>>;
 type Report = {
   client_id: string;
@@ -24,21 +24,20 @@ type Delivery = {
   }[];
 };
 export function LearnerDeliveryStatus({ sessionId }: { sessionId: string }) {
-  const [status, setStatus] = useState<Queue | null>(null),
-    [unavailable, setUnavailable] = useState(false);
+  const [snapshot, setSnapshot] = useState<{ sessionId: string; status: Queue | null; upgradeBlocked?: boolean }>();
   useEffect(() => {
     let active = true;
+    let request = 0;
     const update = () => {
-      void queueStatus(sessionId)
-        .then((s) => {
-          if (active) {
-            setStatus(s);
-            setUnavailable(false);
-          }
-        })
-        .catch(() => {
-          if (active) setUnavailable(true);
-        });
+      const current = ++request;
+      void queueStatus(sessionId).then(
+        (status) => {
+          if (active && request === current) setSnapshot({ sessionId, status });
+        },
+        (error: unknown) => {
+          if (active && request === current) setSnapshot({ sessionId, status: null, upgradeBlocked: error instanceof QueueUpgradeBlockedError });
+        },
+      );
     };
     update();
     window.addEventListener("stage1-delivery-change", update);
@@ -49,20 +48,36 @@ export function LearnerDeliveryStatus({ sessionId }: { sessionId: string }) {
       window.removeEventListener("stage1-delivery-change", update);
     };
   }, [sessionId]);
-  if (unavailable)
+  if (snapshot?.sessionId !== sessionId) return null;
+  const { status } = snapshot;
+  if (snapshot.upgradeBlocked)
     return (
       <p role="alert">
-        操作記録をこのブラウザーに保持できません。学習の保存状態とは別です。研究者に知らせてください。
+        旧版のタブが操作記録の記憶領域を使用しています。両方のタブで操作を止め、未保存の入力と送信中の処理を確認してから旧版のタブを閉じ、この画面を再読み込みしてください。ブラウザーのデータは削除しないでください。
       </p>
     );
-  if (!status?.pending && !status?.lost) return null;
+  if (!status)
+    return (
+      <p role="alert">
+        操作記録の記憶領域を利用できません。保持済みの件数と保存状態は不明です。操作を止め、ブラウザーのデータを保持して研究者に知らせてください。
+      </p>
+    );
+  if (!status.pending && !status.lost && !status.capacityRefused && !status.storageIssue) return null;
   return (
     <p role="status">
-      操作記録：送信待ち {status?.pending ?? 0}件（再送待ち{" "}
-      {status?.retrying ?? 0}件）。
-      {status?.lost
-        ? `復旧できない記録 ${status.lost}件があります。研究者に知らせてください。`
-        : "接続の回復後に再送します。"}{" "}
+      {status.held ? (
+        <>操作記録：先頭1件は旧世代のため送信保留中です。後続 {status.blockedBehindHead}件も順序を守るため送信できません。ブラウザーのデータを保持して研究者に知らせてください。</>
+      ) : (
+        <>操作記録：送信待ち {status.pending}件（再送待ち {status.retrying}件）。</>
+      )}{" "}
+      {!status.held && status.pending > 0 && "接続状況を確認し、順に再送します。"}{" "}
+      {status.retentionReview && "保管目安の7日を過ぎた未確認記録も保持しています。"}{" "}
+      {status.capacityRefused > 0 && <>容量上限のため、新たな操作記録 {status.capacityRefused}件を保持できませんでした。</>}{" "}
+      {status.storageRefused > 0 && <>このタブで新たな操作記録 {status.storageRefused}件を保持できませんでした。</>}{" "}
+      {status.storageIssue && !status.storageRefused && "操作記録の状態を記憶領域に保存できませんでした。"}{" "}
+      {status.lost > 0 && <>復旧できない記録 {status.lost}件があります。</>}{" "}
+      {!status.held && (status.capacityRefused > 0 || status.storageIssue || status.lost > 0) &&
+        "ブラウザーのデータを保持して研究者に知らせてください。"}{" "}
       回答・マップの保存状態は各画面で確認してください。
     </p>
   );

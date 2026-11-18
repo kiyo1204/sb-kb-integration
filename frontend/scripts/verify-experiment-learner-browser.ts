@@ -211,7 +211,7 @@ try {
   const queueSnapshot = () =>
     page.evaluate(async (sessionId) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const open = indexedDB.open("stage1-observation-outbox", 1);
+        const open = indexedDB.open("stage1-observation-outbox");
         open.onsuccess = () => resolve(open.result);
         open.onerror = () => reject(new Error("test queue read failed"));
       });

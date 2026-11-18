@@ -23,6 +23,8 @@ type State = {
   rejectedLost: number;
   storageLost: number;
   items: Item[];
+  heldHeadId?: string;
+  capacityRefused?: number;
 };
 export const limits = {
   count: 500,
@@ -32,20 +34,61 @@ export const limits = {
 };
 const storageLoss = new Map<
   string,
-  { clientId: string; count: number; sequence: number }
+  { clientId: string; count: number; sequence: number; sessionLimitCount?: number }
 >();
+class QueueCapacityError extends Error {}
+export class QueueUpgradeBlockedError extends Error {}
 let database: Promise<IDBDatabase> | undefined;
 function db() {
   return (database ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const r = indexedDB.open("stage1-observation-outbox", 1);
-    r.onupgradeneeded = () =>
-      r.result.createObjectStore("sessions", { keyPath: "sessionId" });
-    r.onsuccess = () => resolve(r.result);
-    r.onerror = () => {
+    const request = indexedDB.open("stage1-observation-outbox", 2);
+    let blocked = false;
+    request.onblocked = () => {
+      blocked = true;
+      reject(new QueueUpgradeBlockedError("storage_upgrade_blocked"));
+    };
+    request.onupgradeneeded = (event) => {
+      const transaction = request.transaction!;
+      if (blocked) {
+        transaction.abort();
+      } else if (event.oldVersion === 0) {
+        request.result.createObjectStore("sessions", { keyPath: "sessionId" });
+      } else if (!request.result.objectStoreNames.contains("sessions") ||
+        transaction.objectStore("sessions").keyPath !== "sessionId") {
+        transaction.abort();
+      }
+      // Existing rows retain their full contents. Hold metadata is written only on a matching 409.
+    };
+    request.onsuccess = () => {
+      const connection = request.result;
+      connection.onversionchange = connection.onclose = () => {
+        connection.close();
+        database = undefined;
+        window.dispatchEvent(new Event("stage1-delivery-change"));
+      };
+      resolve(connection);
+    };
+    request.onerror = () => {
       database = undefined;
       reject(new Error("storage_unavailable"));
     };
   }));
+}
+async function readState(sessionId: string): Promise<State | undefined> {
+  const connection = await db();
+  return new Promise((resolve, reject) => {
+    const request = connection.transaction("sessions", "readonly").objectStore("sessions").get(sessionId);
+    request.onsuccess = () => {
+      try {
+        const state: State | undefined = request.result;
+        if (state !== undefined && !validState(state, sessionId)) throw new Error();
+        resolve(state);
+      } catch {
+        reject(new Error("storage_unavailable"));
+      }
+    };
+    request.onerror = () => reject(new Error("storage_unavailable"));
+  });
 }
 async function changeStateInner<T>(
   sessionId: string,
@@ -57,6 +100,7 @@ async function changeStateInner<T>(
       store = tx.objectStore("sessions"),
       r = store.get(sessionId);
     let value: T;
+    let atSessionLimit = false;
     r.onsuccess = () => {
       const apply = () => {
         const s: State = r.result ?? {
@@ -85,13 +129,17 @@ async function changeStateInner<T>(
       else {
         const count = store.count();
         count.onsuccess = () => {
-          if (count.result >= limits.sessions) tx.abort();
-          else apply();
+          if (count.result >= limits.sessions) {
+            atSessionLimit = true;
+            tx.abort();
+          } else apply();
         };
       }
     };
     tx.oncomplete = () => resolve(value);
-    tx.onerror = tx.onabort = () => reject(new Error("storage_unavailable"));
+    tx.onabort = () => reject(atSessionLimit
+      ? new QueueCapacityError("observation_capacity")
+      : new Error("storage_unavailable"));
   });
 }
 const uuid = (x: unknown): x is string =>
@@ -118,6 +166,8 @@ function validState(value: State, sessionId: string) {
           "clientId",
           "lastResponse",
           "items",
+          "heldHeadId",
+          "capacityRefused",
           ...counters,
         ].includes(k),
     ) ||
@@ -125,6 +175,8 @@ function validState(value: State, sessionId: string) {
     !uuid(value.clientId) ||
     !Array.isArray(value.items) ||
     value.items.length > 500 ||
+    (value.heldHeadId !== undefined && (!uuid(value.heldHeadId) || value.heldHeadId !== value.items[0]?.id)) ||
+    (value.capacityRefused !== undefined && (!Number.isSafeInteger(value.capacityRefused) || value.capacityRefused < 0)) ||
     !counters.every((k) => Number.isSafeInteger(value[k]) && value[k] >= 0) ||
     value.next < 1 ||
     !["NONE", "ACK", "NETWORK", "RETRYABLE", "REJECTED"].includes(
@@ -169,14 +221,15 @@ export async function changeState<T>(
 ): Promise<T> {
   try {
     return await changeStateInner(sessionId, fn);
-  } catch {
+  } catch (error) {
+    if (error instanceof QueueCapacityError) throw error;
     if (!storageLoss.has(sessionId))
       storageLoss.set(sessionId, {
         clientId: newClientId(),
         count: 0,
         sequence: 0,
       });
-    throw new Error("storage_unavailable");
+    throw new Error("storage_unavailable", { cause: error });
   }
 }
 export function allowedObservation(e: Record<string, unknown>) {
@@ -269,48 +322,64 @@ export async function enqueue(
     !allowedObservation(event)
   )
     throw new Error("invalid_observation");
+  let id: string | undefined;
   try {
-    return await changeState(sessionId, (s) => {
-      const now = Date.now();
-      const old = s.items.length;
-      s.items = s.items.filter((x) => now - x.created < limits.ageMs);
-      s.expiredLost += old - s.items.length;
+    id = await changeState(sessionId, (s) => {
       const item: Item = {
         id: newClientId(),
-        order: s.next++,
+        order: s.next,
         event,
-        created: now,
+        created: Date.now(),
         attempts: 0,
         last: "UNSENT",
+        ...(origin ? { experimentOrigin: origin } : {}),
       };
-      if(origin)item.experimentOrigin=origin;
-      s.items.push(item);
-      while (
-        s.items.length > limits.count ||
-        new TextEncoder().encode(JSON.stringify(s.items)).length > limits.bytes
-      ) {
-        s.items.shift();
-        s.capacityLost++;
+      // Refusing the new item keeps the existing queue and its next sequence intact.
+      if (s.items.length >= limits.count ||
+        new TextEncoder().encode(JSON.stringify([...s.items, item])).length > limits.bytes) {
+        s.capacityRefused = (s.capacityRefused ?? 0) + 1;
+        return undefined;
       }
+      s.items.push(item);
+      s.next++;
       return item.id;
     });
-  } catch {
-    recordObservationFailure(sessionId);
-    throw new Error("storage_unavailable");
+  } catch (error) {
+    recordObservationFailure(sessionId, error instanceof QueueCapacityError);
+    throw error;
   }
+  window.dispatchEvent(new Event("stage1-delivery-change"));
+  if (!id) throw new QueueCapacityError("observation_capacity");
+  return id;
 }
 // Existing capture-failure reporting, without persisting credentials or inventing an event.
-export function recordObservationFailure(sessionId:string){
+export function recordObservationFailure(sessionId: string, sessionLimit = false) {
     const loss = storageLoss.get(sessionId) ?? {
       clientId: newClientId(),
       count: 0,
       sequence: 0,
     };
     loss.count++;
+    if (sessionLimit) loss.sessionLimitCount = (loss.sessionLimitCount ?? 0) + 1;
     storageLoss.set(sessionId, loss);
     window.dispatchEvent(new Event("stage1-delivery-change"));
 }
 type Sender = (path: string, init: RequestInit) => Promise<Response>;
+type HoldCandidate = { clientId: string; itemId: string };
+// If the marker cannot be committed, keep the observed rejection in this tab.
+const pendingHolds = new Map<string, HoldCandidate>();
+function matchesHead(s: State | undefined, candidate: HoldCandidate) {
+  return s?.clientId === candidate.clientId && s.items[0]?.id === candidate.itemId;
+}
+async function persistHold(sessionId: string, candidate: HoldCandidate) {
+  await changeState(sessionId, (s) => {
+    if (matchesHead(s, candidate)) {
+      s.heldHeadId = candidate.itemId;
+      s.lastResponse = "REJECTED";
+    }
+  });
+  pendingHolds.delete(sessionId);
+}
 const running = new Map<string, Promise<boolean>>();
 export async function flush(sessionId: string, send: Sender): Promise<boolean> {
   if (running.has(sessionId)) return running.get(sessionId)!;
@@ -328,24 +397,28 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
       if (!me.ok) return false;
       const identity=await me.json();
       if(identity.sessionId!==sessionId || identity.runState==="ENDED")return false;
+      const pendingHold = pendingHolds.get(sessionId);
+      if (pendingHold) await persistHold(sessionId, pendingHold);
       let failed = false,
         announced = false;
       for (;;) {
         const next = await changeState(sessionId, (s) => {
-          const old = s.items.length;
-          s.items = s.items.filter(
-            (x) => Date.now() - x.created < limits.ageMs,
-          );
-          s.expiredLost += old - s.items.length;
-          const item = s.items[0];
+          const item = s.heldHeadId ? undefined : s.items[0];
           if (item) {
             item.attempts++;
             item.last = "RETRYING";
             s.attempts++;
           }
-          return { item, clientId: s.clientId };
+          return { item, held: !!s.heldHeadId, clientId: s.clientId };
         });
+        if (next.held) {
+          failed = true;
+          break;
+        }
         if (!next.item) break;
+        const sentItem = next.item;
+        const candidate = { clientId: next.clientId, itemId: sentItem.id };
+        const stillAtHead = (s: State | undefined) => matchesHead(s, candidate) && !s?.heldHeadId;
         if (!announced) {
           announced = true;
           const sending = await changeState(sessionId, (s) => ({
@@ -356,7 +429,7 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
             pending: s.items.length,
             retrying: s.items.filter((x) => x.attempts > 0).length,
             acknowledged: s.acknowledged,
-            capacityLost: s.capacityLost,
+            capacityLost: s.capacityLost + (s.capacityRefused ?? 0),
             expiredLost: s.expiredLost,
             rejectedLost: s.rejectedLost,
             storageLost: s.storageLost,
@@ -368,6 +441,7 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
             body: JSON.stringify(sending),
           }).catch(() => undefined);
         }
+        if (!stillAtHead(await readState(sessionId))) continue;
         let response: Response;
         try {
           response = await send("/api/sessions/" + sessionId + "/events", {
@@ -375,26 +449,32 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
             signal: AbortSignal.timeout(10000),
             headers: {
               "Content-Type": "application/json",
-              "Idempotency-Key": next.item.id,
+              "Idempotency-Key": sentItem.id,
               "X-Client-Stream-Id": next.clientId,
-              "X-Client-Sequence": String(next.item.order),
-              ...(next.item.experimentOrigin ? {"X-Experiment-Origin-Client":next.item.experimentOrigin.clientId,"X-Experiment-Origin-Generation":String(next.item.experimentOrigin.generation)} : {}),
+              "X-Client-Sequence": String(sentItem.order),
+              ...(sentItem.experimentOrigin ? {"X-Experiment-Origin-Client":sentItem.experimentOrigin.clientId,"X-Experiment-Origin-Generation":String(sentItem.experimentOrigin.generation)} : {}),
             },
-            body: JSON.stringify(next.item.event),
+            body: JSON.stringify(sentItem.event),
           });
         } catch {
           await changeState(sessionId, (s) => {
-            const item = s.items.find((i) => i.id === next.item!.id);
-            if (item) item.last = "UNKNOWN";
-            s.lastResponse = "NETWORK";
+            if (stillAtHead(s)) {
+              s.items[0].last = "UNKNOWN";
+              s.lastResponse = "NETWORK";
+            }
           });
           failed = true;
           break;
         }
         const payload = await response.json().catch(() => null);
-        // Keep stale-origin observations for the separately undecided recovery policy.
-        // Never silently relabel them with a replacement device generation.
-        if(payload?.error==="experiment_origin_stale" || payload?.error==="experiment_ended")return false;
+        if (response.status === 409 && payload?.error === "experiment_origin_stale") {
+          pendingHolds.set(sessionId, candidate);
+          await persistHold(sessionId, candidate);
+          window.dispatchEvent(new Event("stage1-delivery-change"));
+          failed = true;
+          break;
+        }
+        if (payload?.error === "experiment_ended") return false;
         if(response.status===410 && payload?.error === "research_data_deleted") {
           if(typeof payload.queueKey === "string") await discardDeletedQueue(payload.queueKey,send);
           return false;
@@ -406,25 +486,26 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
           typeof payload.sequenceNumber === "string"
         ) {
           await changeState(sessionId, (s) => {
-            if (s.items.some((i) => i.id === next.item!.id)) {
-              s.items = s.items.filter((i) => i.id !== next.item!.id);
+            if (stillAtHead(s)) {
+              s.items.shift();
               s.acknowledged++;
+              s.lastResponse = "ACK";
             }
-            s.lastResponse = "ACK";
           });
         } else if ([400, 403, 404, 409, 410, 422].includes(response.status)) {
           await changeState(sessionId, (s) => {
-            if (s.items.some((i) => i.id === next.item!.id)) {
-              s.items = s.items.filter((i) => i.id !== next.item!.id);
+            if (stillAtHead(s)) {
+              s.items.shift();
               s.rejectedLost++;
+              s.lastResponse = "REJECTED";
             }
-            s.lastResponse = "REJECTED";
           });
         } else {
           await changeState(sessionId, (s) => {
-            const item = s.items.find((i) => i.id === next.item!.id);
-            if (item) item.last = "UNKNOWN";
-            s.lastResponse = "RETRYABLE";
+            if (stillAtHead(s)) {
+              s.items[0].last = "UNKNOWN";
+              s.lastResponse = "RETRYABLE";
+            }
           });
           failed = true;
           break;
@@ -439,7 +520,7 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
         pending: s.items.length,
         retrying: s.items.filter((x) => x.attempts > 0).length,
         acknowledged: s.acknowledged,
-        capacityLost: s.capacityLost,
+        capacityLost: s.capacityLost + (s.capacityRefused ?? 0),
         expiredLost: s.expiredLost,
         rejectedLost: s.rejectedLost,
         storageLost: s.storageLost,
@@ -453,6 +534,7 @@ export async function flush(sessionId: string, send: Sender): Promise<boolean> {
       window.dispatchEvent(new Event("stage1-delivery-change"));
       return !failed;
     } catch {
+      window.dispatchEvent(new Event("stage1-delivery-change"));
       await reportStorageLoss(sessionId, send).catch(() => undefined);
       return false;
     }
@@ -484,13 +566,24 @@ async function reportStorageLoss(sessionId: string, send: Sender) {
   });
 }
 export async function queueStatus(sessionId: string) {
-  if (storageLoss.has(sessionId)) throw new Error("storage_unavailable");
-  return changeState(sessionId, (s) => ({
-    pending: s.items.length,
-    retrying: s.items.filter((i) => i.attempts > 0).length,
-    lost: s.capacityLost + s.expiredLost + s.rejectedLost + s.storageLost,
-    acknowledged: s.acknowledged,
-  }));
+  const s = await readState(sessionId);
+  const pending = s?.items.length ?? 0;
+  const pendingHold = pendingHolds.get(sessionId);
+  const held = !!s?.heldHeadId || (!!pendingHold && matchesHead(s, pendingHold));
+  const loss = storageLoss.get(sessionId);
+  const sessionLimitCount = loss?.sessionLimitCount ?? 0;
+  return {
+    pending,
+    held,
+    blockedBehindHead: held ? pending - 1 : 0,
+    retrying: held ? 0 : (s?.items.filter((i) => i.attempts > 0).length ?? 0),
+    lost: s ? s.capacityLost + s.expiredLost + s.rejectedLost + s.storageLost : 0,
+    acknowledged: s?.acknowledged ?? 0,
+    capacityRefused: (s?.capacityRefused ?? 0) + sessionLimitCount,
+    storageRefused: (loss?.count ?? 0) - sessionLimitCount,
+    storageIssue: !!loss && (loss.count === 0 || loss.count > sessionLimitCount || !!pendingHold),
+    retentionReview: s?.items.some((item) => Date.now() - item.created >= limits.ageMs) ?? false,
+  };
 }
 
 export async function discardDeletedQueue(queueKey:string,send:Sender) {
@@ -498,7 +591,7 @@ export async function discardDeletedQueue(queueKey:string,send:Sender) {
  const database=await db();
  const states=await new Promise<State[]>((resolve,reject)=>{const r=database.transaction("sessions","readonly").objectStore("sessions").getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(new Error("queue_unavailable"));});
  for(const state of states){const hash=requestDigest(state.sessionId);if(hash!==queueKey)continue;
- await new Promise<void>((resolve,reject)=>{const tx=database.transaction("sessions","readwrite");tx.objectStore("sessions").delete(state.sessionId);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(new Error("queue_delete_failed"));});storageLoss.delete(state.sessionId);
+ await new Promise<void>((resolve,reject)=>{const tx=database.transaction("sessions","readwrite");tx.objectStore("sessions").delete(state.sessionId);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(new Error("queue_delete_failed"));});storageLoss.delete(state.sessionId);pendingHolds.delete(state.sessionId);
  await send("/api/deletion-ack",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({clientId:state.clientId})});
  }
 }
