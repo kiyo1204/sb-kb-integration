@@ -19,6 +19,7 @@
     "test:research-log-ui": "tsx scripts/verify-research-log-ui.ts",
     "test:link-position-browser": "tsx scripts/verify-link-position-browser.ts",
     "test:link-line-alignment-browser": "tsx scripts/verify-link-line-alignment-browser.ts",
+    "test:link-reconnection-browser": "tsx scripts/verify-link-reconnection-browser.ts",
     "test:link-direction-browser": "tsx scripts/verify-link-direction-browser.ts",
     "test:link-direction-real-browser": "tsx scripts/verify-link-direction-real-browser.ts",
     "test:session-flow-survey-browser": "tsx scripts/verify-session-flow-survey-browser.ts",

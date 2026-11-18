@@ -280,6 +280,74 @@ try {
     "full navigation discards unsaved temporary state",
   );
   assert.equal(mutations.length, 2);
+  const fullMap = await page.request.get(base + `/api/maps/${mapId}`, { headers: learnerHeaders });
+  const originalMap = await fullMap.json();
+  if (originalMap.type === "PRIOR") {
+    const original = originalMap.links.find((l: { id: string }) => l.id === link.id);
+    await page.locator(saved + " .link-connector-label").dblclick();
+    await page.getByRole("region", { name: "保存済みリンクの接続編集" }).waitFor();
+    assert.equal(mutations.length, 2);
+    assert.deepEqual(await snapshot(), [ { id: link.id, source: a, target: c, label: link.label }, ...before.filter((l: {id:string})=>l.id!==link.id) ]);
+    await drag(saved + " .is-source", b); await page.mouse.up();
+    assert.equal(mutations.length, 2);
+    assert.equal((await snapshot()).find((l: {id:string})=>l.id===link.id).source, a);
+    const patched = page.waitForResponse(r => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/links/${link.id}/reconnect`);
+    await drag(saved + " .is-target", c); await page.mouse.up();
+    const patchedResponse=await patched;
+    assert.deepEqual(patchedResponse.request().postDataJSON().expectedConnection,{sourceConceptId:a,targetConceptId:c});
+    assert.equal(patchedResponse.status(), 200);
+    await page.locator(".is-reconnecting").waitFor({ state: "detached" });
+    const current = await (await page.request.get(base + `/api/maps/${mapId}`, { headers: learnerHeaders })).json();
+    const after = current.links.find((l: { id: string }) => l.id === link.id);
+    for (const key of ["id", "mapId", "label", "labelPositionX", "labelPositionY", "kitLinkItemId", "provenance"]) assert.deepEqual(after[key], original[key]);
+    assert.equal(after.sourceConceptId, b); assert.equal(after.targetConceptId, c);
+    assert.equal(mutations.length, 3);
+    const undo = page.waitForResponse(r => r.request().method() === "POST" && r.url().endsWith("/undo-redo"));
+    await page.getByRole("button", { name: "元に戻す", exact: true }).click(); assert.equal((await undo).status(), 200);
+    await page.locator(saved).waitFor();
+    assert.equal((await snapshot()).find((l: { id: string }) => l.id === link.id).source, a);
+    const redo = page.waitForResponse(r => r.request().method() === "POST" && r.url().endsWith("/undo-redo"));
+    await page.getByRole("button", { name: "やり直す", exact: true }).click(); assert.equal((await redo).status(), 200);
+    await enter(); await page.locator(saved).waitFor();
+    assert.equal((await snapshot()).find((l: { id: string }) => l.id === link.id).source, b);
+    // Keep GET real; send a competing legitimate request just before the UI PATCH.
+    await page.locator(saved+" .link-connector-label").dblclick();
+    await page.getByRole("region",{name:"保存済みリンクの接続編集"}).waitFor();
+    await page.route(`**/api/links/${link.id}/reconnect`,async route=>{
+      assert.deepEqual(route.request().postDataJSON().expectedConnection,{sourceConceptId:b,targetConceptId:c});
+      const competing=await page.request.patch(base+`/api/links/${link.id}/reconnect`,{
+        headers:{...learnerHeaders,"Idempotency-Key":crypto.randomUUID()},
+        data:{sourceConceptId:a,targetConceptId:c,clientTimestamp:new Date().toISOString()},
+      });
+      assert.equal(competing.status(),200);
+      await route.continue();
+    },{times:1});
+    await drag(saved+" .is-source",a);await page.mouse.up();
+    const conflictReply=page.waitForResponse(r=>r.request().method()==="PATCH"&&new URL(r.url()).pathname===`/api/links/${link.id}/reconnect`);
+    await drag(saved+" .is-target",b);await page.mouse.up();
+    const conflictResponse=await conflictReply;assert.equal(conflictResponse.status(),409);
+    assert.equal((await conflictResponse.json()).error,"link_connection_conflict");
+    const pending=page.getByRole("region",{name:"保存済みリンクの接続編集"});
+    await pending.getByRole("alert").waitFor();assert.match(await pending.innerText(),/接続編集中・未保存/);
+    assert.equal(await page.getByRole("button",{name:"接続の保存を再試行",exact:true}).count(),0);
+    assert.equal((await snapshot()).find((l:{id:string})=>l.id===link.id).source,a);
+    await page.getByRole("button",{name:"接続編集を取消",exact:true}).click();
+    await page.locator(".is-reconnecting").waitFor({state:"detached"});
+    assert.equal((await snapshot()).find((l:{id:string})=>l.id===link.id).source,a);
+    // Only an explicit fresh edit captures the newly saved connection.
+    await page.locator(saved+" .link-connector-label").dblclick();
+    await pending.waitFor();await drag(saved+" .is-source",b);await page.mouse.up();
+    const fresh=page.waitForResponse(r=>r.request().method()==="PATCH"&&r.url().endsWith("/reconnect"));
+    await drag(saved+" .is-target",c);await page.mouse.up();assert.equal((await fresh).status(),200);
+    await page.locator(".is-reconnecting").waitFor({state:"detached"});
+    await enter();await page.locator(saved).waitFor();assert.equal((await snapshot()).find((l:{id:string})=>l.id===link.id).source,b);
+    console.log("PASS real API conflict: same-screen concurrent update, conditional 409, retained unsaved draft, no retry, explicit cancel refresh and fresh edit/reload");
+    console.log("PASS real SB saved-link draft: zero writes before completion, same ID and metadata, direction/reload, Undo/Redo");
+  } else {
+    await page.locator(saved + " .link-connector-label").dblclick();
+    assert.equal(await page.locator(".is-reconnecting").count(), 0);
+    assert.equal(await page.getByRole("button", { name: "接続を編集", exact: true }).count(), 0);
+  }
   console.log(
     "PASS real learner Map browser: pending retention and completed links through node create, reload, reconnect; navigation clears temporary state; create/reload, reconnect/reload, Esc then pointerup unchanged, separate cancellation telemetry",
   );

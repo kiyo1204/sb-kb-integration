@@ -182,3 +182,12 @@
 .is-experiment .kit-feedback-summary[hidden] { display: none; }
 .is-experiment .experiment-state-guidance p { margin: 0; }
 .is-experiment .experiment-submission-note { font-size: 12px; margin-top: 4px; }
+
+/* Keep the SB link under the pointer when immediate selection opens its panel. */
+.map-editor-workspace.is-sb-link-selection.has-drawer {
+  grid-template-columns: minmax(0, 1fr);
+}
+.map-editor-workspace.is-sb-link-selection > .map-editor-drawer {
+  grid-column: 1;
+  grid-row: 2;
+}

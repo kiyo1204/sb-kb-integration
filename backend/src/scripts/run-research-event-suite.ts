@@ -166,6 +166,8 @@ try {
   await stop();
   await run("test:experiment-learner");
   await run("test:experiment-enablement");
+  await run("test:link-expected-connection");
+  if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:link-reconnection-browser", true);
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:link-direction-api");
   await run("test:experiment-research");
   await run("test:r05-storage");
