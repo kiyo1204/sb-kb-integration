@@ -51,6 +51,8 @@ export function parse(args: string[]) {
       "migrate",
       "seed",
       "check",
+      "verify-v3-stream",
+      "verify-v3-lease",
       "safety",
       "suite",
       "scale",
@@ -277,6 +279,8 @@ function child(script: string, url: string, password: string) {
     migrate: "db:migrate",
     seed: "db:seed:dev",
     check: "test:mock-reset-new-stream",
+    "verify-v3-stream": "test:observation-stream-v3-api",
+    "verify-v3-lease": "test:observation-stream-v3-lease",
     safety: "test:mock-reset-safety",
     suite: "test:research-event-suite",
     scale: "test:event-scale",
@@ -329,7 +333,7 @@ export async function main(args: string[]) {
   let released = false;
   try {
     await guard(c, manifest);
-    if (["migrate", "seed", "check", "safety", "suite", "scale", "serve"].includes(action)) {
+    if (["migrate", "seed", "check", "verify-v3-stream", "verify-v3-lease", "safety", "suite", "scale", "serve"].includes(action)) {
       c.release();
       released = true;
       await pool.end();
