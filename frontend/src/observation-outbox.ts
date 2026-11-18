@@ -595,3 +595,5 @@ export async function discardDeletedQueue(queueKey:string,send:Sender) {
  await send("/api/deletion-ack",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({clientId:state.clientId})});
  }
 }
+
+export { validState as isLegacyObservationQueue, type State as LegacyObservationQueue };
