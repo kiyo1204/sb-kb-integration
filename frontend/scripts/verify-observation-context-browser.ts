@@ -2,10 +2,13 @@
 import assert from "node:assert/strict";
 import { chromium, type Page } from "playwright";
 import { createServer } from "vite";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 const real = process.env.OBSERVATION_FIXTURES
   ? JSON.parse(process.env.OBSERVATION_FIXTURES)
   : null;
+const switched = process.env.OBSERVATION_SWITCHED ? JSON.parse(process.env.OBSERVATION_SWITCHED) : null;
 const vite = await createServer({
   cacheDir: resolve("../.local/origin-context/vite"),
   plugins: [
@@ -23,7 +26,7 @@ const vite = await createServer({
   server: {
     host: "127.0.0.1",
     port: 0,
-    ...(real
+    ...(real || switched
       ? {
           proxy: {
             "/api": { target: process.env.API_BASE_URL!, changeOrigin: true },
@@ -33,7 +36,7 @@ const vite = await createServer({
   },
 });
 await vite.listen();
-const browser = await chromium.launch({
+const browser = switched ? null : await chromium.launch({
   channel: process.env.BROWSER_CHANNEL ?? "msedge",
   headless: true,
 });
@@ -111,8 +114,108 @@ async function send(page: Page, sid: string, contextName?: string) {
     },
   );
 }
-try {
-  const page = await browser.newPage();
+async function verifySwitchedHold() {
+  const profile = await mkdtemp(join(tmpdir(), "sbkb-real-origin-hold-"));
+  const open = () => chromium.launchPersistentContext(profile, {
+    channel: process.env.BROWSER_CHANNEL ?? "msedge", headless: true,
+  });
+  let context: Awaited<ReturnType<typeof open>> | undefined;
+  const { old, current } = switched;
+  const sid: string = current.sessionId;
+  let eventRequests = 0;
+  async function prepare(page: Page) {
+    await page.addInitScript("globalThis.__name = fn => fn");
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/sessions/" + sid + "/events")
+        eventRequests++;
+    });
+    await modules(page);
+    await bind(page, current);
+    await page.evaluate(async (sessionId) => {
+      const w = window as any;
+      const path = "/src/DeliveryStatus.tsx";
+      const { LearnerDeliveryStatus } = await import(path);
+      const target = document.createElement("div");
+      target.id = "hold-real-status";
+      document.body.append(target);
+      w.mods.dom.createRoot(target).render(w.mods.react.createElement(LearnerDeliveryStatus, { sessionId }));
+    }, sid);
+  }
+  const flushReal = (page: Page) => page.evaluate((sessionId) => {
+    const { auth, outbox } = (window as any).mods;
+    return outbox.flush(sessionId, auth.apiFetch);
+  }, sid);
+  try {
+    context = await open();
+    let page = await context.newPage();
+    await prepare(page);
+    const queue = await page.evaluate(async (current) => {
+      const { outbox } = (window as any).mods;
+      const event = {
+        schemaVersion: 1, eventType: "SCREEN_ENTER", targetType: "SCREEN", stageId: current.stageId,
+        outcome: "SUCCESS", clientTimeQuality: "OBSERVED", clientTimestamp: new Date().toISOString(),
+      };
+      const enqueue = (source: { clientId: string; generation: number }) =>
+        outbox.enqueue(current.sessionId, event, { clientId: source.clientId, generation: source.generation });
+      return { event, normal: await enqueue(current) };
+    }, current);
+    const normalResponse = page.waitForResponse((r) => r.request().headers()["idempotency-key"] === queue.normal);
+    assert.equal(await flushReal(page), true);
+    const accepted = await normalResponse;
+    assert.equal(accepted.status(), 201);
+    assert.equal((await accepted.json()).logSaved, true);
+    const normal = await read(page, sid);
+    assert.equal(normal.items.length, 0);
+    assert.equal(normal.acknowledged, 1);
+    await page.evaluate(async ({ old, current, event }) => {
+      const { outbox } = (window as any).mods;
+      for (const source of [old, current])
+        await outbox.enqueue(current.sessionId, event, { clientId: source.clientId, generation: source.generation });
+    }, { old, current, event: queue.event });
+    const before = await read(page, sid);
+    assert.deepEqual(before.items.map((i: any) => i.experimentOrigin.generation), [old.generation, current.generation]);
+    const staleResponse = page.waitForResponse((r) => r.request().headers()["idempotency-key"] === before.items[0].id);
+    assert.equal(await flushReal(page), false);
+    const rejected = await staleResponse;
+    assert.equal(rejected.status(), 409);
+    assert.equal((await rejected.json()).error, "experiment_origin_stale");
+    const held = await read(page, sid);
+    const stableItems = (row: any) => row.items.map((i: any) => ({
+      id: i.id, origin: i.experimentOrigin, order: i.order, event: i.event, created: i.created,
+    }));
+    assert.deepEqual(stableItems(held), stableItems(before));
+    assert.equal(held.heldHeadId, before.items[0].id);
+    assert.equal(held.items[1].attempts, 0);
+    assert.equal(held.clientId, before.clientId);
+    assert.equal(held.acknowledged, normal.acknowledged);
+    assert.equal(held.rejectedLost, 0);
+    const visibleHold = (page: Page) => page.locator("#hold-real-status").getByText(/先頭1件は旧世代.*後続 1件/).waitFor();
+    await visibleHold(page);
+    assert.equal(await flushReal(page), false);
+    await context.close();
+    context = await open();
+    page = await context.newPage();
+    await prepare(page);
+    await visibleHold(page);
+    assert.equal(await flushReal(page), false);
+    const restarted = await read(page, sid);
+    assert.deepEqual(stableItems(restarted), stableItems(before));
+    assert.equal(restarted.clientId, before.clientId);
+    assert.equal(restarted.next, before.next);
+    assert.equal(restarted.heldHeadId, held.heldHeadId);
+    assert.equal(restarted.acknowledged, 1);
+    assert.equal(eventRequests, 2, "only the accepted item and rejected head were sent");
+    process.send?.({ normal: queue.normal, held: held.items.map((i: any) => i.id) });
+    console.log("PASS real browser: 201 ACK, genuine origin 409, FIFO, persisted hold after browser restart");
+  } finally {
+    await context?.close();
+    assert.ok(resolve(profile).startsWith(join(resolve(tmpdir()), "sbkb-real-origin-hold-")));
+    await rm(profile, { recursive: true, force: true });
+  }
+}
+
+async function verifyOriginalContext() {
+  const page = await browser!.newPage();
   await page.addInitScript("globalThis.__name = fn => fn");
   if (real) {
     let delayed = false,
@@ -463,12 +566,8 @@ try {
     assert.equal(missing, false);
     assert.equal(
       await page.evaluate(async (sid) => {
-        try {
-          await (window as any).mods.outbox.queueStatus(sid);
-          return false;
-        } catch {
-          return true;
-        }
+        const status = await (window as any).mods.outbox.queueStatus(sid);
+        return status.storageRefused > 0;
       }, B),
       true,
     );
@@ -579,9 +678,13 @@ try {
       "PASS synthetic React/IndexedDB: captured cleanup owner, old release ignored, Stage response isolation, missing origin failure, legacy/no secrets, stale ended notification ignored",
     );
   }
+}
+try {
+  if (switched) await verifySwitchedHold();
+  else await verifyOriginalContext();
 } finally {
   for (const release of gates) release();
   await Promise.allSettled([...tasks]);
-  await browser.close();
+  await browser?.close();
   await vite.close();
 }

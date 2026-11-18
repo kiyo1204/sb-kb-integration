@@ -72,6 +72,8 @@ try {
       await page.addInitScript("globalThis.__name = (fn) => fn;");
       await page.route("**/api/**", async (route) => {
         const { pathname } = new URL(route.request().url());
+        if (pathname.endsWith("/kit-feedback"))
+          return route.fulfill({ status: 422, json: { logSaved: false, message: "合成記録エラー" } });
         let body: unknown = {};
         if (pathname === "/api/me") {
           body = {
@@ -279,9 +281,10 @@ try {
             window.dispatchEvent(new Event("stage1-delivery-change"));
           }, { sessionId, stageId: stageIds[screen], state });
           await page.waitForFunction((state) => {
-            const notice = Array.from(document.querySelectorAll(".map-editor-header-actions p"))
-              .find((p) => p.textContent?.includes("操作記録：送信待ち"));
-            return Boolean(notice) === (state !== "empty");
+            const notices = Array.from(document.querySelectorAll(".map-editor-header-actions p"), (p) => p.textContent ?? "");
+            const pending = notices.some((text) => text.includes("操作記録：送信待ち 1件"));
+            const lost = notices.some((text) => text.includes("復旧できない記録 1件"));
+            return pending === (state === "pending") && lost === (state === "lost");
           }, state);
         };
         const geometry = () => page.evaluate(() => {
@@ -302,6 +305,14 @@ try {
         await setSyntheticDelivery("lost");
         assert.deepEqual(await geometry(), empty, "delivery loss notice must retain its space");
         await setSyntheticDelivery("empty");
+        if (screen === "kb") {
+          await page.getByRole("button", { name: "一時提出", exact: true }).click();
+          const warning = page.getByText("一部の操作記録の保存を確認できていません。送信状態を確認してください。", { exact: true });
+          await warning.waitFor();
+          await setSyntheticDelivery("empty");
+          assert.equal(await warning.isVisible(), true, "empty outbox must not clear separate logSaved:false");
+          await page.getByRole("dialog").getByRole("button", { name: "閉じる", exact: true }).click();
+        }
       }
       const metrics = await page.evaluate(() => {
         const rect = (selector: string) => {
