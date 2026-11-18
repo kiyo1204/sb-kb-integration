@@ -1,4 +1,4 @@
-import {getExperimentObservationOrigin} from "./auth-client";
+import {getExperimentObservationOrigin, type ObservationOrigin} from "./auth-client";
 import {discardAssessmentDrafts} from "./assessment-drafts";
 import { newClientId, requestDigest } from "./client-identity";
 type Item = {
@@ -260,6 +260,7 @@ export function allowedObservation(e: Record<string, unknown>) {
 export async function enqueue(
   sessionId: string,
   event: Record<string, unknown>,
+  origin: ObservationOrigin|null = getExperimentObservationOrigin(sessionId),
 ) {
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -268,7 +269,6 @@ export async function enqueue(
     !allowedObservation(event)
   )
     throw new Error("invalid_observation");
-  const origin=getExperimentObservationOrigin();
   try {
     return await changeState(sessionId, (s) => {
       const now = Date.now();
@@ -295,6 +295,12 @@ export async function enqueue(
       return item.id;
     });
   } catch {
+    recordObservationFailure(sessionId);
+    throw new Error("storage_unavailable");
+  }
+}
+// Existing capture-failure reporting, without persisting credentials or inventing an event.
+export function recordObservationFailure(sessionId:string){
     const loss = storageLoss.get(sessionId) ?? {
       clientId: newClientId(),
       count: 0,
@@ -303,8 +309,6 @@ export async function enqueue(
     loss.count++;
     storageLoss.set(sessionId, loss);
     window.dispatchEvent(new Event("stage1-delivery-change"));
-    throw new Error("storage_unavailable");
-  }
 }
 type Sender = (path: string, init: RequestInit) => Promise<Response>;
 const running = new Map<string, Promise<boolean>>();

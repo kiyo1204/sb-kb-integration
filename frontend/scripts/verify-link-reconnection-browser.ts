@@ -512,7 +512,47 @@ try {
     await drag(page,"target",id(7));assert.equal((await freshReply).status(),200);
     await page.locator(".is-reconnecting").waitFor({state:"detached"});
     assert.equal(patches,conflictPatches+1);
-    map.links=[savedLink];
+    // Holding the same Map open across a binding change must not apply a
+    // successful response from the old screen to the new editor.
+    map.links = [{ ...savedLink, sourceConceptId: id(5), targetConceptId: id(6) }];
+    await page.reload();
+    await page.locator(root).waitFor();
+    const savedEdge = page.locator(".concept-edge-hit-target");
+    const savedLabel = `Link ${lid}: MOCK 0 → MOCK relation → MOCK 1`;
+    assert.equal(await savedEdge.getAttribute("aria-label"), savedLabel);
+    await begin();
+    patchGate = new Promise<void>((resolve) => { finishPatch = resolve; });
+    const isReconnect = (r: { method(): string; url(): string }) =>
+      r.method() === "PATCH" && new URL(r.url()).pathname === `/api/links/${lid}/reconnect`;
+    const oldRequest = page.waitForRequest(isReconnect);
+    await drag(page, "source", id(5));
+    await drag(page, "target", id(7));
+    await oldRequest;
+    await page.evaluate(async ({ sessionId, clientId }) => {
+      const authModule = "/src/auth-client.ts";
+      const auth = await import(authModule);
+      const owner = auth.registerExperimentClientOwner(sessionId);
+      auth.bindExperimentClient({
+        secret: "SYNTHETIC_SCREEN",
+        generation: 2,
+        clientId,
+      }, owner);
+    }, { sessionId: sid, clientId: id(11) });
+    await page.locator(".is-reconnecting").waitFor({ state: "detached" });
+    const oldReply = page.waitForResponse((r) => isReconnect(r.request()));
+    finishPatch();
+    const response = await oldReply;
+    assert.equal(response.status(), 200);
+    await response.finished();
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    patchGate = null;
+    assert.equal(map.links[0].targetConceptId, id(7), "fixture accepted the old write");
+    assert.equal(await savedEdge.getAttribute("aria-label"), savedLabel);
+    assert.equal(await page.getByText("接続を保存しました。", { exact: true }).count(), 0);
+
+    map.links = [savedLink];
     for (const [type, protocol] of [
       ["KB", "SBKB_INTEGRATION_V1"],
       ["INTEGRATION", "SBKB_INTEGRATION_V1"],

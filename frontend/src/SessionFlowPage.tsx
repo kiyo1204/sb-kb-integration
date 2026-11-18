@@ -3,7 +3,7 @@ import TutorialPage from "./TutorialPage";
 import {LearnerDeliveryStatus,ResearchDeliveryStatus} from "./DeliveryStatus";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, uiText } from "./auth-client";
-import { sendObservedLearningEvent, useObservedLearningScreen, type ObservedLearningEvent } from "./learning-events";
+import { useObservedLearningScreen, type ObservedLearningEvent } from "./learning-events";
 import { LearnerAssessment, ResearchAssessment } from "./Assessment";
 import { ReadOnlyMapSnapshot, type HistoricalMapSnapshot } from "./MapPage";
 
@@ -147,7 +147,7 @@ function SessionDashboard({
   const currentStageId = flow?.currentStage?.id;
   const currentStageStatus = flow?.currentStage?.status;
   const currentStageType = flow?.currentStage?.stageType;
-  useObservedLearningScreen(sessionId, currentStageId, undefined, isLearner && currentStageStatus === "IN_PROGRESS", noteActivityLogFailure);
+  const postObservedLearningEvent=useObservedLearningScreen(sessionId, currentStageId, undefined, isLearner && currentStageStatus === "IN_PROGRESS", noteActivityLogFailure,flow?.session.protocolKey==="SBKB_INTEGRATION_V1");
   const studyExpired = flow?.session.protocolKey === "STAGE1_6" && currentStageType === "SELF_STUDY" && !!flow.currentStage?.startedAt && flow.session.groupActivitySeconds !== null && clock + serverOffset >= Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000;
   const integrationExpired = !!flow && ["STAGE1_6","STAGE1_5","SBKB_INTEGRATION_V1"].includes(flow?.session.protocolKey??"") && (["STAGE1_5","SBKB_INTEGRATION_V1"].includes(flow?.session.protocolKey??"") || flow?.session.studyGroup === "EXPERIMENTAL") && currentStageType === "INTEGRATION_MAP" && currentStageStatus === "IN_PROGRESS" && !!flow.currentStage?.startedAt && flow.session.groupActivitySeconds !== null && clock + serverOffset >= Date.parse(flow.currentStage.startedAt) + flow.session.groupActivitySeconds * 1000;
 
@@ -587,9 +587,7 @@ function SessionDashboard({
                   showHeading={!isLearner}
                   onEvent={(event) => {
                     if (!isLearner) return;
-                    void sendObservedLearningEvent(sessionId, event).then((saved) => {
-                      if (!saved) noteActivityLogFailure();
-                    });
+                    void postObservedLearningEvent(event);
                   }}
                 />
                 <button

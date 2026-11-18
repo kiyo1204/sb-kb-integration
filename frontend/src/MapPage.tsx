@@ -10,14 +10,22 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
   type CSSProperties,
 } from "react";
-import { apiFetch, uiText, getAuthenticationRevision } from "./auth-client";
 import {
-  sendObservedLearningEvent,
+  apiFetch,
+  captureObservationContext,
+  getObservationRevision,
+  isObservationContextCurrent,
+  subscribeObservationContext,
+  uiText,
+  type ObservationContext,
+} from "./auth-client";
+import {
   useObservedLearningScreen,
 } from "./learning-events";
 
@@ -57,7 +65,7 @@ class LinkReconnectError extends Error {
   constructor(message: string, readonly status: number, readonly code?: string) { super(message); }
 }
 type ExpectedConnection = Pick<MapLink, "sourceConceptId" | "targetConceptId">;
-type ReconnectionDraft = TemporaryConnector & { original: MapLink; mapId: string; authenticationRevision: number; conflicted?: boolean };
+type ReconnectionDraft = TemporaryConnector & { original: MapLink; mapId: string; context: ObservationContext; conflicted?: boolean };
 function sameSavedLink(a: MapLink | undefined, b: MapLink) {
   return !!a && a.id === b.id && a.mapId === b.mapId &&
     a.sourceConceptId === b.sourceConceptId && a.targetConceptId === b.targetConceptId &&
@@ -521,12 +529,13 @@ export default function MapPage({
     state.status === "success" ? state.map.sessionStageId : null;
   const observationMapId = state.status === "success" ? state.map.id : null;
   const observationMapType = state.status === "success" ? state.map.type : null;
-  useObservedLearningScreen(
+  const postObservedLearningEvent=useObservedLearningScreen(
     learnerSessionId ?? "",
     observationStageId,
     observationMapId,
     isLearner && !!learnerSessionId && state.status === "success",
     noteActivityLogFailure,
+    state.status === "success" && state.map.sessionProtocolKey === "SBKB_INTEGRATION_V1",
   );
   const [integrationDeadline, setIntegrationDeadline] = useState<number | null>(
     null,
@@ -546,8 +555,20 @@ export default function MapPage({
     label: string;
   } | null>(null);
   const [positionSaving, setPositionSaving] = useState(false);
+  const observationRevision = useSyncExternalStore(
+    subscribeObservationContext,
+    getObservationRevision,
+  );
+  const reconnectScope = isLearner && observationMapType === "PRIOR" &&
+    state.status === "success" && state.map.sessionProtocolKey === "SBKB_INTEGRATION_V1"
+    ? observationRevision : null;
+  const [editorScope, setEditorScope] = useState({ mapId, revision: reconnectScope });
   const [mapEditorSaveStatus, setMapEditorSaveStatus] =
     useState<MapEditorSaveStatus>("saved");
+  if (editorScope.mapId !== mapId || editorScope.revision !== reconnectScope) {
+    setEditorScope({ mapId, revision: reconnectScope });
+    setMapEditorSaveStatus("saved");
+  }
   const [mergingConcepts, setMergingConcepts] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitFeedback, setSubmitFeedback] = useState<
@@ -557,7 +578,12 @@ export default function MapPage({
     useState<PositionSaveFeedback | null>(null);
   const mapEditorMutationsRef = useRef({ inFlight: 0, failed: false });
   const undoRedoRequestRef = useRef(0);
+  useLayoutEffect(() => () => {
+    mapEditorMutationsRef.current = { inFlight: 0, failed: false };
+    undoRedoRequestRef.current += 1;
+  }, [mapId, reconnectScope]);
   const kitFeedbackRequestRef = useRef(0);
+  useEffect(()=>()=>{kitFeedbackRequestRef.current++;},[mapId]);
   const kitFeedbackSignature =
     state.status === "success" && state.map.type === "KB"
       ? kitMapSignature(state.map)
@@ -631,6 +657,8 @@ export default function MapPage({
       return;
     const targetMapId = state.map.id;
     const requestId = ++kitFeedbackRequestRef.current;
+    const context=captureObservationContext(state.map.sessionId??"",state.map.sessionProtocolKey==="SBKB_INTEGRATION_V1");
+    const current=()=>requestId===kitFeedbackRequestRef.current&&isObservationContextCurrent(context);
     setKitFeedbackChecking(true);
     setKitFeedbackDialog({ status: "loading" });
     try {
@@ -638,6 +666,7 @@ export default function MapPage({
         `/api/maps/${encodeURIComponent(targetMapId)}/kit-feedback`,
       );
       const result: unknown = await response.json().catch(() => null);
+      if(!current())return;
       if (!response.ok) {
         if (
           result &&
@@ -646,7 +675,7 @@ export default function MapPage({
           result.logSaved === false
         )
           noteActivityLogFailure();
-        if (requestId === kitFeedbackRequestRef.current)
+        if (current())
           setKitFeedbackDialog({
             status: "error",
             message:
@@ -666,11 +695,11 @@ export default function MapPage({
       const verifiedSignature = await fetchCurrentKitMapSignature(
         targetMapId,
       ).catch(() => null);
-      if (requestId !== kitFeedbackRequestRef.current) return;
+      if (!current()) return;
       setKitBuildFeedback({ result, verifiedSignature, requestId });
       setKitFeedbackDialog({ status: "result", fromSubmission: false });
     } catch {
-      if (requestId === kitFeedbackRequestRef.current) {
+      if (current()) {
         setKitFeedbackDialog({
           status: "error",
           message:
@@ -678,7 +707,7 @@ export default function MapPage({
         });
       }
     } finally {
-      if (requestId === kitFeedbackRequestRef.current)
+      if (current())
         setKitFeedbackChecking(false);
     }
   }
@@ -693,26 +722,16 @@ export default function MapPage({
       kitFeedbackDialog?.status !== "result"
     )
       return;
-    let active = true;
-    void sendObservedLearningEvent(learnerSessionId, {
+    void postObservedLearningEvent({
       eventType: "FEEDBACK_DISPLAY",
       targetType: "FEEDBACK",
       stageId: observationStageId!,
       mapId: observationMapId!,
-    })
-      .then((saved) => {
-        if (active && !saved) noteActivityLogFailure();
-      })
-      .catch(() => {
-        if (active) noteActivityLogFailure();
-      });
-    return () => {
-      active = false;
-    };
+    });
   }, [
     isLearner,
     kitFeedbackDialog,
-    noteActivityLogFailure,
+    postObservedLearningEvent,
     state.status,
     learnerSessionId,
     observationStageId,
@@ -747,6 +766,7 @@ export default function MapPage({
 
   async function trackMapEditorMutation<T>(
     operation: () => Promise<T>,
+    isCurrent = () => true,
   ): Promise<T> {
     const tracking = mapEditorMutationsRef.current;
     if (tracking.inFlight === 0) tracking.failed = false;
@@ -755,14 +775,16 @@ export default function MapPage({
 
     try {
       const result = await operation();
-      await reloadUndoRedoState();
+      if (isCurrent() && tracking === mapEditorMutationsRef.current) {
+        await reloadUndoRedoState();
+      }
       return result;
     } catch (error) {
       tracking.failed = true;
       throw error;
     } finally {
       tracking.inFlight -= 1;
-      if (tracking.inFlight === 0) {
+      if (tracking.inFlight === 0 && tracking === mapEditorMutationsRef.current && isCurrent()) {
         setMapEditorSaveStatus(tracking.failed ? "error" : "saved");
       }
     }
@@ -1732,6 +1754,7 @@ export default function MapPage({
     sourceConceptId: string,
     targetConceptId: string,
     expectedConnection?: ExpectedConnection,
+    isCurrent = () => true,
   ) {
     const response = await apiFetch(
       `/api/links/${encodeURIComponent(link.id)}/reconnect`,
@@ -1777,7 +1800,8 @@ export default function MapPage({
     }
 
     setState((current) =>
-      current.status === "success" && current.map.id === link.mapId
+      isCurrent() && current.status === "success" && current.map.id === link.mapId &&
+      (!expectedConnection || current.map.status === "DRAFT")
         ? {
             status: "success",
             map: {
@@ -2408,11 +2432,16 @@ export default function MapPage({
           trackMapEditorMutation(() => saveLinkLabel(link, label))
         }
         onSavedMapRefresh={(latest) => setState(current => current.status === "success" && current.map.id === latest.id ? { status: "success", map: latest } : current)}
-        onReconnectLink={(link, sourceConceptId, targetConceptId, expectedConnection) =>
-          trackMapEditorMutation(() =>
-            reconnectLink(link, sourceConceptId, targetConceptId, expectedConnection),
-          )
-        }
+        onReconnectLink={(link, sourceConceptId, targetConceptId, expectedConnection) => {
+          const context = captureObservationContext(state.map.sessionId ?? "", true);
+          const scope = mapEditorMutationsRef.current;
+          const isCurrent = () =>
+            scope === mapEditorMutationsRef.current && isObservationContextCurrent(context);
+          return trackMapEditorMutation(
+            () => reconnectLink(link, sourceConceptId, targetConceptId, expectedConnection, isCurrent),
+            isCurrent,
+          );
+        }}
         onDeleteLink={(linkId) =>
           trackMapEditorMutation(() => deleteLink(linkId))
         }
@@ -2852,6 +2881,7 @@ function MapEditorShell({
   const reconnectionAllowed = map.sessionProtocolKey === "SBKB_INTEGRATION_V1" &&
     map.type === "PRIOR" && isLearner && !readOnly && !reconnectionBlocked && map.status === "DRAFT";
   const validReconnection = reconnectionAllowed && reconnectionDraft?.mapId === map.id &&
+    isObservationContextCurrent(reconnectionDraft.context) &&
     (sameSavedLink(map.links.find(l => l.id === reconnectionDraft?.id), reconnectionDraft.original) ||
       (reconnectionDraft.saving && sameSavedLink(map.links.find(l => l.id === reconnectionDraft.id), { ...reconnectionDraft.original, sourceConceptId: reconnectionDraft.sourceConceptId ?? "", targetConceptId: reconnectionDraft.targetConceptId ?? "" })))
     ? reconnectionDraft : null;
@@ -2867,7 +2897,7 @@ function MapEditorShell({
       setReconnectionNotice("接続編集中のリンクを完成または取消してから、別の接続を編集してください。");
       return;
     }
-    const draft: ReconnectionDraft = { id: link.id, mapId: map.id, original: { ...link }, authenticationRevision: getAuthenticationRevision(),
+    const draft: ReconnectionDraft = { id: link.id, mapId: map.id, original: { ...link }, context: captureObservationContext(map.sessionId ?? "", true),
       kind: "reconnect", kitLinkItemId: link.kitLinkItemId ?? null, label: link.label,
       position, sourceConceptId: null, targetConceptId: null, saving: false, error: null };
     reconnectionRef.current = draft;
@@ -2877,7 +2907,7 @@ function MapEditorShell({
   }
   async function cancelReconnection() {
     const current = reconnectionRef.current;
-    if (!current || current.saving) return;
+    if (!current || current.saving || !isObservationContextCurrent(current.context)) return;
     if (current.conflicted) {
       const pending = { ...current, saving: true };
       reconnectionRef.current = pending;
@@ -2886,11 +2916,11 @@ function MapEditorShell({
         const response = await apiFetch(`/api/maps/${encodeURIComponent(current.mapId)}`);
         if (!response.ok) throw new Error("最新の接続を確認できません。接続は未保存です。再読込して確認してください。");
         const latest = await response.json() as MapResponse;
-        if (reconnectionRef.current !== pending || pending.authenticationRevision !== getAuthenticationRevision()) return;
+        if (reconnectionRef.current !== pending || !isObservationContextCurrent(pending.context)) return;
         if (latest.id !== pending.mapId) throw new Error("最新のマップを確認できませんでした。");
         onSavedMapRefresh(latest);
       } catch (error) {
-        if (reconnectionRef.current !== pending) return;
+        if (reconnectionRef.current !== pending || !isObservationContextCurrent(pending.context)) return;
         const failed = { ...current, error: error instanceof Error ? error.message : "最新の接続を確認できませんでした。" };
         reconnectionRef.current = failed;
         setReconnectionDraft(failed);
@@ -2903,7 +2933,7 @@ function MapEditorShell({
   }
   async function updateReconnection(connector: TemporaryConnector) {
     const before = reconnectionRef.current;
-    if (!before || before.id !== connector.id || before.saving || before.conflicted || before.authenticationRevision !== getAuthenticationRevision()) return;
+    if (!before || before.id !== connector.id || before.saving || before.conflicted || !isObservationContextCurrent(before.context)) return;
     const next = { ...before, sourceConceptId: connector.sourceConceptId,
       targetConceptId: connector.targetConceptId, error: null };
     reconnectionRef.current = next;
@@ -2914,13 +2944,11 @@ function MapEditorShell({
     setReconnectionDraft(pending);
     try {
       const response = await apiFetch(`/api/maps/${encodeURIComponent(map.id)}`);
-      if (reconnectionRef.current !== pending) return;
-      if (pending.authenticationRevision !== getAuthenticationRevision()) return;
+      if (reconnectionRef.current !== pending || !isObservationContextCurrent(pending.context)) return;
       if (!response.ok) throw new LinkReconnectError("保存元を確認できません。接続は未保存です。接続状態を確認してください。", response.status);
       const latest = await response.json() as MapResponse;
-      if (reconnectionRef.current !== pending) return;
+      if (reconnectionRef.current !== pending || !isObservationContextCurrent(pending.context)) return;
       if (latest.id !== map.id) throw new Error("保存元のマップを確認できませんでした。");
-      if (pending.authenticationRevision !== getAuthenticationRevision()) return;
       if (latest.status !== "DRAFT" || !sameSavedLink(latest.links.find(l => l.id === pending.id), pending.original)) {
         reconnectionRef.current = null;
         setReconnectionDraft(null);
@@ -2932,12 +2960,12 @@ function MapEditorShell({
         sourceConceptId: pending.original.sourceConceptId,
         targetConceptId: pending.original.targetConceptId,
       });
-      if (reconnectionRef.current !== pending) return;
+      if (reconnectionRef.current !== pending || !isObservationContextCurrent(pending.context)) return;
       reconnectionRef.current = null;
       setReconnectionDraft(null);
       setReconnectionNotice("接続を保存しました。");
     } catch (error) {
-      if (reconnectionRef.current !== pending) return;
+      if (reconnectionRef.current !== pending || !isObservationContextCurrent(pending.context)) return;
       if (error instanceof LinkReconnectError && error.status === 409 && error.code === "link_connection_conflict") {
         const conflicted = { ...next, conflicted: true, error: error.message };
         reconnectionRef.current = conflicted;

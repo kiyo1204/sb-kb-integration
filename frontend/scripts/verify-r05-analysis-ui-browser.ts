@@ -1,7 +1,7 @@
 // Synthetic UI fixtures only: this check does not connect to an API server or database.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { chromium, type Page, type Route } from "playwright";
 import { createServer } from "vite";
@@ -372,16 +372,47 @@ async function installSyntheticApi(
   });
 }
 
-const outputDirectory = join(tmpdir(), "sbkb-r05-analysis-ui-20261114");
+const outputDirectory =
+  process.env.R05_ANALYSIS_SCREENSHOT_DIR ??
+  join(tmpdir(), "sbkb-r05-analysis-ui-20261114");
 await mkdir(outputDirectory, { recursive: true });
 const vite = await createServer({ server: { host: "127.0.0.1", port: 0 } });
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+const diagnosticFile = process.env.R05_UI_DIAGNOSTICS_FILE;
+const diagnostic: Array<Record<string, unknown>> = [];
+const diagnosticStarted = performance.now();
+let diagnosticDropped = 0,
+  primaryFailed = false,
+  closing = false;
+let cleanupError: unknown;
+function observe(kind: string, detail: Record<string, unknown> = {}) {
+  if (!diagnosticFile) return;
+  if (diagnostic.length >= 120) {
+    diagnostic.shift();
+    diagnosticDropped++;
+  }
+  diagnostic.push({
+    kind,
+    elapsedMs: Math.round(performance.now() - diagnosticStarted),
+    ...detail,
+  });
+}
+function networkError(error: unknown) {
+  return String(error).match(/(?:net::)?ERR_[A-Z_]+/)?.[0] ?? "not_classified";
+}
 try {
   await vite.listen();
   browser = await chromium.launch({
     channel: process.env.BROWSER_CHANNEL ?? "msedge",
     headless: true,
   });
+  observe("browser-started", {
+    node: process.version,
+    browser: browser.version(),
+  });
+  browser.on("disconnected", () =>
+    observe("browser-disconnected", { closing }),
+  );
   const metrics: Array<Record<string, unknown>> = [];
   const scenarios: Array<{
     name: string;
@@ -451,6 +482,30 @@ try {
     for (const scenario of scenarios) {
       const context = await browser.newContext({ viewport });
       const page = await context.newPage();
+      const location = { scenario: scenario.name, width: viewport.width };
+      const active = new Set<unknown>();
+      if (diagnosticFile) {
+        page.on("request", (request) => {
+          if (active.size < 64) active.add(request);
+        });
+        page.on("requestfinished", (request) => active.delete(request));
+        page.on("requestfailed", (request) => {
+          active.delete(request);
+          observe("request-failed", {
+            ...location,
+            resourceType: request.resourceType(),
+            error: networkError(request.failure()?.errorText),
+            active: active.size,
+          });
+        });
+        page.on("crash", () => observe("page-crashed", location));
+        page.on("close", () =>
+          observe("page-closed", { ...location, closing }),
+        );
+        context.on("close", () =>
+          observe("context-closed", { ...location, closing }),
+        );
+      }
       page.on("pageerror", (error) =>
         console.error(
           `Synthetic page error in ${scenario.name}: ${error.name}: ${error.message}`,
@@ -466,12 +521,34 @@ try {
           );
       });
       await installSyntheticApi(page, scenario.mode);
-      await page.goto(
-        new URL(
-          scenario.path.slice(1),
-          vite.resolvedUrls!.local[0]!,
-        ).toString(),
-      );
+      observe("navigation-start", {
+        ...location,
+        urlKind: scenario.path.includes("/materials/")
+          ? "r05-document"
+          : "analysis-document",
+        browserConnected: browser.isConnected(),
+        webListening: vite.httpServer?.listening ?? false,
+        intentionallyPendingApi: scenario.mode.endsWith("-loading"),
+      });
+      try {
+        await page.goto(
+          new URL(
+            scenario.path.slice(1),
+            vite.resolvedUrls!.local[0]!,
+          ).toString(),
+        );
+      } catch (error) {
+        observe("navigation-failed", {
+          ...location,
+          error: networkError(error),
+          browserConnected: browser.isConnected(),
+          pageClosed: page.isClosed(),
+          webListening: vite.httpServer?.listening ?? false,
+          active: active.size,
+        });
+        throw error;
+      }
+      observe("navigation-loaded", location);
       try {
         await page
           .getByText(scenario.expectedText, { exact: false })
@@ -643,16 +720,60 @@ try {
         });
       }
       await context.close();
+      observe("scenario-completed", location);
     }
   }
   await writeFile(
     join(outputDirectory, "comparison-metrics.json"),
     JSON.stringify(metrics, null, 2),
   );
-  console.log(
-    `R05/research analysis UI comparison: PASS (synthetic API fixtures; Edge; 1366x768 and 1440x900). Screenshots: ${outputDirectory}`,
-  );
+} catch (error) {
+  primaryFailed = true;
+  throw error;
 } finally {
-  await browser?.close();
-  await vite.close();
+  closing = true;
+  observe("cleanup-start", {
+    primaryFailed,
+    browserConnected: browser?.isConnected() ?? false,
+    webListening: vite.httpServer?.listening ?? false,
+  });
+  try {
+    await browser?.close();
+  } catch (error) {
+    cleanupError = error;
+    observe("browser-close-failed");
+  }
+  try {
+    await vite.close();
+  } catch (error) {
+    cleanupError ??= error;
+    observe("web-close-failed");
+  }
+  observe("cleanup-finished", { cleanupFailed: !!cleanupError });
+  if (diagnosticFile) {
+    try {
+      await mkdir(dirname(diagnosticFile), { recursive: true });
+      await writeFile(
+        diagnosticFile,
+        JSON.stringify(
+          {
+            limit: 120,
+            dropped: diagnosticDropped,
+            node: process.version,
+            browser: browser?.version() ?? null,
+            primaryFailed,
+            records: diagnostic,
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+    } catch {
+      console.error("R05_UI_DIAGNOSTIC_WRITE_FAILED");
+    }
+  }
 }
+if (cleanupError) throw cleanupError;
+console.log(
+  `R05/research analysis UI comparison: PASS (synthetic API fixtures; Edge; 1366x768 and 1440x900). Screenshots: ${outputDirectory}`,
+);
