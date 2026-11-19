@@ -1614,3 +1614,118 @@ textarea:focus {
 .event-timeline-table td:first-child { min-width: 190px; white-space: nowrap; }
 .event-timeline-table td:nth-child(2) { min-width: 280px; overflow-wrap: anywhere; }
 .event-timeline-table th { white-space: nowrap; }
+
+/* High-contrast concept map palette (SB / KB / Integration).
+   Color and line style both distinguish saved, selected and draft links.
+   Restrict the change to the map editor; leave history status colors intact. */
+.concept-canvas-section.is-map-editor-canvas {
+  --map-canvas-bg: #f8fafc;
+  --map-grid: #d5dee8;
+  --map-node-border: #94a3b8;
+  --map-ink: #1e293b;
+  --map-link: #475569;
+  --map-selected: #1d4ed8;
+  --map-draft: #b45309;
+  --map-connected: #15803d;
+  --map-error: #b91c1c;
+}
+
+.is-map-editor-canvas .concept-canvas-viewport {
+  border-color: #94a3b8;
+  background-color: var(--map-canvas-bg);
+  background-image: radial-gradient(var(--map-grid) 1px, transparent 1px);
+}
+
+.is-map-editor-canvas .concept-node {
+  border-color: var(--map-node-border);
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(30 41 59 / 10%);
+}
+
+.is-map-editor-canvas .concept-node h3 {
+  color: var(--map-ink);
+}
+
+:where(.is-map-editor-canvas) .concept-edge-path {
+  stroke: var(--map-link);
+  stroke-width: 2.5;
+}
+
+:where(.is-map-editor-canvas) .concept-edge-path.is-selected {
+  stroke: var(--map-selected);
+  stroke-width: 3.5;
+}
+
+/* Avoid masking history-added / removed / changed link colors. */
+:where(.is-map-editor-canvas) .concept-edges > g:not(.is-history-added):not(.is-history-removed):not(.is-history-modified):not(.is-history-changed) .concept-edge-hit-target:focus-visible + .concept-edge-path {
+  stroke: var(--map-selected);
+  stroke-width: 3.5;
+}
+
+:where(.is-map-editor-canvas) .concept-edges .concept-arrowhead {
+  fill: var(--map-link);
+  stroke: var(--map-canvas-bg);
+}
+
+:where(.is-map-editor-canvas) .concept-edges .concept-arrowhead.is-selected {
+  fill: var(--map-selected);
+}
+
+.is-map-editor-canvas .link-connector {
+  border-color: var(--map-node-border);
+  background: #fff;
+}
+
+.is-map-editor-canvas .link-connector-label {
+  color: var(--map-ink);
+}
+
+.is-map-editor-canvas .link-connector.is-selected {
+  border-color: var(--map-selected);
+  background: #eff6ff;
+  box-shadow: 0 0 0 3px rgb(29 78 216 / 25%);
+}
+
+.is-map-editor-canvas .link-connector.is-selected .link-connector-label {
+  color: var(--map-selected);
+}
+
+.is-map-editor-canvas .temporary-connector-path,
+.is-map-editor-canvas .connection-preview-path {
+  stroke: var(--map-draft);
+  stroke-width: 2.5;
+  stroke-dasharray: 7 5;
+}
+
+.is-map-editor-canvas .link-connector.is-temporary,
+.is-map-editor-canvas .link-connector.is-reconnecting {
+  border: 2px dashed var(--map-draft);
+  background: #fff7ed;
+}
+
+.is-map-editor-canvas .link-connector.is-temporary .link-connector-label,
+.is-map-editor-canvas .link-connector.is-reconnecting .link-connector-label {
+  color: #92400e;
+}
+
+.is-map-editor-canvas .link-connector:not(.is-temporary):not(.is-reconnecting) .link-connector-handle,
+.is-map-editor-canvas .link-connector-handle.is-connected {
+  background: var(--map-connected);
+  box-shadow: 0 0 0 1px var(--map-connected);
+}
+
+.is-map-editor-canvas .link-connector.is-temporary .link-connector-handle:not(.is-connected),
+.is-map-editor-canvas .link-connector.is-reconnecting .link-connector-handle:not(.is-connected) {
+  background: var(--map-draft);
+  box-shadow: 0 0 0 1px var(--map-draft);
+}
+
+.is-map-editor-canvas .link-connector-handle.is-connecting,
+.is-map-editor-canvas .concept-node.is-connection-target {
+  outline-color: var(--map-draft);
+}
+
+.is-map-editor-canvas .temporary-connector-error,
+.is-map-editor-canvas .canvas-feedback.is-error {
+  color: var(--map-error);
+}
