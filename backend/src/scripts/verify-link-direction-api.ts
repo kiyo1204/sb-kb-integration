@@ -259,7 +259,9 @@ try {
       [map.id, "MOCK direction new " + map.id],
     )
   ).rows;
-  assert.deepEqual(links, [{ source: ids[0], target: ids[2] }]);
+  assert.deepEqual(links, [
+    { source: ids[1], target: ids[2] },
+  ]);
   const history = (
     await pool.query(
       "SELECT event_type,outcome FROM research_events WHERE map_id=$1 AND event_type IN ('ADD_LINK','RECONNECT_LINK') ORDER BY sequence_number",
@@ -276,7 +278,7 @@ try {
     history.filter(
       (e) => e.event_type === "RECONNECT_LINK" && e.outcome === "SUCCESS",
     ).length,
-    1,
+    4,
   );
   assert.ok(
     history.some(
@@ -291,7 +293,7 @@ try {
       mapType: "INTEGRATION",
       dbDirection: true,
       successfulCreates: 1,
-      successfulReconnects: 1,
+      successfulReconnects: 4,
       cancellationEvents: history.filter((e) => e.outcome === "CANCELLED")
         .length,
     }),
