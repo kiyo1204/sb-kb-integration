@@ -131,6 +131,7 @@ try {
   await stop();
   await run("test:delivery-reliability");
   await run("test:observation-origin");
+  await run("test:observation-receipt-lookup");
   await run("test:event-scale");
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") {
     await start();

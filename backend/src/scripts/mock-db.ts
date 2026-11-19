@@ -53,6 +53,7 @@ export function parse(args: string[]) {
       "check",
       "verify-v3-stream",
       "verify-v3-lease",
+      "verify-receipt-lookup",
       "safety",
       "suite",
       "scale",
@@ -281,6 +282,7 @@ function child(script: string, url: string, password: string) {
     check: "test:mock-reset-new-stream",
     "verify-v3-stream": "test:observation-stream-v3-api",
     "verify-v3-lease": "test:observation-stream-v3-lease",
+    "verify-receipt-lookup": "test:observation-receipt-lookup",
     safety: "test:mock-reset-safety",
     suite: "test:research-event-suite",
     scale: "test:event-scale",
@@ -333,7 +335,7 @@ export async function main(args: string[]) {
   let released = false;
   try {
     await guard(c, manifest);
-    if (["migrate", "seed", "check", "verify-v3-stream", "verify-v3-lease", "safety", "suite", "scale", "serve"].includes(action)) {
+    if (["migrate", "seed", "check", "verify-v3-stream", "verify-v3-lease", "verify-receipt-lookup", "safety", "suite", "scale", "serve"].includes(action)) {
       c.release();
       released = true;
       await pool.end();

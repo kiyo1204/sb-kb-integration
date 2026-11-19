@@ -118,7 +118,7 @@ export async function insertResearchEventBestEffort(client: PoolClient, sessionI
   }
 }
 
-const learnerObservedEventTypes = new Set<EventType>([
+export const learnerObservedEventTypes: ReadonlySet<string> = new Set([
   "SCREEN_ENTER", "SCREEN_LEAVE", "STAGE_PAUSE", "STAGE_RESUME",
   "VIDEO_PLAY", "VIDEO_PAUSE", "VIDEO_SEEK", "VIDEO_COMPLETE", "FEEDBACK_DISPLAY",
 ]);

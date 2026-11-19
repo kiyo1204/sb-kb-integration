@@ -8,15 +8,19 @@ import pg from "pg";
 const { Pool } = pg;
 import { verifyMockTestUrl } from "./mock-db.js";
 import { digest } from "../delivery-reliability.js";
+import { verifyReceiptLookup } from "./observation-receipt-lookup-checks.js";
 await verifyMockTestUrl(process.env.DATABASE_URL!);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const listener = createServer();
 await new Promise<void>((r) => listener.listen(0, "127.0.0.1", r));
 const port = (listener.address() as { port: number }).port;
 await new Promise<void>((r) => listener.close(() => r()));
-const base = `http://127.0.0.1:${port}`,
+const receiptLookup = process.argv.includes("--receipt-lookup");
+const external = receiptLookup ? process.env.MOCK_RECEIPT_API_BASE : undefined;
+if (external && !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(external)) throw new Error("receipt_test_requires_loopback");
+const base = external ?? `http://127.0.0.1:${port}`,
   researcher = process.env.RESEARCHER_API_TOKEN!;
-const server = spawn(process.execPath, ["dist/index.js"], {
+const server = external ? null : spawn(process.execPath, ["dist/index.js"], {
   env: {
     ...process.env,
     PORT: String(port),
@@ -160,7 +164,9 @@ try {
     });
   }
   const leaseCases = process.argv.includes("--stream-v3-lease");
-  if (leaseCases || process.argv.includes("--stream-v3")) {
+  if (receiptLookup) {
+    await verifyReceiptLookup({ base, researcher, runId: run.id, pool, fixtures, browser: verifyBrowser });
+  } else if (leaseCases || process.argv.includes("--stream-v3")) {
     const old = fixtures[0];
     const legacyStreamId = randomUUID();
     const event = { schemaVersion: 1, eventType: "SCREEN_ENTER", targetType: "SCREEN", stageId: old.stageId, outcome: "SUCCESS", clientTimeQuality: "OBSERVED", clientTimestamp: new Date().toISOString() };
@@ -299,7 +305,7 @@ try {
   );
   }
 } finally {
-  if (server.exitCode === null) {
+  if (server && server.exitCode === null) {
     const stopped = once(server, "exit");
     server.kill();
     await stopped;

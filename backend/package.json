@@ -30,6 +30,7 @@
     "test:safe-server-error": "tsx src/scripts/verify-safe-server-error.ts",
     "test:delivery-reliability": "tsx src/scripts/verify-delivery-reliability.ts",
     "test:observation-origin": "tsx src/scripts/verify-observation-origin.ts",
+    "test:observation-receipt-lookup": "tsx src/scripts/verify-observation-origin.ts --receipt-lookup",
     "test:observation-stream-v3-api": "tsx src/scripts/verify-observation-origin.ts --stream-v3",
     "test:observation-stream-v3-lease": "tsx src/scripts/verify-observation-origin.ts --stream-v3-lease",
     "test:event-export": "tsx src/scripts/verify-event-export.ts",

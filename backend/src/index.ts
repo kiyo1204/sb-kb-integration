@@ -39,6 +39,7 @@ import { registerStage1AnalysisRoutes } from "./stage1-analysis.js";
 import { registerAssessmentRoutes } from "./assessments.js";
 import { eventTargets, insertResearchEventBestEffort, insertResearchEvent, InvalidEventError, registerResearchEventRoutes, type EventActor, type EventType } from "./research-events.js";
 import { accessControl, createLearnerToken, principalOf, storeLearnerToken, tokenHash } from "./access-control.js";
+import { registerObservationReceiptLookup } from "./observation-receipt-lookup.js";
 import { validMapLabel } from "./research-event-map-v2.js";
 import { deriveUndoRedoAvailability, historySnapshotsEqual, historyStateDelta } from "./map-undo-redo.js";
 import type {
@@ -1468,6 +1469,15 @@ async function applyHistoryStateDelta(
 }
 
 app.use(researchSafetyBudget);
+const receiptLookupPool = new Pool({
+  connectionString: databaseUrl,
+  max: 4,
+  connectionTimeoutMillis: 2000,
+  statement_timeout: 2000,
+  idle_in_transaction_session_timeout: 5000,
+});
+receiptLookupPool.on("error", () => console.error("observation_receipt_lookup_pool_error"));
+registerObservationReceiptLookup(app, receiptLookupPool);
 app.use((request, response, next) => {
   const limit = request.path === "/api/research/goal-maps/import" ? MAX_MAP_STATE_BYTES : "100kb";
   express.json({ limit })(request, response, next);
@@ -7021,7 +7031,7 @@ const server = app.listen(port, process.env.API_BIND_ADDRESS ?? "0.0.0.0", () =>
 const shutdown = () => {
   clearInterval(autoSubmissionTimer);
   server.close(() => {
-    void Promise.all([pool.end(),eventExports.dispose(),eventExportPool.end()]).then(() => process.exit(0));
+    void Promise.all([pool.end(),receiptLookupPool.end(),eventExports.dispose(),eventExportPool.end()]).then(() => process.exit(0));
   });
 };
 

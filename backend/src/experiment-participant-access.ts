@@ -117,13 +117,14 @@ export async function authenticateExperimentToken(
 }
 /** Lock held through commit; reissue and switch use the same access row. Future
  * learning handlers must call this in their own transaction, never trust auth alone. */
-export async function lockExperimentProof(
+async function checkExperimentProof(
   c: PoolClient,
   proof: ExperimentProof,
+  lock: boolean,
 ) {
   const row = (
     await c.query(
-      `SELECT a.*,p.run_id,r.state FROM experiment_participant_access a JOIN sessions s ON s.id=a.session_id JOIN experiment_run_sessions p ON p.session_id=s.id JOIN experiment_run_catalog x ON x.run_id=p.run_id JOIN experiment_runs r ON r.id=p.run_id WHERE a.session_id=$1 AND p.run_id=$2 AND s.protocol_key=$3 FOR UPDATE OF a FOR SHARE OF r,s`,
+      `SELECT a.*,p.run_id,r.state FROM experiment_participant_access a JOIN sessions s ON s.id=a.session_id JOIN experiment_run_sessions p ON p.session_id=s.id JOIN experiment_run_catalog x ON x.run_id=p.run_id JOIN experiment_runs r ON r.id=p.run_id WHERE a.session_id=$1 AND p.run_id=$2 AND s.protocol_key=$3${lock ? " FOR UPDATE OF a FOR SHARE OF r,s" : ""}`,
       [proof.sessionId, proof.runId, EXPERIMENT_PROTOCOL],
     )
   ).rows[0];
@@ -135,13 +136,17 @@ export async function lockExperimentProof(
     fail("experiment_code_invalidated", 401);
   return row;
 }
-export async function lockCurrentExperimentClient(
+export function lockExperimentProof(c: PoolClient, proof: ExperimentProof) {
+  return checkExperimentProof(c, proof, true);
+}
+async function checkCurrentExperimentClient(
   c: PoolClient,
   proof: ExperimentProof,
   secret: unknown,
   generation: unknown,
+  lock: boolean,
 ) {
-  const row = await lockExperimentProof(c, proof);
+  const row = await checkExperimentProof(c, proof, lock);
   if (
     typeof secret !== "string" ||
     !/^[A-Za-z0-9_-]{43}$/.test(secret) ||
@@ -162,6 +167,13 @@ export async function lockCurrentExperimentClient(
   ).rowCount;
   if (!client) fail("experiment_client_stale", 409);
   return row;
+}
+export function lockCurrentExperimentClient(c: PoolClient, proof: ExperimentProof, secret: unknown, generation: unknown) {
+  return checkCurrentExperimentClient(c, proof, secret, generation, true);
+}
+/** For an authorization read and its data query in the same read-only snapshot. */
+export function readCurrentExperimentClient(c: PoolClient, proof: ExperimentProof, secret: unknown, generation: unknown) {
+  return checkCurrentExperimentClient(c, proof, secret, generation, false);
 }
 export async function claimExperimentClient(
   pool: Pool,
