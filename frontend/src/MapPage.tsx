@@ -559,7 +559,7 @@ export default function MapPage({
     subscribeObservationContext,
     getObservationRevision,
   );
-  const reconnectScope = isLearner && observationMapType === "PRIOR" &&
+  const reconnectScope = isLearner && (observationMapType === "PRIOR" || observationMapType === "KB") &&
     state.status === "success" && state.map.sessionProtocolKey === "SBKB_INTEGRATION_V1"
     ? observationRevision : null;
   const [editorScope, setEditorScope] = useState({ mapId, revision: reconnectScope });
@@ -763,6 +763,24 @@ export default function MapPage({
     },
     [mapId],
   );
+
+  // Refresh Undo/Redo after the editor's observation scope settles.
+  useEffect(() => {
+    if (state.status !== "success" || reconnectScope === null) return;
+
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (!cancelled) {
+        void reloadUndoRedoState(mapId);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state.status, reconnectScope, reloadUndoRedoState, mapId]);
+
 
   async function trackMapEditorMutation<T>(
     operation: () => Promise<T>,
@@ -2874,12 +2892,36 @@ function MapEditorShell({
   const isSaving =
     saveStatus === "saving" || positionSaving || drawerSaving || additionalBusy;
   const interactionLocked = readOnly || additionalBusy;
+  // KB: avoid shifting the canvas between the two clicks of a double-click.
+  const kbLinkEditorTimerRef = useRef<number | null>(null);
+
+  function cancelPendingKbLinkEditor() {
+    if (kbLinkEditorTimerRef.current !== null) {
+      window.clearTimeout(kbLinkEditorTimerRef.current);
+      kbLinkEditorTimerRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    if (readOnly && kbLinkEditorTimerRef.current !== null) {
+      window.clearTimeout(kbLinkEditorTimerRef.current);
+      kbLinkEditorTimerRef.current = null;
+    }
+  }, [readOnly]);
+
+  useEffect(() => {
+    return () => {
+      if (kbLinkEditorTimerRef.current !== null) {
+        window.clearTimeout(kbLinkEditorTimerRef.current);
+      }
+    };
+  }, []);
   const [reconnectionDraft, setReconnectionDraft] = useState<ReconnectionDraft | null>(null);
   const [reconnectionNotice, setReconnectionNotice] = useState<string | null>(null);
   const reconnectionRef = useRef<ReconnectionDraft | null>(null);
   const [reconnectionBlocked, setReconnectionBlocked] = useState(false);
   const reconnectionAllowed = map.sessionProtocolKey === "SBKB_INTEGRATION_V1" &&
-    map.type === "PRIOR" && isLearner && !readOnly && !reconnectionBlocked && map.status === "DRAFT";
+    (map.type === "PRIOR" || map.type === "KB") && isLearner && !readOnly && !reconnectionBlocked && map.status === "DRAFT";
   const validReconnection = reconnectionAllowed && reconnectionDraft?.mapId === map.id &&
     isObservationContextCurrent(reconnectionDraft.context) &&
     (sameSavedLink(map.links.find(l => l.id === reconnectionDraft?.id), reconnectionDraft.original) ||
@@ -2897,6 +2939,7 @@ function MapEditorShell({
       setReconnectionNotice("接続編集中のリンクを完成または取消してから、別の接続を編集してください。");
       return;
     }
+    cancelPendingKbLinkEditor();
     const draft: ReconnectionDraft = { id: link.id, mapId: map.id, original: { ...link }, context: captureObservationContext(map.sessionId ?? "", true),
       kind: "reconnect", kitLinkItemId: link.kitLinkItemId ?? null, label: link.label,
       position, sourceConceptId: null, targetConceptId: null, saving: false, error: null };
@@ -3040,10 +3083,26 @@ function MapEditorShell({
   function openLinkEditor(link: MapLink) {
     if (interactionLocked || linkCreation) return;
     if (reconnectionRef.current) return;
-    setLinkLabel(link.label);
-    setDrawerFeedback(null);
-    setDrawer({ kind: "edit-link", linkId: link.id });
+
+    cancelPendingKbLinkEditor();
+
+    const showEditor = () => {
+      setLinkLabel(link.label);
+      setDrawerFeedback(null);
+      setDrawer({ kind: "edit-link", linkId: link.id });
+    };
+
+    if (map.type === "KB" && reconnectionAllowed) {
+      kbLinkEditorTimerRef.current = window.setTimeout(() => {
+        kbLinkEditorTimerRef.current = null;
+        showEditor();
+      }, 400);
+      return;
+    }
+
+    showEditor();
   }
+
 
   async function handleConceptCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -3268,6 +3327,8 @@ function MapEditorShell({
     ? "提出済みです。内容は変更できません。"
     : kitFeedbackChecking
       ? "一致状況を確認中です。完了するまでお待ちください。"
+      : validReconnection
+        ? "接続編集中・未保存です。接続編集を完了または取消してから、一時提出してください。"
       : hasSaveError
         ? "保存状態を確認できません。保存を確認してから一時提出してください。"
         : isSaving
@@ -3315,7 +3376,7 @@ function MapEditorShell({
             type="button"
             className="kit-feedback-check-button"
             aria-describedby={experimentKB ? "kb-submission-guidance" : undefined}
-            disabled={isSaving || submitting || kitFeedbackChecking}
+            disabled={isSaving || submitting || kitFeedbackChecking || validReconnection !== null}
             onClick={() => void onCheckKitFeedback()}
           >
         {kitFeedbackChecking
@@ -3332,7 +3393,7 @@ function MapEditorShell({
             hidden={experimentKB}
           >
                 前回の結果：{kitBuildFeedback.result.matched ? "一致" : "不一致"}。
-                {kitFeedbackFreshnessText(kitFeedbackFreshness)}
+                {validReconnection ? "接続編集中のため再確認が必要です。" : kitFeedbackFreshnessText(kitFeedbackFreshness)}
               </p>
           <button
             type="button"
@@ -3924,7 +3985,7 @@ function MapEditorShell({
         <KitBuildFeedbackDialog
           view={kitFeedbackDialog}
           feedback={kitBuildFeedback}
-          freshness={kitFeedbackFreshness}
+          freshness={validReconnection ? "unknown" : kitFeedbackFreshness}
           onClose={onCloseKitFeedback}
         />
       )}
