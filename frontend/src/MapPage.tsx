@@ -559,7 +559,8 @@ export default function MapPage({
     subscribeObservationContext,
     getObservationRevision,
   );
-  const reconnectScope = isLearner && (observationMapType === "PRIOR" || observationMapType === "KB") &&
+  const reconnectScope = isLearner &&
+    (observationMapType === "PRIOR" || observationMapType === "KB" || observationMapType === "INTEGRATION") &&
     state.status === "success" && state.map.sessionProtocolKey === "SBKB_INTEGRATION_V1"
     ? observationRevision : null;
   const [editorScope, setEditorScope] = useState({ mapId, revision: reconnectScope });
@@ -2313,7 +2314,9 @@ export default function MapPage({
   const showIntegrationKitAssignment =
     isIntegrationMap && state.map.kitDefinitionId === null;
   const showIntegrationMerge = isIntegrationMap && state.map.status === "DRAFT";
-  const integrationEditorSupplement =
+  // Render these sibling controls from MapEditorShell's current draft state.
+  // No asynchronous parent state is needed to block a Merge or Kit assignment.
+  const integrationEditorSupplement = (reconnectionActive: boolean) =>
     showIntegrationKitAssignment || showIntegrationMerge ? (
       <div className="map-editor-supplement-grid">
         {showIntegrationKitAssignment && (
@@ -2323,6 +2326,7 @@ export default function MapPage({
               positionSaving ||
               submitting ||
               mergingConcepts ||
+              reconnectionActive ||
               state.map.status !== "DRAFT"
             }
             onAssignKit={(kitDefinitionId) =>
@@ -2335,7 +2339,7 @@ export default function MapPage({
         {showIntegrationMerge && (
           <IntegrationConceptMergeForm
             concepts={state.map.concepts}
-            disabled={positionSaving || submitting || mergingConcepts}
+            disabled={positionSaving || submitting || mergingConcepts || reconnectionActive}
             onCancel={() =>
               recordMapOperationCancellation(state.map.id, "MERGE_CONCEPT")
             }
@@ -2401,7 +2405,7 @@ export default function MapPage({
                   kitFeedbackFreshness === "current"))))
         }
         instructionsText={instructions?.[state.map.type]}
-        supplementalContent={
+        supplementalContent={(reconnectionActive) => (
           <>
             {state.map.sessionProtocolKey === "SBKB_INTEGRATION_V1" &&
               !online && (
@@ -2409,9 +2413,9 @@ export default function MapPage({
                   オフライン：保存・提出はできません。未保存内容を別画面へ移さず、接続状態を確認してください。
                 </p>
               )}
-            {integrationEditorSupplement}
+            {integrationEditorSupplement(reconnectionActive)}
           </>
-        }
+        )}
         additionalBusy={
           mergingConcepts ||
           undoRedoBusy ||
@@ -2816,7 +2820,7 @@ function MapEditorShell({
   onShowKitFeedback: () => void;
   onCloseKitFeedback: () => void;
   canSubmit: boolean;
-  supplementalContent?: React.ReactNode;
+  supplementalContent?: React.ReactNode | ((reconnectionActive: boolean) => React.ReactNode);
   instructionsText?: string;
   additionalBusy: boolean;
   undoRedoState?: UndoRedoState | null;
@@ -2921,7 +2925,7 @@ function MapEditorShell({
   const reconnectionRef = useRef<ReconnectionDraft | null>(null);
   const [reconnectionBlocked, setReconnectionBlocked] = useState(false);
   const reconnectionAllowed = map.sessionProtocolKey === "SBKB_INTEGRATION_V1" &&
-    (map.type === "PRIOR" || map.type === "KB") && isLearner && !readOnly && !reconnectionBlocked && map.status === "DRAFT";
+    (map.type === "PRIOR" || map.type === "KB" || map.type === "INTEGRATION") && isLearner && !readOnly && !reconnectionBlocked && map.status === "DRAFT";
   const validReconnection = reconnectionAllowed && reconnectionDraft?.mapId === map.id &&
     isObservationContextCurrent(reconnectionDraft.context) &&
     (sameSavedLink(map.links.find(l => l.id === reconnectionDraft?.id), reconnectionDraft.original) ||
@@ -3619,10 +3623,12 @@ function MapEditorShell({
         )}
       {!experimentLayout && feedbackControls}
 
-      {supplementalContent}
+      {typeof supplementalContent === "function"
+        ? supplementalContent(validReconnection !== null)
+        : supplementalContent}
 
       <section
-        className={`map-editor-workspace${drawer.kind !== "closed" ? " has-drawer" : ""}${map.sessionProtocolKey === "SBKB_INTEGRATION_V1" && isLearner && map.type === "PRIOR" && drawer.kind === "edit-link" ? " is-sb-link-selection" : ""}`}
+        className={`map-editor-workspace${drawer.kind !== "closed" ? " has-drawer" : ""}${map.sessionProtocolKey === "SBKB_INTEGRATION_V1" && isLearner && map.type === "PRIOR" && drawer.kind === "edit-link" ? " is-sb-link-selection" : ""}${map.sessionProtocolKey === "SBKB_INTEGRATION_V1" && isLearner && map.type === "INTEGRATION" && drawer.kind === "edit-link" ? " is-integration-link-selection" : ""}`}
       >
         <div className="map-editor-canvas-column">
           {isLearner && !readOnly && (

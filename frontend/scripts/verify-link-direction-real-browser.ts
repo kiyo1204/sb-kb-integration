@@ -282,12 +282,23 @@ try {
   assert.equal(mutations.length, 2);
   const fullMap = await page.request.get(base + `/api/maps/${mapId}`, { headers: learnerHeaders });
   const originalMap = await fullMap.json();
-  if (originalMap.type === "PRIOR") {
+  if (originalMap.type === "PRIOR" || originalMap.type === "INTEGRATION") {
     const original = originalMap.links.find((l: { id: string }) => l.id === link.id);
     await page.locator(saved + " .link-connector-label").dblclick();
     await page.getByRole("region", { name: "保存済みリンクの接続編集" }).waitFor();
     assert.equal(mutations.length, 2);
-    assert.deepEqual(await snapshot(), [ { id: link.id, source: a, target: c, label: link.label }, ...before.filter((l: {id:string})=>l.id!==link.id) ]);
+    const expectedLinks = [
+      { id: link.id, source: a, target: c, label: link.label },
+      ...before.filter((l: { id: string }) => l.id !== link.id),
+    ];
+
+    const sortById = (x: { id: string }, y: { id: string }) =>
+      x.id.localeCompare(y.id);
+
+    assert.deepEqual(
+      (await snapshot()).sort(sortById),
+      expectedLinks.sort(sortById),
+    );
     await drag(saved + " .is-source", b); await page.mouse.up();
     assert.equal(mutations.length, 2);
     assert.equal((await snapshot()).find((l: {id:string})=>l.id===link.id).source, a);
@@ -342,7 +353,9 @@ try {
     await page.locator(".is-reconnecting").waitFor({state:"detached"});
     await enter();await page.locator(saved).waitFor();assert.equal((await snapshot()).find((l:{id:string})=>l.id===link.id).source,b);
     console.log("PASS real API conflict: same-screen concurrent update, conditional 409, retained unsaved draft, no retry, explicit cancel refresh and fresh edit/reload");
-    console.log("PASS real SB saved-link draft: zero writes before completion, same ID and metadata, direction/reload, Undo/Redo");
+    console.log(
+      `PASS real ${originalMap.type} saved-link draft: zero writes before completion, same ID and metadata, direction/reload, Undo/Redo`,
+    );
   } else {
     await page.locator(saved + " .link-connector-label").dblclick();
     assert.equal(await page.locator(".is-reconnecting").count(), 0);
