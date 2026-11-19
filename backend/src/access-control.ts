@@ -100,15 +100,20 @@ export async function learnerMayAccessMap(
   return result.rowCount === 1;
 }
 
-export function accessControl(pool: Pool) {
+export function accessControl(pool: Pool, scopeMode?: "observationReceipts") {
+  const receiptLookup = scopeMode === "observationReceipts";
+  const unavailable = { error: "observation_receipt_lookup_unavailable" };
   return async (request: Request, response: Response, next: NextFunction) => {
     response.setHeader("Cache-Control", "no-store");
     if (request.path === "/health") return next();
     const match = /^Bearer ([A-Za-z0-9_-]{32,128})$/.exec(request.header("authorization") ?? "");
     if (!match) return response.status(401).json({ error: "authentication_required" });
+    const receiptSession = typeof request.params.sessionId === "string" ? request.params.sessionId.toLowerCase() : "";
+    if (receiptLookup && !uuid.test(receiptSession)) return response.status(404).json({ error: "not_found" });
     const hash = tokenHash(match[1]);
     let principal: Principal = {role:"learner",sessionId:"",kitId:""};
     if (timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(researcherHash, "hex"))) {
+      if (receiptLookup) return response.status(404).json({ error: "not_found" });
       principal = { role: "researcher" };
     } else {
       try {
@@ -119,8 +124,9 @@ export function accessControl(pool: Pool) {
         );
         const session = result.rows[0];
         if (!session) {
-          const deleted = await pool.query("SELECT queue_key FROM research_identity.revocations WHERE token_hash=$1",[hash]);
+          const deleted = await pool.query(receiptLookup ? "SELECT 1 FROM research_identity.revocations WHERE token_hash=$1" : "SELECT queue_key FROM research_identity.revocations WHERE token_hash=$1", [hash]);
           if (deleted.rowCount) {
+            if (receiptLookup) return response.status(410).json({ error: "research_data_deleted" });
             if (request.path === "/deletion-ack" && request.method === "POST" && typeof request.body?.clientId === "string" && uuid.test(request.body.clientId) && Object.keys(request.body).length===1) {
               await pool.query("UPDATE research_identity.device_deletions SET acknowledged=true WHERE token_hash=$1 AND client_hash=$2",[hash,tokenHash(request.body.clientId)]);
               return response.json({acknowledged:true});
@@ -132,6 +138,11 @@ export function accessControl(pool: Pool) {
             if(proof){
               principal={role:"learner",sessionId:proof.sessionId,kitId:proof.kitId,experiment:proof};
               response.locals.principal=principal;
+              if (receiptLookup) {
+                if (proof.sessionId !== receiptSession) return response.status(404).json({ error: "not_found" });
+                // The lookup repeats authorization in the receipt read transaction.
+                return next();
+              }
               const run=(await pool.query("SELECT r.state,r.ended_at FROM experiment_runs r JOIN experiment_run_sessions p ON p.run_id=r.id WHERE p.session_id=$1",[proof.sessionId])).rows[0];
               if(!run)return response.status(409).json({error:"experiment_membership_unavailable"});
               if(request.path==="/experiment-status"&&request.method==="GET")return response.json({state:run.state,endedAt:run.ended_at});
@@ -145,11 +156,15 @@ export function accessControl(pool: Pool) {
               if(request.path==="/experiment-material"&&request.method==="GET")return next();
 
             }
-          }catch(error){return response.status(error instanceof ParticipantAccessError?error.status:503).json({error:error instanceof ParticipantAccessError?error.code:"access_storage_unavailable",message:"アクセス状態を確認できません。研究者に確認してください。"});}
+          }catch(error){
+            if (receiptLookup) return error instanceof ParticipantAccessError
+              ? response.status(error.status).json({ error: error.code }) : response.status(503).json(unavailable);
+            return response.status(error instanceof ParticipantAccessError?error.status:503).json({error:error instanceof ParticipantAccessError?error.code:"access_storage_unavailable",message:"アクセス状態を確認できません。研究者に確認してください。"});}
           if(principal.role!=="learner"||!principal.experiment)return response.status(401).json({ error: "authentication_required" });
         }
+        if (receiptLookup) return response.status(404).json({ error: "not_found" });
         if(session)principal = { role: "learner", sessionId: session.id, kitId: session.kitId };
-      } catch (error) { return next(error); }
+      } catch (error) { if (receiptLookup) return response.status(503).json(unavailable); return next(error); }
     }
     response.locals.principal = principal;
     const scope=principal.role==="learner"?"LEARNER:"+principal.sessionId:"RESEARCHER";

@@ -64,6 +64,8 @@ DB管理者の直接改変、trigger無効化、認証hashの読み出し権限�
 | POST .../:sessionId/client-switch | 研究者、同じ実施/Session/認証世代の候補UUID、expectedDeviceGeneration | 200。画面世代・所有候補・受付票・監査を原子的に確定 |
 | POST /api/experiment-client/claim | 認証hashから導いた本人Session。本文は空objectのみ。X-Experiment-Clientの秘密をhash照合 | 所有画面200、別候補409。いずれも学習不可 |
 
+コード再発行は、同じ参加者が同じSessionへ再入場する場合に限る。別の参加者には新しいSessionを作成する。有効な現行コードと登録済みの現行画面を持つ参加者は、実施中に本人Sessionの過去の観測記録を既存受付票と照合できる。受付票は当時の認証世代や画面の真正性を証明しない。
+
 コード平文は32 random bytesをbase64url化した43文字で、COMMIT後の最初の成功応答だけに含む。DB・ログ・監査・受付票・要求digestに平文を保存しない。クライアント秘密も同じくhashのみ保存。
 
 同じ操作キーをadvisory transaction lockで直列化し、違う内容の使い回しは409。同一要求再送では元受付結果メタデータを返すが、`issuedCode:null / codeDelivery:NOT_REPLAYED`とし、Session作成やコード更新を繰り返さない。成功監査は元の原子的受付と対応し、再送のたびに新しい管理操作が成立したとは数えない。
