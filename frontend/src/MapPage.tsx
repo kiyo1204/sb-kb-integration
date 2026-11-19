@@ -6962,16 +6962,18 @@ export function ReadOnlyMapSnapshot({
   );
 }
 
-function IntegrationConceptMergeForm({
+export function IntegrationConceptMergeForm({
   concepts,
   disabled,
   onCancel,
   onMerge,
+  localPractice = false,
 }: {
   concepts: Concept[];
   disabled: boolean;
   onCancel: () => Promise<void>;
   onMerge: (conceptIds: [string, string], label: string) => Promise<void>;
+  localPractice?: boolean;
 }) {
   const [firstConceptId, setFirstConceptId] = useState("");
   const [secondConceptId, setSecondConceptId] = useState("");
@@ -7128,7 +7130,8 @@ function IntegrationConceptMergeForm({
             <p className="integration-concept-merge-summary">
               「{firstConcept.label}」と「{secondConcept.label}
               」から新しいConceptを作成します。
-              元ConceptとProvenanceはDBに保持されます。
+              元ConceptとProvenanceは
+              {localPractice ? "練習画面内だけに保持されます。" : "DBに保持されます。"}
             </p>
           )}
           <button type="submit" disabled={saving || disabled || !canMerge}>

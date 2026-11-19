@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { ConceptCanvas } from "./MapPage";
+import IntegrationPractice from "./IntegrationPractice";
 
 type Concept = {
   id: string;
@@ -30,8 +31,27 @@ const kitLinks = [
 let sequence = 0;
 const id = () => `practice-${++sequence}`;
 
+type PracticeMode = "PRIOR" | "KB";
+type PracticeTask = { key: string; label: string };
+// Guidance only: no research events, network calls, persistence, or grading.
+const practiceTasks: Record<PracticeMode, PracticeTask[]> = {
+  PRIOR: [
+    { key: "concept.add", label: "概念を追加する" },
+    { key: "concept.rename", label: "概念の名前を変更する" },
+    { key: "concept.move", label: "概念をドラッグで移動する" },
+    { key: "link.add", label: "リンクの両端をつないで作成する" },
+    { key: "link.reconnect", label: "リンクの接続先を変更する" },
+    { key: "element.delete", label: "概念またはリンクを削除する" },
+  ],
+  KB: [
+    { key: "kit.concept", label: "Kitの概念を配置する" },
+    { key: "kit.link", label: "Kitのリンクを配置して両端を接続する" },
+    { key: "link.reconnect", label: "リンクの接続先を変更する" },
+  ],
+};
+
 export default function TutorialPage({ returnHref, onExit }: { returnHref: string; onExit?: () => void }) {
-  const [mode, setMode] = useState<"PRIOR" | "KB">("PRIOR");
+  const [mode, setMode] = useState<PracticeMode | "INTEGRATION">("PRIOR");
   const [reset, setReset] = useState(0);
 
   return (
@@ -75,6 +95,18 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
           </button>
           <button
             type="button"
+            className={
+              mode === "INTEGRATION"
+                ? "session-primary-button"
+                : "session-secondary-button"
+            }
+            aria-pressed={mode === "INTEGRATION"}
+            onClick={() => setMode("INTEGRATION")}
+          >
+            統合マップの練習
+          </button>
+          <button
+            type="button"
             className="session-secondary-button"
             onClick={() => setReset((current) => current + 1)}
           >
@@ -89,14 +121,18 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
           className="tutorial-practice-area"
           aria-labelledby="tutorial-practice-heading"
         >
-          <PracticeCanvas key={`${mode}-${reset}`} mode={mode} />
+          {mode === "INTEGRATION" ? (
+            <IntegrationPractice key={`${mode}-${reset}`} />
+          ) : (
+            <PracticeCanvas key={`${mode}-${reset}`} mode={mode} />
+          )}
         </section>
       </section>
     </main>
   );
 }
 
-function PracticeCanvas({ mode }: { mode: "PRIOR" | "KB" }) {
+function PracticeCanvas({ mode }: { mode: PracticeMode }) {
   const [concepts, setConcepts] = useState<Concept[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
   const [usedConcepts, setUsedConcepts] = useState<string[]>([]);
@@ -110,12 +146,19 @@ function PracticeCanvas({ mode }: { mode: "PRIOR" | "KB" }) {
   const [selectedConcept, setSelectedConcept] = useState<string | null>(null);
   const [selectedLink, setSelectedLink] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
+  const [completedTasks, setCompletedTasks] = useState<string[]>([]);
+  const tasks = practiceTasks[mode];
+  const complete = (key: string) =>
+    setCompletedTasks((current) =>
+      current.includes(key) ? current : [...current, key],
+    );
 
   function addConcept(label: string, positionX: number, positionY: number) {
     setConcepts((list) => [
       ...list,
       { id: id(), label, positionX, positionY, createdAt: "", updatedAt: "" },
     ]);
+    if (mode === "PRIOR") complete("concept.add");
   }
 
   function createLink(
@@ -128,6 +171,7 @@ function PracticeCanvas({ mode }: { mode: "PRIOR" | "KB" }) {
       ...list,
       { id: linkId, mapId, sourceConceptId, targetConceptId, label },
     ]);
+    complete(mode === "PRIOR" ? "link.add" : "kit.link");
     return linkId;
   }
 
@@ -155,6 +199,26 @@ function PracticeCanvas({ mode }: { mode: "PRIOR" | "KB" }) {
       <p className="tutorial-practice-description">
         {instructions} 矢印の先が関係先です。
       </p>
+      <section className="tutorial-task-progress" aria-label="操作練習の課題">
+        <h3>練習する操作</h3>
+        <p role="status">
+          {tasks.filter((task) => completedTasks.includes(task.key)).length} / {tasks.length} 件達成
+        </p>
+        <ol>
+          {tasks.map((task) => (
+            <li key={task.key}>
+              <span aria-hidden="true">
+                {completedTasks.includes(task.key) ? "✓" : "○"}
+              </span>{" "}
+              {task.label}
+              <span className="tutorial-task-result">
+                {completedTasks.includes(task.key) ? "完了" : "未完了"}
+              </span>
+            </li>
+          ))}
+        </ol>
+        <p>課題は練習画面内で実際に操作を完了したときだけ達成扱いです。学習成績ではありません。</p>
+      </section>
 
       {mode === "PRIOR" && (
         <div className="tutorial-tools" aria-label="概念とリンクの追加">
@@ -214,6 +278,9 @@ function PracticeCanvas({ mode }: { mode: "PRIOR" | "KB" }) {
             event.preventDefault();
             if (!editLabel.trim()) return;
             if (selectedConcept) {
+              const previous = concepts.find((c) => c.id === selectedConcept);
+              if (previous && previous.label !== editLabel.trim())
+                complete("concept.rename");
               setConcepts((list) =>
                 list.map((concept) =>
                   concept.id === selectedConcept
@@ -282,14 +349,19 @@ function PracticeCanvas({ mode }: { mode: "PRIOR" | "KB" }) {
         canEditLinkLabel={mode === "PRIOR"}
         positionSaving={false}
         positionFeedback={null}
-        onLabelSave={async (conceptId, label) =>
+        onLabelSave={async (conceptId, label) => {
+          const previous = concepts.find((concept) => concept.id === conceptId);
+          if (mode === "PRIOR" && previous && previous.label !== label)
+            complete("concept.rename");
           setConcepts((list) =>
             list.map((concept) =>
               concept.id === conceptId ? { ...concept, label } : concept,
             ),
-          )
-        }
+          );
+        }}
         onConceptDelete={async (conceptId) => {
+          if (mode === "PRIOR" && concepts.some((c) => c.id === conceptId))
+            complete("element.delete");
           setConcepts((list) =>
             list.filter((concept) => concept.id !== conceptId),
           );
@@ -308,18 +380,27 @@ function PracticeCanvas({ mode }: { mode: "PRIOR" | "KB" }) {
             ),
           )
         }
-        onLinkReconnect={async (link, sourceConceptId, targetConceptId) =>
+        onLinkReconnect={async (link, sourceConceptId, targetConceptId) => {
+          if (
+            links.some((candidate) => candidate.id === link.id) &&
+            (link.sourceConceptId !== sourceConceptId ||
+              link.targetConceptId !== targetConceptId)
+          ) {
+            complete("link.reconnect");
+          }
           setLinks((list) =>
             list.map((candidate) =>
               candidate.id === link.id
                 ? { ...candidate, sourceConceptId, targetConceptId }
                 : candidate,
             ),
-          )
-        }
-        onLinkDelete={async (linkId) =>
-          setLinks((list) => list.filter((link) => link.id !== linkId))
-        }
+          );
+        }}
+        onLinkDelete={async (linkId) => {
+          if (mode === "PRIOR" && links.some((link) => link.id === linkId))
+            complete("element.delete");
+          setLinks((list) => list.filter((link) => link.id !== linkId));
+        }}
         onKitConceptDrop={async (itemId, position) => {
           const item = kitConcepts.find(
             (concept) => concept.kitConceptItemId === itemId,
@@ -327,6 +408,7 @@ function PracticeCanvas({ mode }: { mode: "PRIOR" | "KB" }) {
           if (item && !usedConcepts.includes(itemId)) {
             addConcept(item.label, position.positionX, position.positionY);
             setUsedConcepts((list) => [...list, itemId]);
+            complete("kit.concept");
           }
         }}
         onKitLinkCreate={async (_mapId, itemId, source, target) => {
@@ -336,7 +418,12 @@ function PracticeCanvas({ mode }: { mode: "PRIOR" | "KB" }) {
           return createLink(source, target, item.label);
         }}
         onDragStart={() => undefined}
-        onPositionSave={async (conceptId, position) => {
+        onPositionSave={async (conceptId, position, originalPosition) => {
+          if (
+            mode === "PRIOR" &&
+            (position.positionX !== originalPosition.positionX ||
+              position.positionY !== originalPosition.positionY)
+          ) complete("concept.move");
           setConcepts((list) =>
             list.map((concept) =>
               concept.id === conceptId ? { ...concept, ...position } : concept,
