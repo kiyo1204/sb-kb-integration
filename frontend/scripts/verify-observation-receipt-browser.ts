@@ -35,11 +35,22 @@ async function snapshot() {
   try {
     const stores = [...database.objectStoreNames];
     const transaction = database.transaction(stores, "readonly");
-    return await Promise.all(stores.map(store => new Promise((resolve, reject) => {
-      const read = transaction.objectStore(store).getAll();
-      read.onsuccess = () => resolve(read.result);
-      read.onerror = () => reject(read.error);
-    })));
+    const completed = new Promise((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error ?? Error("snapshot_transaction_aborted"));
+    });
+    try {
+      const rows = await Promise.all(stores.map(store => new Promise((resolve, reject) => {
+        const read = transaction.objectStore(store).getAll();
+        read.onsuccess = () => resolve(read.result);
+        read.onerror = () => reject(read.error);
+      })));
+      await completed;
+      return rows;
+    } catch (error) {
+      await completed.catch(() => undefined);
+      throw error;
+    }
   } finally { database.close(); }
 }
 
@@ -191,3 +202,4 @@ try {
 } finally {
   await server?.close();
 }
+
