@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import type { Pool, PoolClient } from "pg";
 import { principalOf } from "./access-control.js";
+import { buildResearchWorkbook, loadWorkbookEvents, ResearchWorkbookLimitError } from "./research-workbook.js";
 import {
   buildSessionRawExport,
   type SessionRawExport,
@@ -107,7 +108,7 @@ export function experimentStatesCsv(rows: Array<Record<string, unknown>>) {
 
 /** Bulk reads share one DB snapshot and the existing request safety budget. No R05 joins. */
 export function registerExperimentResearchRoutes(app: Express, pool: Pool) {
-  for (const suffix of ["research", "research.json", "research.csv"])
+  for (const suffix of ["research", "research.json", "research.csv", "research.xlsx"])
     app.get(
       `/api/research/experiment-runs/:runId/${suffix}`,
       async (req, res) => {
@@ -179,9 +180,19 @@ export function registerExperimentResearchRoutes(app: Express, pool: Pool) {
             },
             client,
           );
-          const body = suffix.endsWith(".csv")
-            ? experimentStatesCsv(data.sessions.flatMap(experimentStateRows))
-            : data;
+          const body = suffix.endsWith(".xlsx")
+            ? await buildResearchWorkbook({
+                run: data.run,
+                sessions: data.sessions,
+                stateRows: data.sessions.flatMap(experimentStateRows),
+                events: await loadWorkbookEvents(client, ids.map((row) => String(row.session_id))),
+                sampledAt: (await client.query<{ snapshotAt: Date }>(
+                  'SELECT transaction_timestamp() AS "snapshotAt"',
+                )).rows[0]!.snapshotAt.toISOString(),
+              })
+            : suffix.endsWith(".csv")
+              ? experimentStatesCsv(data.sessions.flatMap(experimentStateRows))
+              : data;
           await client.query("COMMIT");
           client.release();
           client = null;
@@ -198,23 +209,30 @@ export function registerExperimentResearchRoutes(app: Express, pool: Pool) {
               "Content-Disposition",
               `attachment; filename="run-${runId}-research.json"`,
             );
-          return typeof body === "string" ? res.send(body) : res.json(body);
+          if (suffix.endsWith(".xlsx"))
+            res
+              .set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+              .set("Content-Disposition", `attachment; filename="run-${runId}-research.xlsx"`)
+              .set("Cache-Control", "no-store");
+          return Buffer.isBuffer(body) ? res.send(body) : typeof body === "string" ? res.send(body) : res.json(body);
         } catch (error) {
           await rollbackAndRelease();
           // Response and audit use the same fixed safety classification.
           const code = (error as { code?: string })?.code;
+          const workbookLimit = error instanceof ResearchWorkbookLimitError;
           const safety =
             code === "safety_budget_exceeded" ||
             code === "safety_lookup_unavailable";
-          const status = code === "safety_budget_exceeded" ? 422 : 503;
+          const status = workbookLimit ? 413 : code === "safety_budget_exceeded" ? 422 : 503;
           await writeRunAudit(
             pool,
             "READ",
             runId,
             status,
-            safety ? code! : "research_unavailable",
+            workbookLimit ? "research_workbook_limit" : safety ? code! : "research_unavailable",
           ).catch(() => undefined);
           if (respondResearchSafetyError(res, error)) return;
+          if (workbookLimit) return res.status(413).json({error: "research_workbook_limit"});
           return res
             .status(status)
             .json({

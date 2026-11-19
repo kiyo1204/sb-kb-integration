@@ -171,6 +171,7 @@ try {
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:link-reconnection-browser", true);
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:link-direction-api");
   await run("test:experiment-research");
+  await run("test:research-workbook");
   await run("test:r05-storage");
   assert.ok(selected.every(name=>results.some(r=>r.test===name)),"unknown selected verification");
   console.log("Isolated research event suite: PASS");
