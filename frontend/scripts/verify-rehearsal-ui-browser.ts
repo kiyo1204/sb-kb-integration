@@ -504,16 +504,31 @@ try {
     await tutorialPage.getByLabel("概念の名前").fill("合成概念");
     await tutorialPage.getByRole("button", { name: "概念を追加" }).click();
     assert.equal(await tutorialPage.locator(".concept-node").count(), 1);
+    assert.equal(
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "1 / 6 件達成",
+      "creating a saved local concept completes only the add task",
+    );
     await tutorialPage
       .getByRole("button", { name: "最初からやり直す" })
       .click();
     assert.equal(await tutorialPage.locator(".concept-node").count(), 0);
+    assert.equal(
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "0 / 6 件達成",
+      "reset clears practice progress as well as the graph",
+    );
     await tutorialPage.getByRole("button", { name: "Kit-Buildの練習" }).click();
     assert.equal(
       await tutorialPage
         .getByRole("heading", { name: "Kit-Buildの練習" })
         .count(),
       1,
+    );
+    assert.equal(
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "0 / 3 件達成",
+      "switching modes clears the prior mode's progress",
     );
     await captureBeforeAfter(
       tutorialPage,
@@ -528,6 +543,52 @@ try {
       "true",
     );
     assert.equal(await tutorialPage.locator(".tutorial-tools form").count(), 0);
+    await tutorialPage.getByRole("button", { name: "統合マップの練習" }).click();
+    await tutorialPage.getByRole("heading", { name: "統合マップの練習" }).waitFor();
+    assert.equal(await tutorialPage.locator(".concept-node").count(), 2);
+    assert.equal(
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "0 / 7 件達成",
+    );
+    const mergePanel = tutorialPage.getByRole("region", { name: "Concept Merge" });
+    await mergePanel.getByLabel("Concept A").selectOption("practice-sb-a");
+    await mergePanel.getByLabel("Concept B").selectOption("practice-sb-b");
+    await mergePanel.getByLabel("Merge後のlabel").fill("点AB");
+    tutorialPage.once("dialog", async (dialog) => dialog.accept());
+    await mergePanel.getByRole("button", { name: "Merge", exact: true }).click();
+    assert.equal(await tutorialPage.locator(".concept-node").count(), 1);
+    assert.equal(
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "1 / 7 件達成",
+    );
+    await tutorialPage.getByRole("button", { name: "元に戻す（Undo）" }).click();
+    assert.equal(await tutorialPage.locator(".concept-node").count(), 2);
+    await tutorialPage.getByRole("button", { name: "やり直す（Redo）" }).click();
+    assert.equal(await tutorialPage.locator(".concept-node").count(), 1);
+    assert.equal(
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "3 / 7 件達成",
+    );
+    const mergedNode = tutorialPage.locator(".concept-node").first();
+    await mergedNode.click();
+    const releaseButton = tutorialPage.getByRole("button", {
+      name: "Merge結果を削除して1段階解除",
+    });
+    await releaseButton.waitFor();
+    tutorialPage.once("dialog", async (dialog) => dialog.accept());
+    await releaseButton.click();
+    assert.equal(await tutorialPage.locator(".concept-node").count(), 2);
+    assert.equal(
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "4 / 7 件達成",
+    );
+    await tutorialPage.getByRole("button", { name: "最初からやり直す" }).click();
+    assert.equal(await tutorialPage.locator(".concept-node").count(), 2);
+    assert.equal(
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "0 / 7 件達成",
+    );
+    assert.equal(tutorialApiRequests.length, 0, "all three practice modes are API-free");
     await tutorialContext.close();
 
     const homeContext = await browser.newContext({

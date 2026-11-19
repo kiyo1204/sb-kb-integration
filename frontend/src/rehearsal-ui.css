@@ -224,6 +224,32 @@
   color: var(--ink-soft);
   line-height: 1.65;
 }
+.tutorial-task-progress {
+  margin: 12px 0 20px;
+  padding: 14px 18px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.tutorial-task-progress h3 { margin: 0 0 6px; }
+.tutorial-task-progress p { margin: 6px 0; color: var(--ink-soft); }
+.tutorial-task-progress ol { margin: 8px 0; padding-left: 1.7em; line-height: 1.8; }
+.tutorial-task-progress li { padding: 3px 0; }
+.tutorial-task-result { margin-left: 12px; color: var(--ink-soft); font-size: 0.9em; }
+.tutorial-integration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+.tutorial-integration-actions button { min-height: 40px; }
+.tutorial-integration-actions button:disabled { opacity: .55; cursor: not-allowed; }
+.tutorial-integration-tools { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.tutorial-integration-tools form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.tutorial-integration-tools label { display: grid; gap: 4px; }
+.tutorial-integration-tools input { min-height: 40px; }
+.tutorial-integration-tools button { min-height: 40px; }
 .tutorial-tools form {
   display: flex;
   flex-wrap: wrap;
