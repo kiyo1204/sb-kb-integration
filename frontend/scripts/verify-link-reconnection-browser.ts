@@ -17,8 +17,8 @@ const map = {
   sessionStageId: stage,
   sessionStageStatus: "IN_PROGRESS",
   sessionProtocolKey: "SBKB_INTEGRATION_V1",
-  kitDefinitionId: null,
-  kitDefinitionName: null,
+  kitDefinitionId: null as string | null,
+  kitDefinitionName: null as string | null,
   basedOnMapId: null,
   submittedAt: null,
   concepts: [5, 6, 7].map((n, i) => ({
@@ -39,12 +39,12 @@ const map = {
       targetConceptId: id(6),
       labelPositionX: 450,
       labelPositionY: 180,
-      kitLinkItemId: null,
-      provenance: [],
+      kitLinkItemId: null as string | null,
+      provenance: [] as unknown[],
     },
   ],
   kitConcepts: [],
-  kitLinks: [],
+  kitLinks: [] as { kitLinkItemId: string; label: string; used: boolean }[],
   availableKitDefinitions: [],
 };
 const vite = await createServer({ server: { host: "127.0.0.1", port: 0 } });
@@ -223,6 +223,7 @@ try {
       await page.locator(root + " .link-connector-label").dblclick();
       await region.waitFor();
     }
+
     async function cancel() {
       await page
         .getByRole("button", { name: "接続編集を取消", exact: true })
@@ -552,9 +553,101 @@ try {
     assert.equal(await savedEdge.getAttribute("aria-label"), savedLabel);
     assert.equal(await page.getByText("接続を保存しました。", { exact: true }).count(), 0);
 
+    // New-flow KB reuses the saved-link draft without releasing its Kit part.
+    // Only synthetic API fixtures are used; no existing research DB is touched.
+    const kbPartId = id(44);
+    map.type = "KB";
+    map.kitDefinitionId = id(45);
+    map.kitDefinitionName = "Synthetic Kit";
+    map.kitLinks = [{ kitLinkItemId: kbPartId, label: savedLink.label, used: true }];
+    map.links = [
+      { ...savedLink, kitLinkItemId: kbPartId, provenance: [{ kitLinkItemId: kbPartId }] },
+    ];
+    const kitOriginal = structuredClone(map.links[0]);
+    const kbInitialPatches = patches;
+    await page.reload();
+    await page.locator(root).waitFor();
+    const kitPart = page.locator(".kit-palette-part.is-link");
+    assert.equal(await kitPart.count(), 1);
+    assert.equal(await kitPart.isDisabled(), true);
+    assert.match(await kitPart.innerText(), /使用済み/);
+    await begin();
+    assert.equal(await page.locator(root + ".is-reconnecting").count(), 1);
+    assert.equal(await kitPart.isDisabled(), true, "saved Kit part must stay used during draft");
+    assert.match(await kitPart.innerText(), /使用済み/);
+    assert.equal(await page.getByRole("button", { name: "一時提出", exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "最終提出", exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "元に戻す", exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "やり直す", exact: true }).isDisabled(), true);
+    assert.match(await page.locator("#kb-submission-guidance").innerText(), /接続編集中/);
+    assert.equal(patches, kbInitialPatches, "detach must not write the saved link");
+    await drag(page, "source", id(5));
+    assert.equal(patches, kbInitialPatches, "one-sided KB draft must not PATCH");
+    await cancel();
+    assert.deepEqual(map.links[0], kitOriginal, "cancel restores the same saved Kit link");
+    assert.equal(await kitPart.isDisabled(), true);
+    await begin();
+    await drag(page, "source", id(5));
+    await page.reload();
+    await page.locator(root).waitFor();
+    assert.equal(await page.locator(".is-reconnecting").count(), 0);
+    assert.deepEqual(map.links[0], kitOriginal, "reload discards the unsaved KB draft");
+    assert.equal(patches, kbInitialPatches);
+    await begin();
+    await drag(page, "source", id(5));
+    reject = true;
+    const rejectedKB = page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/links/${lid}/reconnect`,
+    );
+    await drag(page, "target", id(6));
+    assert.equal((await rejectedKB).status(), 503);
+    await page.locator(".is-reconnecting").waitFor();
+    assert.equal(await kitPart.isDisabled(), true);
+    assert.deepEqual(map.links[0], kitOriginal, "failed PATCH cannot free or change the Kit link");
+    reject = false;
+    await cancel();
+    assert.equal(patches, kbInitialPatches + 1);
+    await begin();
+    await drag(page, "source", id(5));
+    const savedKB = page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/links/${lid}/reconnect`,
+    );
+    await drag(page, "target", id(6));
+    assert.equal((await savedKB).status(), 200);
+    await page.locator(".is-reconnecting").waitFor({ state: "detached" });
+    assert.equal(patches, kbInitialPatches + 2);
+    assert.equal(map.links[0].id, kitOriginal.id);
+    assert.equal(map.links[0].sourceConceptId, id(5));
+    assert.equal(map.links[0].targetConceptId, id(6));
+    assert.equal(map.links[0].label, kitOriginal.label);
+    assert.equal(map.links[0].labelPositionX, kitOriginal.labelPositionX);
+    assert.equal(map.links[0].labelPositionY, kitOriginal.labelPositionY);
+    assert.equal(map.links[0].kitLinkItemId, kitOriginal.kitLinkItemId);
+    assert.deepEqual(map.links[0].provenance, kitOriginal.provenance);
+    assert.equal(map.kitLinks[0].used, true);
+    assert.equal(await kitPart.isDisabled(), true);
+    await page.reload();
+    await page.locator(root).waitFor();
+    assert.equal(await kitPart.isDisabled(), true, "reloaded Kit part remains used");
+    assert.equal(await page.getByRole("button", { name: "接続を編集", exact: true }).count(), 0);
+    await page.locator(root + " .link-connector-label").click();
+
+    // KBの単クリックでは、ダブルクリックとの競合を防ぐため
+    // 編集欄が少し遅れて開く。
+    const editConnectionButton = page.getByRole("button", {
+      name: "接続を編集",
+      exact: true,
+    });
+
+    await editConnectionButton.waitFor({ state: "visible" });
+    assert.equal(await editConnectionButton.count(), 1);
+
+
+    map.kitDefinitionId = null;
+    map.kitDefinitionName = null;
+    map.kitLinks = [];
     map.links = [savedLink];
     for (const [type, protocol] of [
-      ["KB", "SBKB_INTEGRATION_V1"],
       ["INTEGRATION", "SBKB_INTEGRATION_V1"],
       ["PRIOR", "STAGE1_4"],
     ]) {
