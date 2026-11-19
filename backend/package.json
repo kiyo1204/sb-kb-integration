@@ -66,7 +66,8 @@
     "test:r05-execution": "tsx src/scripts/verify-r05-execution.ts",
     "test:experiment-research": "tsx src/scripts/verify-experiment-research.ts",
     "test:experiment-flow-config": "tsx src/scripts/verify-experiment-flow-config.ts",
-    "test:experiment-enablement": "tsx src/scripts/verify-experiment-enablement.ts"
+    "test:experiment-enablement": "tsx src/scripts/verify-experiment-enablement.ts",
+    "test:research-workbook": "tsx src/scripts/verify-research-workbook.ts"
   },
   "dependencies": {
     "express": "^5.1.0",

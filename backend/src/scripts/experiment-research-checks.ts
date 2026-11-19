@@ -1,4 +1,5 @@
 import {checkExportPool} from "./experiment-export-pool-checks.js";
+import { assertWorkbookApiConsistency } from "./research-workbook-api-checks.js";
 // TEST ONLY: called by the real learner-flow fixture in a fresh guarded mock DB.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -124,6 +125,7 @@ export async function checkExperimentResearch(input: {
     `/research/sessions/${sessionIds[0]}/export`,
     `/research/experiment-runs/${runId}/research.json`,
     `/research/experiment-runs/${runId}/research.csv`,
+    `/research/experiment-runs/${runId}/research.xlsx`,
   ]) {
     await get(path, 401, "");
     await get(path, 403, learner);
@@ -132,6 +134,11 @@ export async function checkExperimentResearch(input: {
     await get(`/research/experiment-runs/${runId}/research.json`)
   ).json();
   assert.equal(all.outputContract, "sbkb-integration-research-v1");
+  const workbookResponse = await get(`/research/experiment-runs/${runId}/research.xlsx`);
+  assert.match(workbookResponse.headers.get("content-type") ?? "", /^application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
+  const workbookBytes = Buffer.from(await workbookResponse.arrayBuffer());
+  assert.equal(workbookBytes.subarray(0, 2).toString(), "PK");
+  await assertWorkbookApiConsistency(workbookBytes, runId, all.sessions as SessionRawExport[]);
   assert.equal(all.run.registeredSessions, sessionIds.length);
   assert.equal(all.run.plannedParticipants, 1);
   assert.deepEqual(

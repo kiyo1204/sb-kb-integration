@@ -358,6 +358,22 @@ export default function ExperimentParticipantsPage({
                 >
                   実施のMap状態CSV
                 </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void downloadApiFile(
+                      `/api/research/experiment-runs/${runId}/research.xlsx`,
+                    ).catch((e) =>
+                      setError(
+                        e instanceof Error
+                          ? e.message
+                          : "研究用Excelを取得できませんでした。出力上限と対象データを確認してください。",
+                      ),
+                    )
+                  }
+                >
+                  実施の研究用Excel（11シート）
+                </button>
               </p>
               <form className="participant-register" onSubmit={register}>
                 <label htmlFor="participant-label">
