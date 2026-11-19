@@ -45,7 +45,7 @@ const map = {
   ],
   kitConcepts: [],
   kitLinks: [] as { kitLinkItemId: string; label: string; used: boolean }[],
-  availableKitDefinitions: [],
+  availableKitDefinitions: [] as { id: string; name: string }[],
 };
 const vite = await createServer({ server: { host: "127.0.0.1", port: 0 } });
 await vite.listen();
@@ -647,8 +647,105 @@ try {
     map.kitDefinitionName = null;
     map.kitLinks = [];
     map.links = [savedLink];
+
+    // New-flow integration: saved-link edits must be exclusive with Merge
+    // and Kit assignment, and never persist half-connected links.
+    map.type = "INTEGRATION";
+    map.sessionProtocolKey = "SBKB_INTEGRATION_V1";
+    map.availableKitDefinitions = [{ id: id(45), name: "Synthetic Kit" }];
+    const integrationOriginal = structuredClone(map.links[0]);
+    const integrationPatches = patches;
+    await page.reload();
+    await page.locator(root).waitFor();
+    const mergeSelect = page.locator(".integration-concept-merge-form select").first();
+    const kitSelect = page.locator("#integration-kit-definition");
+    assert.equal(await mergeSelect.isDisabled(), false);
+    assert.equal(await kitSelect.isDisabled(), false);
+    await begin();
+    assert.equal(await page.locator(root + ".is-reconnecting").count(), 1);
+    assert.equal(await mergeSelect.isDisabled(), true, "Merge must be blocked during reconnect");
+    assert.equal(await kitSelect.isDisabled(), true, "Kit assignment must be blocked during reconnect");
+    assert.equal(await page.getByRole("button", { name: "最終提出", exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "元に戻す", exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "やり直す", exact: true }).isDisabled(), true);
+    await drag(page, "source", id(7));
+    assert.equal(patches, integrationPatches, "one endpoint must not persist");
+    await cancel();
+    assert.deepEqual(map.links[0], integrationOriginal);
+    assert.equal(await mergeSelect.isDisabled(), false);
+    assert.equal(await kitSelect.isDisabled(), false);
+
+    await begin();
+    await drag(page, "source", id(7));
+    await page.reload();
+    await page.locator(root).waitFor();
+    assert.equal(await page.locator(".is-reconnecting").count(), 0);
+    assert.deepEqual(map.links[0], integrationOriginal, "reload discards integration draft");
+    assert.equal(patches, integrationPatches);
+
+    await begin();
+    await drag(page, "source", id(7));
+    reject = true;
+    const rejectedIntegration = page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/links/${lid}/reconnect`,
+    );
+    await drag(page, "target", id(5));
+    assert.equal((await rejectedIntegration).status(), 503);
+    await page.locator(root + ".is-reconnecting").waitFor();
+    assert.equal(await page.locator(".is-reconnecting").count(), 1);
+    assert.deepEqual(map.links[0], integrationOriginal, "failed reconnect preserves source link");
+    reject = false;
+    await cancel();
+    assert.equal(patches, integrationPatches + 1);
+
+    await begin();
+    await drag(page, "source", id(7));
+    const savedIntegration = page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/links/${lid}/reconnect`,
+    );
+    await drag(page, "target", id(5));
+    assert.equal((await savedIntegration).status(), 200);
+    await page.locator(".is-reconnecting").waitFor({ state: "detached" });
+    assert.equal(patches, integrationPatches + 2);
+    assert.equal(map.links[0].id, integrationOriginal.id);
+    assert.equal(map.links[0].sourceConceptId, id(7));
+    assert.equal(map.links[0].targetConceptId, id(5));
+    assert.equal(map.links[0].label, integrationOriginal.label);
+    assert.equal(map.links[0].labelPositionX, integrationOriginal.labelPositionX);
+    assert.equal(map.links[0].labelPositionY, integrationOriginal.labelPositionY);
+    assert.deepEqual(map.links[0].provenance, integrationOriginal.provenance);
+    await page.reload();
+    await page.locator(root).waitFor();
+    assert.equal(map.links[0].sourceConceptId, id(7));
+    assert.equal(await mergeSelect.isDisabled(), false);
+
+    // A stale source (e.g. rewritten in another tab by Merge) must stop the
+    // integration draft before it issues PATCH.
+    const integratedSaved = structuredClone(map.links[0]);
+    await begin();
+    map.links[0] = { ...integratedSaved, sourceConceptId: id(5) };
+    await drag(page, "source", id(7));
+    await drag(page, "target", id(6));
+    await page.getByText(
+      "保存元のリンクが変更または削除されたため、接続編集を停止しました。再読込して確認してください。",
+      { exact: true },
+    ).waitFor();
+    assert.equal(patches, integrationPatches + 2, "stale Merge source must not PATCH");
+    await page.reload();
+    await page.locator(root).waitFor();
+
+    await begin();
+    ended = true;
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await page.getByRole("heading", { name: "実施は終了しました", exact: true }).waitFor();
+    assert.equal(await page.locator(".is-reconnecting").count(), 0);
+    assert.equal(patches, integrationPatches + 2, "activity end must not save draft");
+    ended = false;
+
+    map.availableKitDefinitions = [];
+    map.links = [savedLink];
     for (const [type, protocol] of [
-      ["INTEGRATION", "SBKB_INTEGRATION_V1"],
+      ["INTEGRATION", "STAGE1_6"],
       ["PRIOR", "STAGE1_4"],
     ]) {
       map.type = type;
