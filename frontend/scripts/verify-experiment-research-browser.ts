@@ -56,10 +56,20 @@ try {
       .count(),
     0,
   );
+  // The researcher view now selects a saved map before opening provenance.
+  const picker = page.getByRole("group", { name: "保存マップを選択" });
+  const prior = picker.getByRole("button", { name: /Scratch-Build/ });
+  await prior.click();
   await page
-    .getByText("Scratch-Buildの保存状態・出所情報", { exact: true })
-    .click();
-  await page.getByText("CLONED_FROM", { exact: false }).first().waitFor();
+    .getByRole("heading", { name: "表示中：Scratch-Build", exact: true })
+    .waitFor();
+  assert.equal(await prior.getAttribute("aria-pressed"), "true");
+  await page.locator(".analysis-map-provenance summary").click();
+  await page
+    .locator(".analysis-map-provenance")
+    .getByText("CLONED_FROM", { exact: false })
+    .first()
+    .waitFor();
   if(process.env.EXPERIMENT_MISSING_SNAPSHOT==="1") {
     const section=page.locator("section.session-card").filter({has:page.getByRole("heading",{name:"統合開始時・受理済み提出状態",exact:true})});
     await section.getByText("状態記録なし／算出不可：INITIAL_SNAPSHOT_MISSING_OR_INVALID",{exact:true}).first().waitFor();

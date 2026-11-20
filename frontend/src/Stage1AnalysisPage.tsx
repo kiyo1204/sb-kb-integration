@@ -61,6 +61,11 @@ const CATEGORIES = [
 const operationNames: Record<string, string> = { ADD_CONCEPT: "概念を追加", EDIT_CONCEPT: "概念を変更", MOVE_LINK: "関係の位置を移動", MOVE_CONCEPT: "概念を移動", DELETE_CONCEPT: "概念を削除", ADD_LINK: "関係を追加", EDIT_LINK: "関係を変更", RECONNECT_LINK: "関係の接続を変更", DELETE_LINK: "関係を削除", IMPORT_KIT_CONCEPT: "キットの概念を追加", IMPORT_KIT_LINK: "キットの関係を追加", MERGE_CONCEPT: "概念を統合", UNDO: "操作を元に戻す", REDO: "操作をやり直す" };
 const operationName = (type: string) => operationNames[type] ?? `その他の操作（${type}）`;
 const mapName = (type: string) => ({ PRIOR: "Scratch-Build", KB: "Kit-Build", INTEGRATION: "統合マップ" } as Record<string,string>)[type] ?? type;
+function savedMapStatus(status: string) {
+  if (status === "SUBMITTED") return "提出済み";
+  if (status === "DRAFT") return "下書き（未提出）";
+  return `保存状態：${status}（提出済みとは限りません）`;
+}
 const elapsed = (ms: number | null) => ms === null ? "不明" : `${Math.floor(ms / 60000)}分${Math.floor(ms / 1000) % 60}秒`;
 const activityNames: Record<string,string> = { LESSON:"授業動画", PRIOR_MAP:"Scratch-Build", KB_MAP:"Kit-Build", INTEGRATION_MAP:"統合マップ", PRE_ASSESSMENT:"事前評価", POST_ASSESSMENT:"事後評価", SELF_STUDY:"個人学習", SURVEY:"アンケート" };
 const statusNames: Record<string,string> = { COMPLETED:"完了", IN_PROGRESS:"進行中", NOT_STARTED:"未開始", PENDING:"未開始", SKIPPED:"スキップ" };
@@ -252,16 +257,31 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
     const next=replayOperations[sequence-1];
     setSelectedOperationId(next?.id??"");
   }
+  function selectAnalysisMap(mapId: string) {
+    if (mapId === selectedMapId) return;
+    setSelectedMapId(mapId);
+    setHistoryLoading(true);
+    setHistorySequence(0);
+    setSelectedOperationId("");
+    setSelectedLinkId("");
+    setRatingOperationId("");
+  }
   return (
     <main className={`page stage1-analysis-page${data?.session.protocolKey==="SBKB_INTEGRATION_V1"?" experiment-analysis":""}`}>
       <section className="session-card stage1-analysis-header">
         <div className="stage1-analysis-heading">
-          <p className="eyebrow">研究者用</p>
-          <h1>再構成行動の分析</h1>
+          <p className="eyebrow">研究者用 / 参加者別記録</p>
+          <h1>{data?.experiment ? "参加者別の保存マップ・履歴" : "再構成行動の分析"}</h1>
           <p>フロー：{!data?"記録確認中":data.session.protocolKey==="SBKB_INTEGRATION_V1"?"SB/KB統合（アンケートなし）":data.session.protocolKey==="STAGE1_5"?"5活動（群なし・アンケート）":data.session.protocolKey==="STAGE1_6"?"6活動（群別・事前事後評価）":"4活動（旧形式）"}</p>
           <p>セッション：{sessionId} 仮名ID：{data?.session.participantCode??"—"}</p>
+          {data?.experiment && <p className="analysis-reading-note">実施管理から開いた参加者の保存記録です。マップの表示操作では研究データを変更しません。</p>}
         </div>
-        <div className="stage1-analysis-exports" role="group" aria-label="データ出力">
+        {data?.experiment && <nav className="analysis-jump-links" aria-label="ページ内の移動">
+          <a href="#analysis-saved-maps">保存されたマップ</a>
+          <a href="#analysis-map-history">操作履歴</a>
+          <a href="#analysis-research-export">研究用出力</a>
+        </nav>}
+        <div id="analysis-research-export" className="stage1-analysis-exports" role="group" aria-label="データ出力">
           <strong>研究用データを出力</strong>
           <button type="button" onClick={() => void downloadApiFile(`/api/research/sessions/${sessionId}/export`).catch(e => setError(e instanceof Error ? e.message : "JSONを取得できませんでした。"))}>生データJSON</button>
           <button type="button" onClick={() => void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/operations.csv`).catch(e => setError(e instanceof Error ? e.message : "CSVを取得できませんでした。"))}>操作イベントCSV</button>
@@ -300,21 +320,47 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
               {stage.startedAt&&stage.completedAt&&Number.isFinite(Date.parse(stage.startedAt))&&Number.isFinite(Date.parse(stage.completedAt))&&<div><dt>記録時刻の差</dt><dd>{elapsed(Math.max(0,Date.parse(stage.completedAt)-Date.parse(stage.startedAt)))}</dd></div>}</dl>
             </li>)}</ol>}
           </section>
-          <section className="session-card">
-            <h2>保存されたマップ</h2>
-            <p>{data.experiment?"保存時点のMapです。未提出状態も含みます。出所情報は現在の保存行と過去snapshotを区別して確認してください。":"既存のマップ Editorを提出後read-onlyとして再利用します。完成形と操作履歴は別の情報です。"}</p>
-            <div className="stage1-analysis-stats">
-              {data.maps.map(m=>(
-                <div className="stage1-analysis-stat" key={m.id}>
-                  <strong>{mapName(m.type)}</strong>
-                  <span>概念：{m.concepts.length} / 命題：{m.links.length}</span>
-                  {data.experiment ? <details><summary>{mapName(m.type)}の保存状態・出所情報</summary>
-                    <ReadOnlyMapSnapshot snapshot={{snapshotVersion:1,mapId:m.id,mapType:m.type,basedOnMapId:m.basedOnMapId??null,kitDefinitionId:m.kitDefinitionId??null,concepts:m.concepts,links:m.links} as HistoricalMapSnapshot} title={`${mapName(m.type)}：保存時点（${m.status}）`} allowZoom/>
-                    <pre>{JSON.stringify({conceptProvenance:m.conceptProvenance,linkProvenance:m.linkProvenance},null,2)}</pre></details>
-                    : <a href={`/maps/${m.id}`}>完成マップを表示</a>}
+          <section className="session-card analysis-saved-maps" id="analysis-saved-maps" aria-labelledby="analysis-saved-maps-heading">
+            <h2 id="analysis-saved-maps-heading">保存されたマップ</h2>
+            <p>{data.experiment?"保存時点のマップを閲覧します。下書きと提出済みは区別して表示します。現在の保存行と操作履歴の復元状態は別の情報です。":"既存のマップ Editorを提出後read-onlyとして再利用します。完成形と操作履歴は別の情報です。"}</p>
+            {data.maps.length === 0 && <p role="status">保存マップの記録はありません。</p>}
+            {data.experiment ? <>
+              <div className="analysis-map-picker" role="group" aria-label="保存マップを選択">
+                {data.maps.map(m=>(
+                  <button type="button" key={m.id}
+                    className={`analysis-map-choice${selectedMapId === m.id ? " is-selected" : ""}`}
+                    aria-pressed={selectedMapId === m.id}
+                    onClick={() => selectAnalysisMap(m.id)}>
+                    <strong>{mapName(m.type)}</strong>
+                    <span className="analysis-map-status">{savedMapStatus(m.status)}</span>
+                    <span>概念 {m.concepts.length}件 · 関係 {m.links.length}件</span>
+                  </button>
+                ))}
+              </div>
+              {map && <div className="analysis-selected-map">
+                <div className="analysis-selected-map-heading">
+                  <h3>表示中：{mapName(map.type)}</h3>
+                  <span>{savedMapStatus(map.status)}</span>
                 </div>
-              ))}
-            </div>
+                <p>表示倍率の変更やスクロールは閲覧専用です。ここでの操作によって保存内容は変わりません。</p>
+                <ReadOnlyMapSnapshot key={map.id}
+                  snapshot={{snapshotVersion:1,mapId:map.id,mapType:map.type,basedOnMapId:map.basedOnMapId??null,kitDefinitionId:map.kitDefinitionId??null,concepts:map.concepts,links:map.links} as HistoricalMapSnapshot}
+                  title={`${mapName(map.type)}：保存時点（${savedMapStatus(map.status)}）`} allowZoom/>
+                <details className="analysis-map-provenance">
+                  <summary>このマップの出所情報・保存状態を確認</summary>
+                  <p>保存状態：{map.status}。以下は現在の保存行の出所情報で、履歴再生や提出時のsnapshotを示すものではありません。</p>
+                  {map.conceptProvenance === undefined && map.linkProvenance === undefined
+                    ? <p>出所情報は取得されていません。</p>
+                    : <pre>{JSON.stringify({conceptProvenance:map.conceptProvenance,linkProvenance:map.linkProvenance},null,2)}</pre>}
+                </details>
+              </div>}
+            </> : <div className="stage1-analysis-stats">
+              {data.maps.map(m=><div className="stage1-analysis-stat" key={m.id}>
+                <strong>{mapName(m.type)}</strong>
+                <span>概念：{m.concepts.length} / 命題：{m.links.length}</span>
+                <a href={`/maps/${m.id}`}>完成マップを表示</a>
+              </div>)}
+            </div>}
           </section>
           {data.integrationStates && <section className="session-card"><h2>統合開始時・受理済み提出状態</h2>
             <div className="map-history-compare">{(["start","submission"] as const).map(point=>{const record=data.integrationStates![point];return <div key={point}>
@@ -323,7 +369,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
               {record.state?<ReadOnlyMapSnapshot snapshot={record.state} title={point==="start"?"保存された初期snapshot":"受理された提出snapshot"} allowZoom/>:<p>状態記録なし／算出不可：{record.reason==="NOT_SUBMITTED"?"未提出":record.reason}</p>}
               {record.state&&<details><summary>この時点の出所情報</summary><pre>{JSON.stringify(record.state,null,2)}</pre></details>}
             </div>;})}</div></section>}
-          <section className="session-card map-history-section">
+          <section className="session-card map-history-section" id="analysis-map-history">
             <h2>マップ操作履歴</h2>
             <p>活動概要とは別に、記録されたマップ操作を時系列で確認できます。行を展開すると記録済みの詳細を表示します。</p>
             <label>対象マップ

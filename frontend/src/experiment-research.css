@@ -25,3 +25,88 @@
 .experiment-analysis select {
   max-width: 100%;
 }
+
+/* Researcher-facing saved map browser: clear selection and full-width preview. */
+.experiment-analysis .analysis-jump-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 10px 0;
+}
+.experiment-analysis .analysis-jump-links a {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  font-weight: 600;
+}
+.experiment-analysis .analysis-reading-note {
+  color: var(--ink-soft);
+}
+.experiment-analysis .analysis-saved-maps,
+.experiment-analysis .map-history-section {
+  scroll-margin-top: 20px;
+}
+.experiment-analysis .analysis-map-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 12px;
+  margin: 16px 0 20px;
+}
+.experiment-analysis .analysis-map-choice {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  justify-items: start;
+  padding: 14px 16px;
+  border: 2px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.experiment-analysis .analysis-map-choice.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.experiment-analysis .analysis-map-choice > strong {
+  font-size: 1rem;
+}
+.experiment-analysis .analysis-map-status {
+  color: var(--accent);
+  font-weight: 700;
+}
+.experiment-analysis .analysis-selected-map {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+}
+.experiment-analysis .analysis-selected-map-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.experiment-analysis .analysis-selected-map-heading h3 {
+  margin: 0;
+}
+.experiment-analysis .analysis-selected-map-heading span {
+  color: var(--accent);
+  font-weight: 700;
+}
+.experiment-analysis .analysis-selected-map .map-history-preview {
+  min-width: 0;
+  max-width: 100%;
+}
+.experiment-analysis .analysis-map-provenance {
+  margin-top: 12px;
+}
+@media (max-width: 600px) {
+  .experiment-analysis .analysis-selected-map { padding: 10px; }
+  .experiment-analysis .analysis-jump-links a { flex: 1 1 auto; text-align: center; }
+}
