@@ -1,5 +1,6 @@
 // Synthetic display fixtures only. No database, credentials or real participant data.
 import assert from "node:assert/strict";
+import { requestDigest } from "../src/client-identity";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -247,9 +248,11 @@ async function assertNoHorizontalOverflow(page: Page, name: string, width: numbe
 async function dispatchSyntheticKitLinkDrop(page: Page) {
   const { types, accepted } = await page.evaluate(() => {
     const linkPart = document.querySelector<HTMLButtonElement>(
-      ".kit-palette-part.is-link:not(:disabled)",
+      '.tutorial-practice-panel:not([hidden]) .kit-palette-part.is-link:not(:disabled)',
     );
-    const canvas = document.querySelector<HTMLElement>(".concept-canvas");
+    const canvas = document.querySelector<HTMLElement>(
+      '.tutorial-practice-panel:not([hidden]) .concept-canvas',
+    );
     if (!linkPart || !canvas) {
       throw new Error("Kitリンク部品またはCanvasが見つかりません");
     }
@@ -417,8 +420,8 @@ try {
     const practiceLink = practiceCard.getByRole("button", { name: /練習を開く/ });
     assert.equal(
       await p02Page.getByRole("button", { name: "セッションを開始", exact: true }).isEnabled(),
-      true,
-      "practice is optional and the normal start action remains available",
+      false,
+      "session start stays disabled until all three practice modes are completed",
     );
     assert.equal(await p02Page.locator(".map-editor-page").count(), 0);
     await assertNoHorizontalOverflow(p02Page, "p02-practice-card", width);
@@ -442,12 +445,11 @@ try {
     await practiceLink.click();
     assert.equal(new URL(p02Page.url()).pathname, "/");
     await p02Page.getByRole("heading", { name: "操作の練習" }).waitFor();
-    await p02Page.waitForFunction(
-      (sessionId) =>
-        Array.from(document.querySelectorAll("a")).some(
-          (link) => link.textContent?.includes("練習を終了") && link.getAttribute("href") === `/sessions/${sessionId}`,
-        ),
-      "00000000-0000-4000-8000-000000000001",
+    await p02Page.getByRole("button", { name: "練習を終了", exact: true }).waitFor();
+    assert.equal(
+      await p02Page.getByRole("button", { name: "練習を終了", exact: true }).isDisabled(),
+      true,
+      "incomplete practice cannot be marked finished",
     );
     assert.equal(
       await p02Page.evaluate(() => sessionStorage.getItem("stage1-access-token")),
@@ -463,14 +465,14 @@ try {
       false,
       "inline practice only reads existing flow access; no learning/map/logging writes",
     );
-    assert.equal(
-      await p02Page.getByRole("link", { name: "練習を終了" }).getAttribute("href"),
-      "/sessions/00000000-0000-4000-8000-000000000001",
-      "tutorial return points to this learner's session",
-    );
-    await p02Page.getByRole("link", { name: "練習を終了" }).click();
+    await p02Page.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
     await p02Page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
     assert.equal(await p02Page.locator(".session-practice-card").count(), 1);
+    assert.equal(
+      await p02Page.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(),
+      true,
+      "returning before finishing cannot unlock the session",
+    );
     assert.equal(p02ApiObservations.filter(request => request.path === "/api/experiment-client/claim").length, claimsBeforePractice, "practice does not regenerate client registration (including StrictMode setup)");
     assert.equal(
       await p02Page.evaluate(() => sessionStorage.getItem("stage1-access-token")),
@@ -579,9 +581,15 @@ try {
       viewport: { width, height },
       deviceScaleFactor: 1,
     });
-    await startContext.addInitScript((token) => {
+    await startContext.addInitScript(({ token, completionKey }) => {
       sessionStorage.setItem("stage1-access-token", token);
-    }, learnerToken);
+      // Synthetic fixture: this separate start-flow scenario assumes practice
+      // was already completed. Real completion is tested by tutorial gestures.
+      sessionStorage.setItem(completionKey, "1");
+    }, {
+      token: learnerToken,
+      completionKey: `sbkb-practice-complete-v1:00000000-0000-4000-8000-000000000001:${requestDigest(learnerToken)}`,
+    });
     const startPage = await startContext.newPage();
     await installApiFixture(startPage, "p02");
     await startPage.goto(vite.resolvedUrls!.local[0]!);
@@ -630,6 +638,7 @@ try {
     });
     await tutorialPage.goto(`${vite.resolvedUrls!.local[0]}tutorial`);
     await tutorialPage.getByRole("heading", { name: "操作の練習" }).waitFor();
+    const activeTutorialPanel = tutorialPage.locator(".tutorial-practice-panel:not([hidden])");
     assert.match(
       await tutorialPage.locator(".tutorial-heading").innerText(),
       /通常の学習Sessionとは別.*保存しません/s,
@@ -640,10 +649,13 @@ try {
       "tutorial does not call the API",
     );
     assert.equal(
-      await tutorialPage
-        .getByRole("link", { name: "練習を終了" })
-        .getAttribute("href"),
-      "/",
+      await tutorialPage.getByRole("button", { name: "練習を終了" }).isDisabled(),
+      true,
+      "practice cannot end before all three modes are complete",
+    );
+    assert.equal(
+      await tutorialPage.getByRole("button", { name: "最初からやり直す" }).count(),
+      0,
     );
     await captureBeforeAfter(tutorialPage, "tutorial-prior", width, directory);
     assert.equal(
@@ -656,33 +668,24 @@ try {
     assert.equal(await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).isDisabled(), true);
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     assert.equal(await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).isDisabled(), true);
-    await tutorialPage.getByLabel("概念の名前").fill("合成概念");
+    await tutorialPage.getByLabel("概念の名前").fill("合成A");
     await tutorialPage.getByRole("button", { name: "概念を追加" }).click();
-    assert.equal(await tutorialPage.locator(".concept-node").count(), 1);
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1);
     assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
       "1 / 6 件達成",
       "creating a saved local concept completes only the add task",
     );
-    await tutorialPage
-      .getByRole("button", { name: "最初からやり直す" })
-      .click();
-    assert.equal(await tutorialPage.locator(".concept-node").count(), 0);
-    assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "0 / 6 件達成",
-      "reset clears practice progress as well as the graph",
-    );
-    // Complete each Scratch-Build task by performing a real canvas operation.
-    for (const label of ["合成A", "合成B", "合成C"]) {
+    // Keep the first concept and finish SB without resetting the practice map.
+    for (const label of ["合成B", "合成C"]) {
       await tutorialPage.getByLabel("概念の名前").fill(label);
       await tutorialPage.getByRole("button", { name: "概念を追加" }).click();
     }
-    assert.equal(await tutorialPage.locator(".concept-node").count(), 3);
-    await tutorialPage.locator(".concept-node").first().click();
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 3);
+    await activeTutorialPanel.locator(".concept-node").first().click();
     await tutorialPage.getByLabel("選択した名前を編集").fill("合成A変更");
-    await tutorialPage.locator(".tutorial-edit").getByRole("button", { name: "変更" }).click();
-    const moving = await tutorialPage.locator(".concept-node").first().boundingBox();
+    await activeTutorialPanel.locator(".tutorial-edit").getByRole("button", { name: "変更" }).click();
+    const moving = await activeTutorialPanel.locator(".concept-node").first().boundingBox();
     assert.ok(moving, "first SB concept has a bounding box");
     await tutorialPage.mouse.move(moving.x + 30, moving.y + 30);
     await tutorialPage.mouse.down();
@@ -692,42 +695,42 @@ try {
     await tutorialPage.getByRole("button", { name: "リンクを追加" }).click();
 
     const connectTemporary = async (source: number, target: number) => {
-      await tutorialPage.locator(".link-connector.is-temporary .link-connector-handle.is-source")
-        .first().dragTo(tutorialPage.locator(".concept-node").nth(source));
-      await tutorialPage.locator(".link-connector.is-temporary .link-connector-handle.is-target")
-        .first().dragTo(tutorialPage.locator(".concept-node").nth(target));
-      await tutorialPage.locator(".link-connector.is-temporary").first()
+      await activeTutorialPanel.locator(".link-connector.is-temporary .link-connector-handle.is-source")
+        .first().dragTo(activeTutorialPanel.locator(".concept-node").nth(source));
+      await activeTutorialPanel.locator(".link-connector.is-temporary .link-connector-handle.is-target")
+        .first().dragTo(activeTutorialPanel.locator(".concept-node").nth(target));
+      await activeTutorialPanel.locator(".link-connector.is-temporary").first()
         .waitFor({ state: "detached" });
     };
     await connectTemporary(0, 1);
-    await tutorialPage.locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
-      .first().dragTo(tutorialPage.locator(".concept-node").nth(2));
-    await tutorialPage.locator(".concept-node").nth(2).click();
+    await activeTutorialPanel.locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
+      .first().dragTo(activeTutorialPanel.locator(".concept-node").nth(2));
+    await activeTutorialPanel.locator(".concept-node").nth(2).click();
     await tutorialPage.getByRole("button", { name: "選択した要素を削除" }).click();
     assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
       "6 / 6 件達成",
       "all six SB tasks are completed by actual interactions",
     );
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).click();
     await tutorialPage.getByRole("heading", { name: "Kit-Buildの練習" }).waitFor();
-    assert.equal(await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).isDisabled(), true);
+    assert.equal(await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).isDisabled(), false);
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
       "0 / 3 件達成",
     );
     await captureBeforeAfter(tutorialPage, "tutorial-kit-build", width, directory);
-    assert.equal(await tutorialPage.locator(".tutorial-tools form").count(), 0);
-    const canvas = tutorialPage.locator(".concept-canvas");
+    assert.equal(await activeTutorialPanel.locator(".tutorial-tools form").count(), 0);
+    const canvas = activeTutorialPanel.locator(".concept-canvas");
 
     for (const [index, x, y] of [
       [0, 150, 130],
       [1, 440, 170],
       [2, 720, 130],
     ]) {
-      const part = tutorialPage
+      const part = activeTutorialPanel
         .locator(".kit-palette-part.is-concept")
         .nth(index);
 
@@ -745,7 +748,7 @@ try {
         try {
           await tutorialPage.waitForFunction(
             (count) =>
-              document.querySelectorAll(".concept-node").length >= count,
+              document.querySelectorAll(".tutorial-practice-panel:not([hidden]) .concept-node").length >= count,
             expected,
             { timeout: 2000 }
           );
@@ -755,10 +758,10 @@ try {
         }
       }
 
-      const actual = await tutorialPage.locator(".concept-node").count();
+      const actual = await activeTutorialPanel.locator(".concept-node").count();
 
       if (actual !== expected) {
-        const feedback = await tutorialPage
+        const feedback = await activeTutorialPanel
           .locator(".kit-palette-feedback")
           .allInnerTexts();
 
@@ -770,26 +773,26 @@ try {
       }
     }
     assert.equal(
-      await tutorialPage.locator(".kit-palette-part.is-link").first().isEnabled(),
+      await activeTutorialPanel.locator(".kit-palette-part.is-link").first().isEnabled(),
       true,
       "KBリンク部品が使用可能である",
     );
 
     // Canvas左上の空白部分へドラッグ
-    await tutorialPage.locator(".kit-palette-part.is-link").first()
+    await activeTutorialPanel.locator(".kit-palette-part.is-link").first()
       .dragTo(canvas, {
         targetPosition: { x: 30, y: 30 },
         steps: 16,
       });
 
-    const temporaryLink = tutorialPage.locator(".link-connector.is-temporary");
+    const temporaryLink = activeTutorialPanel.locator(".link-connector.is-temporary");
 
     if (await temporaryLink.count() === 0) {
-      const feedback = await tutorialPage
+      const feedback = await activeTutorialPanel
         .locator(".kit-palette-feedback")
         .allInnerTexts();
 
-      const linkParts = await tutorialPage
+      const linkParts = await activeTutorialPanel
         .locator(".kit-palette-part.is-link")
         .allInnerTexts();
 
@@ -801,18 +804,18 @@ try {
     }
 
     await connectTemporary(0, 1);
-    await tutorialPage.locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
-      .first().dragTo(tutorialPage.locator(".concept-node").nth(2));
+    await activeTutorialPanel.locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
+      .first().dragTo(activeTutorialPanel.locator(".concept-node").nth(2));
     assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
       "3 / 3 件達成",
       "all three KB tasks are completed by actual interactions",
     );
     await tutorialPage.getByRole("button", { name: "次へ：統合マップの練習", exact: true }).click();
     await tutorialPage.getByRole("heading", { name: "統合マップの練習" }).waitFor();
-    assert.equal(await tutorialPage.locator(".concept-node").count(), 2);
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
     assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
       "0 / 7 件達成",
     );
     const mergePanel = tutorialPage.getByRole("region", { name: "Concept Merge" });
@@ -821,20 +824,20 @@ try {
     await mergePanel.getByLabel("Merge後のlabel").fill("点AB");
     tutorialPage.once("dialog", async (dialog) => dialog.accept());
     await mergePanel.getByRole("button", { name: "Merge", exact: true }).click();
-    assert.equal(await tutorialPage.locator(".concept-node").count(), 1);
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1);
     assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
       "1 / 7 件達成",
     );
     await tutorialPage.getByRole("button", { name: "元に戻す（Undo）" }).click();
-    assert.equal(await tutorialPage.locator(".concept-node").count(), 2);
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
     await tutorialPage.getByRole("button", { name: "やり直す（Redo）" }).click();
-    assert.equal(await tutorialPage.locator(".concept-node").count(), 1);
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1);
     assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
       "3 / 7 件達成",
     );
-    const mergedNode = tutorialPage.locator(".concept-node").first();
+    const mergedNode = activeTutorialPanel.locator(".concept-node").first();
     await mergedNode.click();
     const releaseButton = tutorialPage.getByRole("button", {
       name: "Merge結果を削除して1段階解除",
@@ -842,15 +845,15 @@ try {
     await releaseButton.waitFor();
     tutorialPage.once("dialog", async (dialog) => dialog.accept());
     await releaseButton.click();
-    assert.equal(await tutorialPage.locator(".concept-node").count(), 2);
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
     assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
       "4 / 7 件達成",
     );
     assert.equal(await tutorialPage.getByText("すべてのマップの操作練習が完了しました。").count(), 0);
-    const integrationCanvas = tutorialPage.locator(".concept-canvas");
+    const integrationCanvas = activeTutorialPanel.locator(".concept-canvas");
 
-    const kitConceptPart = tutorialPage
+    const kitConceptPart = activeTutorialPanel
       .locator(".kit-palette-part.is-concept")
       .first();
 
@@ -867,7 +870,7 @@ try {
     });
 
     // Kitから取り込んだ「形」の概念を確認
-    const integrationKitConcept = tutorialPage
+    const integrationKitConcept = activeTutorialPanel
       .locator(".concept-node")
       .filter({ hasText: "形" });
 
@@ -877,11 +880,11 @@ try {
         timeout: 5000,
       });
     } catch {
-      const feedback = await tutorialPage
+      const feedback = await activeTutorialPanel
         .locator(".kit-palette-feedback")
         .allInnerTexts();
 
-      const concepts = await tutorialPage
+      const concepts = await activeTutorialPanel
         .locator(".concept-node")
         .allInnerTexts();
 
@@ -891,7 +894,7 @@ try {
         `配置結果: ${JSON.stringify(feedback)}`
       );
     }
-    const integrationLinkPart = tutorialPage
+    const integrationLinkPart = activeTutorialPanel
       .locator(".kit-palette-part.is-link")
       .first();
 
@@ -906,7 +909,7 @@ try {
     await dispatchSyntheticKitLinkDrop(tutorialPage);
 
     // 未接続リンクが生成されたことを確認
-    const integrationTemporarySource = tutorialPage
+    const integrationTemporarySource = activeTutorialPanel
       .locator(".link-connector.is-temporary .link-connector-handle.is-source")
       .first();
 
@@ -916,11 +919,11 @@ try {
         timeout: 5000,
       });
     } catch {
-      const feedback = await tutorialPage
+      const feedback = await activeTutorialPanel
         .locator(".kit-palette-feedback")
         .allInnerTexts();
 
-      const linkParts = await tutorialPage
+      const linkParts = await activeTutorialPanel
         .locator(".kit-palette-part.is-link")
         .allInnerTexts();
 
@@ -932,25 +935,37 @@ try {
     }
 
     await connectTemporary(0, 1);
-    await tutorialPage
+    await activeTutorialPanel
       .locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
       .first()
       .dragTo(integrationKitConcept);
     assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
       "7 / 7 件達成",
     );
     await tutorialPage.getByText("すべてのマップの操作練習が完了しました。").waitFor();
-    await tutorialPage.getByRole("button", { name: "最初からやり直す" }).click();
+    assert.equal(await tutorialPage.getByRole("button", { name: "練習を終了", exact: true }).isEnabled(), true);
+    await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).click();
     await tutorialPage.getByRole("heading", { name: "Scratch-Buildの練習" }).waitFor();
-    assert.equal(await tutorialPage.locator(".concept-node").count(), 0);
     assert.equal(
-      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "0 / 6 件達成",
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "6 / 6 件達成",
     );
-    assert.equal(await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).isDisabled(), true);
-    assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
+    assert.ok(await activeTutorialPanel.locator(".concept-node").count() > 0, "SB map is retained");
+    await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).click();
+    assert.equal(
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "3 / 3 件達成",
+    );
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 3, "KB map is retained");
+    await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).click();
+    assert.equal(
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "7 / 7 件達成",
+    );
     assert.equal(tutorialApiRequests.length, 0, "all three practice modes are API-free");
+    await tutorialPage.getByRole("button", { name: "練習を終了", exact: true }).click();
+    await tutorialPage.waitForURL(vite.resolvedUrls!.local[0]!);
     await tutorialContext.close();
 
     const homeContext = await browser.newContext({

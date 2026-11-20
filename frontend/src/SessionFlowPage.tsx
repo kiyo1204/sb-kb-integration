@@ -1,5 +1,6 @@
 import {Survey,ResearchSurvey} from "./Survey";
 import TutorialPage from "./TutorialPage";
+import { hasCompletedPractice, markPracticeCompleted } from "./practice-completion";
 import {LearnerDeliveryStatus,ResearchDeliveryStatus} from "./DeliveryStatus";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, uiText } from "./auth-client";
@@ -142,6 +143,7 @@ function SessionDashboard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [practicing, setPracticing] = useState(false);
+  const [practiceCompleted, setPracticeCompleted] = useState(() => hasCompletedPractice(sessionId));
   const [practiceBlocked, setPracticeBlocked] = useState(false);
   const [practiceConnectionUncertain, setPracticeConnectionUncertain] = useState(false);
   const [practiceRetry, setPracticeRetry] = useState(0);
@@ -349,6 +351,10 @@ function SessionDashboard({
   }
 
   async function startSession() {
+    if (isLearner && flow?.session.protocolKey === "SBKB_INTEGRATION_V1" && !practiceCompleted) {
+      setError("操作練習をすべて完了し、「練習を終了」を押してから開始してください。");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -470,7 +476,12 @@ function SessionDashboard({
     return (
       <div className="session-practice-wrapper">
         <div inert={practiceConnectionUncertain}>
-          <TutorialPage returnHref={`/sessions/${sessionId}`} onExit={() => {
+          <TutorialPage returnHref={`/sessions/${sessionId}`} onCancel={() => {
+            setPracticing(false);
+            setPracticeConnectionUncertain(false);
+          }} onExit={() => {
+            markPracticeCompleted(sessionId);
+            setPracticeCompleted(true);
             setPracticing(false);
             setPracticeConnectionUncertain(false);
           }} />
@@ -553,7 +564,7 @@ function SessionDashboard({
                 <div>
                   <h3 id="session-practice-heading">操作の練習</h3>
                   <p>
-                    必要に応じて、学習を始める前にマップ操作を試せます。練習は通常の学習Sessionとは別で、内容は保存されません。
+                    Scratch-Build、Kit-Build、統合マップの練習をすべて完了するとセッションを開始できます。練習は通常の学習Sessionとは別で、マップの操作内容は保存されません。
                   </p>
                 </div>
                 <button type="button" className="session-secondary-button" onClick={() => {
@@ -570,7 +581,14 @@ function SessionDashboard({
                 </a>
               </p>
             ) : null}
-            <button className="session-primary-button" type="button" disabled={busy} onClick={() => void startSession()}>
+            {isLearner && flow.session.protocolKey === "SBKB_INTEGRATION_V1" && (
+              <p role="status">{practiceCompleted
+                ? "すべての操作練習が完了しました。セッションを開始できます。"
+                : "セッション開始には、すべての操作練習の完了が必要です。"}</p>
+            )}
+            <button className="session-primary-button" type="button"
+              disabled={busy || (isLearner && flow.session.protocolKey === "SBKB_INTEGRATION_V1" && !practiceCompleted)}
+              onClick={() => void startSession()}>
               {busy ? "開始中…" : "セッションを開始"}
             </button>
           </div>
