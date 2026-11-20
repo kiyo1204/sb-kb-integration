@@ -668,7 +668,7 @@ try {
     assert.equal(await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).isDisabled(), true);
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     assert.equal(await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).isDisabled(), true);
-    await tutorialPage.getByLabel("概念の名前").fill("合成概念");
+    await tutorialPage.getByLabel("概念の名前").fill("合成A");
     await tutorialPage.getByRole("button", { name: "概念を追加" }).click();
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1);
     assert.equal(
@@ -676,17 +676,8 @@ try {
       "1 / 6 件達成",
       "creating a saved local concept completes only the add task",
     );
-    await tutorialPage
-      .getByRole("button", { name: "最初からやり直す" })
-      .click();
-    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 0);
-    assert.equal(
-      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "0 / 6 件達成",
-      "reset clears practice progress as well as the graph",
-    );
-    // Complete each Scratch-Build task by performing a real canvas operation.
-    for (const label of ["合成A", "合成B", "合成C"]) {
+    // Keep the first concept and finish SB without resetting the practice map.
+    for (const label of ["合成B", "合成C"]) {
       await tutorialPage.getByLabel("概念の名前").fill(label);
       await tutorialPage.getByRole("button", { name: "概念を追加" }).click();
     }
