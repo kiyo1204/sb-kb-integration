@@ -241,6 +241,75 @@ async function assertNoHorizontalOverflow(page: Page, name: string, width: numbe
   );
 }
 
+// This event-level check intentionally uses synthetic HTML5 drag events.
+// It exercises palette dragstart and Canvas dragover/drop handlers, not the native
+// pointer-driven drag-and-drop path. Keep that limitation explicit in the test.
+async function dispatchSyntheticKitLinkDrop(page: Page) {
+  const { types, accepted } = await page.evaluate(() => {
+    const linkPart = document.querySelector<HTMLButtonElement>(
+      ".kit-palette-part.is-link:not(:disabled)",
+    );
+    const canvas = document.querySelector<HTMLElement>(".concept-canvas");
+    if (!linkPart || !canvas) {
+      throw new Error("Kitリンク部品またはCanvasが見つかりません");
+    }
+
+    const dataTransfer = new DataTransfer();
+    linkPart.dispatchEvent(
+      new DragEvent("dragstart", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      }),
+    );
+
+    const types = Array.from(dataTransfer.types);
+    if (!types.includes("application/x-kbcm-kit-part")) {
+      throw new Error(
+        `ドラッグデータが生成されていません: ${JSON.stringify(types)}`,
+      );
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const x = rect.left + Math.min(90, rect.width / 2);
+    const y = rect.top + Math.min(300, rect.height / 2);
+    const dragOver = new DragEvent("dragover", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+      clientX: x,
+      clientY: y,
+    });
+    canvas.dispatchEvent(dragOver);
+    const accepted = dragOver.defaultPrevented;
+
+    if (accepted) {
+      canvas.dispatchEvent(
+        new DragEvent("drop", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+          clientX: x,
+          clientY: y,
+        }),
+      );
+    }
+    linkPart.dispatchEvent(
+      new DragEvent("dragend", {
+        bubbles: true,
+        dataTransfer,
+      }),
+    );
+    return { types, accepted };
+  });
+
+  assert.ok(
+    types.includes("application/x-kbcm-kit-part"),
+    "Kit link dragstart provides its expected MIME type",
+  );
+  assert.equal(accepted, true, "Canvas accepts the synthetic Kit link drop");
+}
+
 const directory = join(tmpdir(), "sbkb-ui-copy-common-terms-20261116");
 await mkdir(directory, { recursive: true });
 const vite = await createServer({
@@ -497,10 +566,14 @@ try {
     await captureBeforeAfter(tutorialPage, "tutorial-prior", width, directory);
     assert.equal(
       await tutorialPage
-        .getByRole("button", { name: "マップ作成の練習" })
+        .getByRole("button", { name: "Scratch-Buildの練習", exact: true })
         .getAttribute("aria-pressed"),
       "true",
+      "初期状態ではScratch-Buildが選択されている",
     );
+    assert.equal(await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).isDisabled(), true);
+    assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
+    assert.equal(await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).isDisabled(), true);
     await tutorialPage.getByLabel("概念の名前").fill("合成概念");
     await tutorialPage.getByRole("button", { name: "概念を追加" }).click();
     assert.equal(await tutorialPage.locator(".concept-node").count(), 1);
@@ -518,32 +591,142 @@ try {
       "0 / 6 件達成",
       "reset clears practice progress as well as the graph",
     );
-    await tutorialPage.getByRole("button", { name: "Kit-Buildの練習" }).click();
+    // Complete each Scratch-Build task by performing a real canvas operation.
+    for (const label of ["合成A", "合成B", "合成C"]) {
+      await tutorialPage.getByLabel("概念の名前").fill(label);
+      await tutorialPage.getByRole("button", { name: "概念を追加" }).click();
+    }
+    assert.equal(await tutorialPage.locator(".concept-node").count(), 3);
+    await tutorialPage.locator(".concept-node").first().click();
+    await tutorialPage.getByLabel("選択した名前を編集").fill("合成A変更");
+    await tutorialPage.locator(".tutorial-edit").getByRole("button", { name: "変更" }).click();
+    const moving = await tutorialPage.locator(".concept-node").first().boundingBox();
+    assert.ok(moving, "first SB concept has a bounding box");
+    await tutorialPage.mouse.move(moving.x + 30, moving.y + 30);
+    await tutorialPage.mouse.down();
+    await tutorialPage.mouse.move(moving.x + 100, moving.y + 75, { steps: 6 });
+    await tutorialPage.mouse.up();
+    await tutorialPage.getByLabel("リンクの名前").fill("合成リンク");
+    await tutorialPage.getByRole("button", { name: "リンクを追加" }).click();
+
+    const connectTemporary = async (source: number, target: number) => {
+      await tutorialPage.locator(".link-connector.is-temporary .link-connector-handle.is-source")
+        .first().dragTo(tutorialPage.locator(".concept-node").nth(source));
+      await tutorialPage.locator(".link-connector.is-temporary .link-connector-handle.is-target")
+        .first().dragTo(tutorialPage.locator(".concept-node").nth(target));
+      await tutorialPage.locator(".link-connector.is-temporary").first()
+        .waitFor({ state: "detached" });
+    };
+    await connectTemporary(0, 1);
+    await tutorialPage.locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
+      .first().dragTo(tutorialPage.locator(".concept-node").nth(2));
+    await tutorialPage.locator(".concept-node").nth(2).click();
+    await tutorialPage.getByRole("button", { name: "選択した要素を削除" }).click();
     assert.equal(
-      await tutorialPage
-        .getByRole("heading", { name: "Kit-Buildの練習" })
-        .count(),
-      1,
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "6 / 6 件達成",
+      "all six SB tasks are completed by actual interactions",
     );
+    assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
+    await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).click();
+    await tutorialPage.getByRole("heading", { name: "Kit-Buildの練習" }).waitFor();
+    assert.equal(await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).isDisabled(), true);
+    assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     assert.equal(
       await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
       "0 / 3 件達成",
-      "switching modes clears the prior mode's progress",
     );
-    await captureBeforeAfter(
-      tutorialPage,
-      "tutorial-kit-build",
-      width,
-      directory,
-    );
-    assert.equal(
-      await tutorialPage
-        .getByRole("button", { name: "Kit-Buildの練習" })
-        .getAttribute("aria-pressed"),
-      "true",
-    );
+    await captureBeforeAfter(tutorialPage, "tutorial-kit-build", width, directory);
     assert.equal(await tutorialPage.locator(".tutorial-tools form").count(), 0);
-    await tutorialPage.getByRole("button", { name: "統合マップの練習" }).click();
+    const canvas = tutorialPage.locator(".concept-canvas");
+
+    for (const [index, x, y] of [
+      [0, 150, 130],
+      [1, 440, 170],
+      [2, 720, 130],
+    ]) {
+      const part = tutorialPage
+        .locator(".kit-palette-part.is-concept")
+        .nth(index);
+
+      const expected = index + 1;
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await part.dragTo(canvas, {
+          targetPosition: {
+            x,
+            y: attempt === 0 ? y : 390,
+          },
+          steps: 16,
+        });
+
+        try {
+          await tutorialPage.waitForFunction(
+            (count) =>
+              document.querySelectorAll(".concept-node").length >= count,
+            expected,
+            { timeout: 2000 }
+          );
+          break;
+        } catch {
+          // 初回の配置が成立しなかった場合だけ再試行
+        }
+      }
+
+      const actual = await tutorialPage.locator(".concept-node").count();
+
+      if (actual !== expected) {
+        const feedback = await tutorialPage
+          .locator(".kit-palette-feedback")
+          .allInnerTexts();
+
+        throw new Error(
+          `KB概念 ${expected} 個目の配置に失敗しました。\n` +
+          `実際の概念数: ${actual}\n` +
+          `配置結果: ${JSON.stringify(feedback)}`
+        );
+      }
+    }
+    assert.equal(
+      await tutorialPage.locator(".kit-palette-part.is-link").first().isEnabled(),
+      true,
+      "KBリンク部品が使用可能である",
+    );
+
+    // Canvas左上の空白部分へドラッグ
+    await tutorialPage.locator(".kit-palette-part.is-link").first()
+      .dragTo(canvas, {
+        targetPosition: { x: 30, y: 30 },
+        steps: 16,
+      });
+
+    const temporaryLink = tutorialPage.locator(".link-connector.is-temporary");
+
+    if (await temporaryLink.count() === 0) {
+      const feedback = await tutorialPage
+        .locator(".kit-palette-feedback")
+        .allInnerTexts();
+
+      const linkParts = await tutorialPage
+        .locator(".kit-palette-part.is-link")
+        .allInnerTexts();
+
+      throw new Error(
+        "KBのリンク部品がCanvasへ配置されていません。\n" +
+        `パレットの状態: ${JSON.stringify(linkParts)}\n` +
+        `配置結果: ${JSON.stringify(feedback)}`
+      );
+    }
+
+    await connectTemporary(0, 1);
+    await tutorialPage.locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
+      .first().dragTo(tutorialPage.locator(".concept-node").nth(2));
+    assert.equal(
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "3 / 3 件達成",
+      "all three KB tasks are completed by actual interactions",
+    );
+    await tutorialPage.getByRole("button", { name: "次へ：統合マップの練習", exact: true }).click();
     await tutorialPage.getByRole("heading", { name: "統合マップの練習" }).waitFor();
     assert.equal(await tutorialPage.locator(".concept-node").count(), 2);
     assert.equal(
@@ -582,12 +765,109 @@ try {
       await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
       "4 / 7 件達成",
     );
-    await tutorialPage.getByRole("button", { name: "最初からやり直す" }).click();
-    assert.equal(await tutorialPage.locator(".concept-node").count(), 2);
+    assert.equal(await tutorialPage.getByText("すべてのマップの操作練習が完了しました。").count(), 0);
+    const integrationCanvas = tutorialPage.locator(".concept-canvas");
+
+    const kitConceptPart = tutorialPage
+      .locator(".kit-palette-part.is-concept")
+      .first();
+
+    assert.equal(
+      await kitConceptPart.getAttribute("draggable"),
+      "true",
+      "統合マップのKit概念がドラッグ可能である",
+    );
+
+    // Canvasの左上寄りにドロップする
+    await kitConceptPart.dragTo(integrationCanvas, {
+      targetPosition: { x: 30, y: 30 },
+      steps: 16,
+    });
+
+    // Kitから取り込んだ「形」の概念を確認
+    const integrationKitConcept = tutorialPage
+      .locator(".concept-node")
+      .filter({ hasText: "形" });
+
+    try {
+      await integrationKitConcept.waitFor({
+        state: "visible",
+        timeout: 5000,
+      });
+    } catch {
+      const feedback = await tutorialPage
+        .locator(".kit-palette-feedback")
+        .allInnerTexts();
+
+      const concepts = await tutorialPage
+        .locator(".concept-node")
+        .allInnerTexts();
+
+      throw new Error(
+        "統合マップでKit概念「形」を取り込めませんでした。\n" +
+        `概念一覧: ${JSON.stringify(concepts)}\n` +
+        `配置結果: ${JSON.stringify(feedback)}`
+      );
+    }
+    const integrationLinkPart = tutorialPage
+      .locator(".kit-palette-part.is-link")
+      .first();
+
+    assert.equal(
+      await integrationLinkPart.isEnabled(),
+      true,
+      "統合マップのKitリンクが使用可能である",
+    );
+
+    // This uses synthetic DOM drag events: it verifies the event handlers,
+    // but does not verify a user's physical drag-and-drop gesture.
+    await dispatchSyntheticKitLinkDrop(tutorialPage);
+
+    // 未接続リンクが生成されたことを確認
+    const integrationTemporarySource = tutorialPage
+      .locator(".link-connector.is-temporary .link-connector-handle.is-source")
+      .first();
+
+    try {
+      await integrationTemporarySource.waitFor({
+        state: "visible",
+        timeout: 5000,
+      });
+    } catch {
+      const feedback = await tutorialPage
+        .locator(".kit-palette-feedback")
+        .allInnerTexts();
+
+      const linkParts = await tutorialPage
+        .locator(".kit-palette-part.is-link")
+        .allInnerTexts();
+
+      throw new Error(
+        "統合マップのKitリンクが配置されませんでした。\n" +
+        `リンク部品: ${JSON.stringify(linkParts)}\n` +
+        `配置結果: ${JSON.stringify(feedback)}`
+      );
+    }
+
+    await connectTemporary(0, 1);
+    await tutorialPage
+      .locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
+      .first()
+      .dragTo(integrationKitConcept);
     assert.equal(
       await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "0 / 7 件達成",
+      "7 / 7 件達成",
     );
+    await tutorialPage.getByText("すべてのマップの操作練習が完了しました。").waitFor();
+    await tutorialPage.getByRole("button", { name: "最初からやり直す" }).click();
+    await tutorialPage.getByRole("heading", { name: "Scratch-Buildの練習" }).waitFor();
+    assert.equal(await tutorialPage.locator(".concept-node").count(), 0);
+    assert.equal(
+      await tutorialPage.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "0 / 6 件達成",
+    );
+    assert.equal(await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).isDisabled(), true);
+    assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     assert.equal(tutorialApiRequests.length, 0, "all three practice modes are API-free");
     await tutorialContext.close();
 

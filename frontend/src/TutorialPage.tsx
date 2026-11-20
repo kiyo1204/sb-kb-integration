@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ConceptCanvas } from "./MapPage";
 import IntegrationPractice from "./IntegrationPractice";
 
@@ -32,6 +32,12 @@ let sequence = 0;
 const id = () => `practice-${++sequence}`;
 
 type PracticeMode = "PRIOR" | "KB";
+type PracticeStep = PracticeMode | "INTEGRATION";
+const practiceSteps: { mode: PracticeStep; label: string }[] = [
+  { mode: "PRIOR", label: "Scratch-Buildの練習" },
+  { mode: "KB", label: "Kit-Buildの練習" },
+  { mode: "INTEGRATION", label: "統合マップの練習" },
+];
 type PracticeTask = { key: string; label: string };
 // Guidance only: no research events, network calls, persistence, or grading.
 const practiceTasks: Record<PracticeMode, PracticeTask[]> = {
@@ -51,8 +57,27 @@ const practiceTasks: Record<PracticeMode, PracticeTask[]> = {
 };
 
 export default function TutorialPage({ returnHref, onExit }: { returnHref: string; onExit?: () => void }) {
-  const [mode, setMode] = useState<PracticeMode | "INTEGRATION">("PRIOR");
+  const [mode, setMode] = useState<PracticeStep>("PRIOR");
   const [reset, setReset] = useState(0);
+  const [completedSteps, setCompletedSteps] = useState<PracticeStep[]>([]);
+  const completeStep = useCallback((step: PracticeStep) => {
+    setCompletedSteps((current) =>
+      current.includes(step) ? current : [...current, step],
+    );
+  }, []);
+  const currentIndex = practiceSteps.findIndex((step) => step.mode === mode);
+  const nextStep = practiceSteps[currentIndex + 1];
+  const currentCompleted = completedSteps.includes(mode);
+
+  function restart() {
+    setCompletedSteps([]);
+    setMode("PRIOR");
+    setReset((current) => current + 1);
+  }
+
+  function advanceTo(step: PracticeStep) {
+    if (nextStep?.mode === step && currentCompleted) setMode(step);
+  }
 
   return (
     <main className="page tutorial-page">
@@ -61,7 +86,7 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
           <p className="home-card-kicker">通常の学習Sessionとは別の練習</p>
           <h1>操作の練習</h1>
           <p className="tutorial-practice-note">
-            練習用のMapはこの画面内だけで扱い、サーバーや学習Sessionの記録には保存しません。画面を離れる、練習モードを切り替える、または最初からやり直すと内容は初期化されます。
+            練習用のMapと達成状況はこの画面内だけで扱い、サーバーや学習Sessionの記録には保存しません。Scratch-Build → Kit-Build → 統合マップの順で、各段階のすべての操作を完了すると次へ進めます。前の段階へは戻れませんが、「最初からやり直す」で最初から練習できます。
           </p>
         </header>
 
@@ -69,46 +94,35 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
           className="assessment-actions tutorial-controls"
           aria-label="練習モードと操作"
         >
-          <button
-            type="button"
-            className={
-              mode === "PRIOR"
-                ? "session-primary-button"
-                : "session-secondary-button"
-            }
-            aria-pressed={mode === "PRIOR"}
-            onClick={() => setMode("PRIOR")}
-          >
-            マップ作成の練習
-          </button>
-          <button
-            type="button"
-            className={
-              mode === "KB"
-                ? "session-primary-button"
-                : "session-secondary-button"
-            }
-            aria-pressed={mode === "KB"}
-            onClick={() => setMode("KB")}
-          >
-            Kit-Buildの練習
-          </button>
-          <button
-            type="button"
-            className={
-              mode === "INTEGRATION"
-                ? "session-primary-button"
-                : "session-secondary-button"
-            }
-            aria-pressed={mode === "INTEGRATION"}
-            onClick={() => setMode("INTEGRATION")}
-          >
-            統合マップの練習
-          </button>
+          {practiceSteps.map((step, index) => (
+            <button
+              key={step.mode}
+              type="button"
+              className={
+                mode === step.mode
+                  ? "session-primary-button"
+                  : "session-secondary-button"
+              }
+              aria-label={step.label}
+              aria-pressed={mode === step.mode}
+              aria-current={mode === step.mode ? "step" : undefined}
+              disabled={
+                index < currentIndex ||
+                index > currentIndex + 1 ||
+                (index === currentIndex + 1 && !currentCompleted)
+              }
+              onClick={() => advanceTo(step.mode)}
+            >
+              {step.label}
+              {completedSteps.includes(step.mode) && (
+                <span className="tutorial-step-done" aria-hidden="true"> ✓</span>
+              )}
+            </button>
+          ))}
           <button
             type="button"
             className="session-secondary-button"
-            onClick={() => setReset((current) => current + 1)}
+            onClick={restart}
           >
             最初からやり直す
           </button>
@@ -117,14 +131,37 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
           </a>
         </nav>
 
+        <div className="tutorial-stage-progress" aria-label="練習の進行">
+          <p role="status">
+            ステップ {currentIndex + 1} / {practiceSteps.length}：
+            {currentCompleted
+              ? "このマップの操作タスクをすべて達成しました。"
+              : "すべての操作タスクを達成すると次へ進めます。"}
+          </p>
+          {nextStep ? (
+            <button
+              type="button"
+              className="session-primary-button"
+              disabled={!currentCompleted}
+              onClick={() => advanceTo(nextStep.mode)}
+            >
+              次へ：{nextStep.label}
+            </button>
+          ) : currentCompleted ? (
+            <p className="tutorial-all-complete" role="status">
+              すべてのマップの操作練習が完了しました。
+            </p>
+          ) : null}
+        </div>
+
         <section
           className="tutorial-practice-area"
           aria-labelledby="tutorial-practice-heading"
         >
           {mode === "INTEGRATION" ? (
-            <IntegrationPractice key={`${mode}-${reset}`} />
+            <IntegrationPractice key={`${mode}-${reset}`} onComplete={completeStep} />
           ) : (
-            <PracticeCanvas key={`${mode}-${reset}`} mode={mode} />
+            <PracticeCanvas key={`${mode}-${reset}`} mode={mode} onComplete={completeStep} />
           )}
         </section>
       </section>
@@ -132,7 +169,13 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
   );
 }
 
-function PracticeCanvas({ mode }: { mode: PracticeMode }) {
+function PracticeCanvas({
+  mode,
+  onComplete,
+}: {
+  mode: PracticeMode;
+  onComplete: (step: PracticeStep) => void;
+}) {
   const [concepts, setConcepts] = useState<Concept[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
   const [usedConcepts, setUsedConcepts] = useState<string[]>([]);
@@ -148,6 +191,10 @@ function PracticeCanvas({ mode }: { mode: PracticeMode }) {
   const [editLabel, setEditLabel] = useState("");
   const [completedTasks, setCompletedTasks] = useState<string[]>([]);
   const tasks = practiceTasks[mode];
+  const allTasksComplete = tasks.every((task) => completedTasks.includes(task.key));
+  useEffect(() => {
+    if (allTasksComplete) onComplete(mode);
+  }, [allTasksComplete, mode, onComplete]);
   const complete = (key: string) =>
     setCompletedTasks((current) =>
       current.includes(key) ? current : [...current, key],
@@ -194,7 +241,7 @@ function PracticeCanvas({ mode }: { mode: PracticeMode }) {
   return (
     <>
       <h2 id="tutorial-practice-heading">
-        {mode === "PRIOR" ? "マップ作成の練習" : "Kit-Buildの練習"}
+        {mode === "PRIOR" ? "Scratch-Buildの練習" : "Kit-Buildの練習"}
       </h2>
       <p className="tutorial-practice-description">
         {instructions} 矢印の先が関係先です。
@@ -312,6 +359,29 @@ function PracticeCanvas({ mode }: { mode: PracticeMode }) {
           <button className="session-secondary-button" type="submit">
             変更
           </button>
+          {mode === "PRIOR" && (
+            <button
+              type="button"
+              className="session-secondary-button"
+              onClick={() => {
+                if (selectedConcept && concepts.some((c) => c.id === selectedConcept)) {
+                  setConcepts((list) => list.filter((c) => c.id !== selectedConcept));
+                  setLinks((list) => list.filter((link) =>
+                    link.sourceConceptId !== selectedConcept &&
+                    link.targetConceptId !== selectedConcept,
+                  ));
+                  complete("element.delete");
+                } else if (selectedLink && links.some((link) => link.id === selectedLink)) {
+                  setLinks((list) => list.filter((link) => link.id !== selectedLink));
+                  complete("element.delete");
+                }
+                setSelectedConcept(null);
+                setSelectedLink(null);
+              }}
+            >
+              選択した要素を削除
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {

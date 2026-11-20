@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ConceptCanvas, IntegrationConceptMergeForm } from "./MapPage";
 
 // These labels and IDs are neutral teaching fixtures, never the experiment kit.
@@ -76,7 +76,11 @@ function startGraph(): PracticeGraph {
   };
 }
 
-export default function IntegrationPractice() {
+export default function IntegrationPractice({
+  onComplete,
+}: {
+  onComplete: (step: "INTEGRATION") => void;
+}) {
   const [timeline, setTimeline] = useState<Timeline>(() => ({ graph: startGraph(), past: [], future: [] }));
   const timelineRef = useRef(timeline);
   const [completed, setCompleted] = useState<string[]>([]);
@@ -216,6 +220,9 @@ export default function IntegrationPractice() {
 
   const graph = timeline.graph;
   const currentTasks = tasks.filter((task) => completed.includes(task.key)).length;
+  useEffect(() => {
+    if (currentTasks === tasks.length) onComplete("INTEGRATION");
+  }, [currentTasks, onComplete]);
 
   function submitNewConcept(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

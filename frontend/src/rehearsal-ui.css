@@ -236,6 +236,13 @@
 .tutorial-task-progress ol { margin: 8px 0; padding-left: 1.7em; line-height: 1.8; }
 .tutorial-task-progress li { padding: 3px 0; }
 .tutorial-task-result { margin-left: 12px; color: var(--ink-soft); font-size: 0.9em; }
+.tutorial-controls button:disabled,
+.tutorial-stage-progress button:disabled { opacity: .55; cursor: not-allowed; }
+.tutorial-stage-progress { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.tutorial-stage-progress p { margin: 0; color: var(--ink-soft); }
+.tutorial-stage-progress button { min-height: 40px; }
+.tutorial-step-done { font-weight: 700; }
+.tutorial-stage-progress .tutorial-all-complete { font-weight: 700; color: var(--ink); }
 .tutorial-integration-actions {
   display: flex;
   flex-wrap: wrap;
