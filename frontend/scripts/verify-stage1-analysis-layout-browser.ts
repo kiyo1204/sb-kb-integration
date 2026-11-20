@@ -11,6 +11,9 @@ const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL ?? 
 const sid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01";
 const mapId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa02";
 const operationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa03";
+const kbMapId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa04";
+const integrationMapId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa05";
+const runId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa06";
 const start = "2026-01-01T01:00:00.000Z";
 const stages = (types: string[]) => types.map((stageType, orderIndex) => ({
   id: `aaaaaaaa-aaaa-4aaa-8aaa-${String(orderIndex + 10).padStart(12, "0")}`,
@@ -69,6 +72,14 @@ try {
         maps: [{ id: mapId, type: "PRIOR", status: "SUBMITTED", researchRole: "learner_map", concepts: before.concepts.map(({id,label})=>({id,label})), links: before.links.map(({id,sourceConceptId,targetConceptId,label})=>({id,sourceConceptId,targetConceptId,label})), historyReplayStatus: "AVAILABLE" }],
         operations: emptyHistory ? [] : [{ id: operationId, mapId, mapType: "PRIOR", researchRole: "learner_map", operationType: "EDIT_LINK", targetId: "l1", targetType: "LINK", sequenceNumber: "1", relatedOperationLogId: null, relatedEventId: "event-related", historySource: "EVENT", eventId: operationId, eventType: "EDIT_LINK", actorType: "LEARNER", outcome: noSnapshot ? "REJECTED" : "SUCCESS", serverTimestamp: start, elapsedMs: 5000, before: noSnapshot ? null : { links: [before.links[0]] }, after: noSnapshot ? null : { links: [after.links[0]] } }],
         operationCounts: emptyHistory ? {} : { EDIT_LINK: 1 }, features: {}, propositionEvaluations: [], reflectionNotes: [], limitations: [],
+        ...(protocol === "SBKB_INTEGRATION_V1" ? {
+          experiment: {runId,materialVersionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa07",materialTitle:"合成教材",materialVersion:1,integrationSeconds:900},
+          maps: [
+            {id:mapId,type:"PRIOR",status:"SUBMITTED",researchRole:"learner_map",concepts:before.concepts,links:before.links,historyReplayStatus:"AVAILABLE"},
+            {id:kbMapId,type:"KB",status:"DRAFT",researchRole:"learner_map",concepts:[],links:[],historyReplayStatus:"UNAVAILABLE"},
+            {id:integrationMapId,type:"INTEGRATION",status:"SUBMITTED",researchRole:"learner_map",concepts:before.concepts.map(c=>({...c,mapId:integrationMapId})),links:before.links.map(l=>({...l,mapId:integrationMapId})),historyReplayStatus:"UNAVAILABLE"},
+          ],
+        } : {}),
         ...(five ? { survey: { questions: [
           { id: "q1", kind: "TEXT", prompt: "自由記述の設問", required: true, displayOrder: 0, config: {} },
           { id: "q2", kind: "CHOICE", prompt: "選択式の設問", required: true, displayOrder: 1, config: { options: ["はい", "いいえ"] } },
@@ -190,6 +201,38 @@ try {
     assert.equal(downloads, 0, "failed CSV must not download JSON as a file");
   }
   console.log("Mock API browser: 5/6/4 activity summaries, no-group vs retained historical group, empty operation history, no-snapshot label with no fabricated diff, change/add/delete link rendering, TEXT/CHOICE/RATING survey answers, responsive layout: PASS");
+  // Researcher saved-map browser: switching/zooming never writes learning data.
+  protocol = "SBKB_INTEGRATION_V1";
+  emptyHistory = false;
+  noSnapshot = false;
+  replayUnavailable = false;
+  await page.setViewportSize({width:1366,height:900});
+  const researcherMutations: string[] = [];
+  page.on("request", request => {
+    const pathname = new URL(request.url()).pathname;
+    if (["POST","PATCH","PUT","DELETE"].includes(request.method()) && /^\/api\/(maps|concepts|links|session-stages)\//.test(pathname))
+      researcherMutations.push(pathname);
+  });
+  await page.goto(`${url}research/stage1/${sid}/analysis`);
+  await page.getByRole("heading", {name:"参加者別の保存マップ・履歴"}).waitFor();
+  assert.equal(await page.getByRole("link", {name:"実施・参加者一覧へ戻る"}).getAttribute("href"),`/research/experiment-runs/${runId}`);
+  const picker = page.getByRole("group", {name:"保存マップを選択"});
+  assert.equal(await picker.locator("button").count(),3);
+  assert.equal(await picker.getByRole("button", {name:/Scratch-Build/}).getAttribute("aria-pressed"),"true");
+  await picker.getByRole("button", {name:/Kit-Build/}).click();
+  await page.getByRole("heading", {name:"表示中：Kit-Build"}).waitFor();
+  assert.equal(await picker.getByRole("button", {name:/Kit-Build/}).getAttribute("aria-pressed"),"true");
+  assert.match(await page.locator(".analysis-selected-map").innerText(),/下書き（未提出）/);
+  await page.locator(".analysis-selected-map").getByRole("button", {name:/拡大/}).click();
+  await page.locator(".analysis-selected-map").getByText("110%", {exact:true}).waitFor();
+  await picker.getByRole("button", {name:/統合マップ/}).click();
+  await page.getByRole("heading", {name:"表示中：統合マップ"}).waitFor();
+  await page.getByRole("link", {name:"操作履歴",exact:true}).click();
+  assert.equal(new URL(page.url()).hash,"#analysis-map-history");
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await picker.evaluate(element=>element.scrollWidth>element.clientWidth),false,"map selector fits 390px");
+  assert.deepEqual(researcherMutations,[],"researcher map selection and zoom do not send learning writes");
+  console.log("Researcher saved-map selection and zoom (1366/390px), no learning writes: PASS");
   await context.close();
 } finally {
   await browser.close();
