@@ -476,7 +476,10 @@ function SessionDashboard({
     return (
       <div className="session-practice-wrapper">
         <div inert={practiceConnectionUncertain}>
-          <TutorialPage returnHref={`/sessions/${sessionId}`} onExit={() => {
+          <TutorialPage returnHref={`/sessions/${sessionId}`} onCancel={() => {
+            setPracticing(false);
+            setPracticeConnectionUncertain(false);
+          }} onExit={() => {
             markPracticeCompleted(sessionId);
             setPracticeCompleted(true);
             setPracticing(false);
