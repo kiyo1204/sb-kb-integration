@@ -248,9 +248,11 @@ async function assertNoHorizontalOverflow(page: Page, name: string, width: numbe
 async function dispatchSyntheticKitLinkDrop(page: Page) {
   const { types, accepted } = await page.evaluate(() => {
     const linkPart = document.querySelector<HTMLButtonElement>(
-      ".kit-palette-part.is-link:not(:disabled)",
+      '.tutorial-practice-panel:not([hidden]) .kit-palette-part.is-link:not(:disabled)',
     );
-    const canvas = document.querySelector<HTMLElement>(".concept-canvas");
+    const canvas = document.querySelector<HTMLElement>(
+      '.tutorial-practice-panel:not([hidden]) .concept-canvas',
+    );
     if (!linkPart || !canvas) {
       throw new Error("Kitリンク部品またはCanvasが見つかりません");
     }
@@ -737,7 +739,7 @@ try {
       [1, 440, 170],
       [2, 720, 130],
     ]) {
-      const part = tutorialPage
+      const part = activeTutorialPanel
         .locator(".kit-palette-part.is-concept")
         .nth(index);
 
@@ -768,7 +770,7 @@ try {
       const actual = await activeTutorialPanel.locator(".concept-node").count();
 
       if (actual !== expected) {
-        const feedback = await tutorialPage
+        const feedback = await activeTutorialPanel
           .locator(".kit-palette-feedback")
           .allInnerTexts();
 
@@ -795,11 +797,11 @@ try {
     const temporaryLink = activeTutorialPanel.locator(".link-connector.is-temporary");
 
     if (await temporaryLink.count() === 0) {
-      const feedback = await tutorialPage
+      const feedback = await activeTutorialPanel
         .locator(".kit-palette-feedback")
         .allInnerTexts();
 
-      const linkParts = await tutorialPage
+      const linkParts = await activeTutorialPanel
         .locator(".kit-palette-part.is-link")
         .allInnerTexts();
 
@@ -860,7 +862,7 @@ try {
     assert.equal(await tutorialPage.getByText("すべてのマップの操作練習が完了しました。").count(), 0);
     const integrationCanvas = activeTutorialPanel.locator(".concept-canvas");
 
-    const kitConceptPart = tutorialPage
+    const kitConceptPart = activeTutorialPanel
       .locator(".kit-palette-part.is-concept")
       .first();
 
@@ -877,7 +879,7 @@ try {
     });
 
     // Kitから取り込んだ「形」の概念を確認
-    const integrationKitConcept = tutorialPage
+    const integrationKitConcept = activeTutorialPanel
       .locator(".concept-node")
       .filter({ hasText: "形" });
 
@@ -887,11 +889,11 @@ try {
         timeout: 5000,
       });
     } catch {
-      const feedback = await tutorialPage
+      const feedback = await activeTutorialPanel
         .locator(".kit-palette-feedback")
         .allInnerTexts();
 
-      const concepts = await tutorialPage
+      const concepts = await activeTutorialPanel
         .locator(".concept-node")
         .allInnerTexts();
 
@@ -901,7 +903,7 @@ try {
         `配置結果: ${JSON.stringify(feedback)}`
       );
     }
-    const integrationLinkPart = tutorialPage
+    const integrationLinkPart = activeTutorialPanel
       .locator(".kit-palette-part.is-link")
       .first();
 
@@ -916,7 +918,7 @@ try {
     await dispatchSyntheticKitLinkDrop(tutorialPage);
 
     // 未接続リンクが生成されたことを確認
-    const integrationTemporarySource = tutorialPage
+    const integrationTemporarySource = activeTutorialPanel
       .locator(".link-connector.is-temporary .link-connector-handle.is-source")
       .first();
 
@@ -926,11 +928,11 @@ try {
         timeout: 5000,
       });
     } catch {
-      const feedback = await tutorialPage
+      const feedback = await activeTutorialPanel
         .locator(".kit-palette-feedback")
         .allInnerTexts();
 
-      const linkParts = await tutorialPage
+      const linkParts = await activeTutorialPanel
         .locator(".kit-palette-part.is-link")
         .allInnerTexts();
 
@@ -942,7 +944,7 @@ try {
     }
 
     await connectTemporary(0, 1);
-    await tutorialPage
+    await activeTutorialPanel
       .locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
       .first()
       .dragTo(integrationKitConcept);
