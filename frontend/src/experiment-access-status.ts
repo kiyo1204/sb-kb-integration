@@ -2,6 +2,11 @@
 // Unknown replies and network failures never imply that registration succeeded.
 export type ExperimentAccessIssue =
   "waiting" | "unpublished" | "conflict" | "unavailable";
+// Treat only transport/time-out/server-busy responses as retryable. Unknown
+// responses never establish permission to edit or submit.
+export function isTransientAccessStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
 export function experimentAccessIssue(
   status: number,
   payload: unknown,

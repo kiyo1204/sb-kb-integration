@@ -395,8 +395,11 @@ try {
       method: string;
       hasBearer: boolean;
     }> = [];
+    const p02ClaimSecrets: string[] = [];
     p02Page.on("request", (request) => {
       const path = new URL(request.url()).pathname;
+      if (path === "/api/experiment-client/claim")
+        p02ClaimSecrets.push(request.headers()["x-experiment-client"] ?? "");
       if (path.startsWith("/api/"))
         p02ApiObservations.push({
           path,
@@ -474,9 +477,41 @@ try {
       learnerToken,
       "learner authentication and client registration survive inline return",
     );
+
+    // F5 remains the same logical tab, and must use the same server-owned
+    // client secret instead of registering a new (PENDING) device candidate.
+    const originalClaimSecret = p02ClaimSecrets.at(-1);
+    assert.ok(originalClaimSecret, "initial client claim contains a secret");
+    const cacheKey = "sbkb-experiment-client-v1:00000000-0000-4000-8000-000000000001";
+    const cachedIdentity = await p02Page.evaluate(key => sessionStorage.getItem(key), cacheKey);
+    assert.ok(cachedIdentity, "F5 identity is cached in this tab");
+    const claimsBeforeReload = p02ClaimSecrets.length;
+    await p02Page.reload();
+    await p02Page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    assert.ok(p02ClaimSecrets.length > claimsBeforeReload, "F5 rechecks the server binding");
+    assert.equal(p02ClaimSecrets.at(-1), originalClaimSecret, "F5 reuses the existing client secret");
+    assert.equal(await p02Page.evaluate(key => sessionStorage.getItem(key), cacheKey), cachedIdentity);
+
+    // Duplicate-tab storage is copied, but it must never be treated as an
+    // additional owner of the original secret (nor issue a claim request).
+    const duplicatePage = await p02Context.newPage();
+    await duplicatePage.addInitScript(({ token, key, value }) => {
+      sessionStorage.setItem("stage1-access-token", token);
+      sessionStorage.setItem(key, value);
+    }, { token: learnerToken, key: cacheKey, value: cachedIdentity! });
+    await installApiFixture(duplicatePage, "p02");
+    let duplicateClaims = 0;
+    duplicatePage.on("request", request => {
+      if (new URL(request.url()).pathname === "/api/experiment-client/claim") duplicateClaims++;
+    });
+    await duplicatePage.goto(vite.resolvedUrls!.local[0]!);
+    await duplicatePage.getByRole("heading", { name: "この画面は別タブで利用中です" }).waitFor();
+    assert.equal(duplicateClaims, 0, "duplicate tab must not claim copied credentials");
+    await duplicatePage.close();
+    assert.equal(await p02Page.getByRole("heading", { name: "P02：活動の案内" }).count(), 1);
     await p02Context.close();
 
-    for (const failure of ["ended", "switched", "expired"] as const) {
+    for (const failure of ["ended", "switched", "expired", "temporary-server", "temporary-network"] as const) {
       const guardContext = await browser.newContext({ viewport: { width, height } });
       await guardContext.addInitScript(token => sessionStorage.setItem("stage1-access-token", token), learnerToken);
       const guardPage = await guardContext.newPage();
@@ -484,14 +519,61 @@ try {
       await guardPage.goto(vite.resolvedUrls!.local[0]!);
       await guardPage.getByRole("button", { name: /練習を開く/ }).click();
       await guardPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
-      await guardPage.route("**/api/sessions/*/flow", route => json(route, {
-        error: failure === "ended" ? "experiment_ended" : failure === "switched" ? "experiment_client_stale" : "authentication_required",
-      }, failure === "expired" ? 401 : 409));
+      const temporary = failure === "temporary-server" || failure === "temporary-network";
+      if (temporary) {
+        await guardPage.getByLabel("概念の名前").fill("通信復帰前の練習概念");
+        await guardPage.getByRole("button", { name: "概念を追加" }).click();
+        assert.equal(await guardPage.locator(".concept-node").count(), 1);
+      }
+      let canRecover = false;
+      await guardPage.route("**/api/sessions/*/flow", route => {
+        if (temporary) {
+          if (!canRecover) {
+            return failure === "temporary-server"
+              ? json(route, { error: "safety_lookup_unavailable" }, 503)
+              : route.abort("failed");
+          }
+          return json(route, syntheticSessionFlow("00000000-0000-4000-8000-000000000001", "SBKB_INTEGRATION_V1", false));
+        }
+        return json(route, {
+          error: failure === "ended" ? "experiment_ended" : failure === "switched" ? "experiment_client_stale" : "authentication_required",
+        }, failure === "expired" ? 401 : 409);
+      });
       await guardPage.evaluate(() => window.dispatchEvent(new Event("focus")));
-      await guardPage.getByRole("heading", { name: failure === "ended" ? "実施は終了しました" : "利用状態を確認できません", exact: true }).waitFor();
-      assert.equal(await guardPage.getByRole("heading", { name: "操作の練習", exact: true }).count(), 0);
+      if (temporary) {
+        await guardPage.getByRole("heading", { name: "接続を再確認しています", exact: true }).waitFor();
+        assert.equal(await guardPage.locator(".concept-node").count(), 1);
+        assert.equal(await guardPage.getByRole("heading", { name: "利用状態を確認できません" }).count(), 0);
+        canRecover = true;
+        await guardPage.getByRole("button", { name: "接続状態を再確認" }).click();
+        await guardPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+        assert.equal(await guardPage.locator(".concept-node").count(), 1, "temporary outage preserves local practice state");
+      } else {
+        await guardPage.getByRole("heading", { name: failure === "ended" ? "実施は終了しました" : "利用状態を確認できません", exact: true }).waitFor();
+        assert.equal(await guardPage.getByRole("heading", { name: "操作の練習", exact: true }).count(), 0);
+      }
       await guardContext.close();
     }
+
+    // Initial material fetch 503 is retryable; no new client owner is claimed.
+    const retryContext = await browser.newContext({ viewport: { width, height } });
+    await retryContext.addInitScript(token => sessionStorage.setItem("stage1-access-token", token), learnerToken);
+    const retryPage = await retryContext.newPage();
+    await installApiFixture(retryPage, "p02");
+    let materialRequests = 0;
+    let allowMaterial = false;
+    await retryPage.route("**/api/experiment-material", route => {
+      materialRequests++;
+      return !allowMaterial
+        ? json(route, { error: "safety_lookup_unavailable" }, 503)
+        : json(route, { sbInstructions: "合成SB案内", kbInstructions: "合成KB案内", integrationInstructions: "合成統合案内" });
+    });
+    await retryPage.goto(vite.resolvedUrls!.local[0]!);
+    await retryPage.getByRole("heading", { name: "接続状態を確認できません", exact: true }).waitFor();
+    allowMaterial = true;
+    await retryPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor({ timeout: 25000 });
+    assert.ok(materialRequests >= 2, "transient material fetch recovers automatically");
+    await retryContext.close();
 
     const startContext = await browser.newContext({
       viewport: { width, height },

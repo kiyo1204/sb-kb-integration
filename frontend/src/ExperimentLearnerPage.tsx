@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { acquireExperimentTabLease, getReloadableExperimentClient } from "./experiment-client-tab";
 import {
   apiFetch,
   bindExperimentClient,
@@ -12,12 +13,14 @@ import "./experiment-learner.css";
 import {
   experimentAccessIssue,
   experimentAccessCopy,
+  isTransientAccessStatus,
   type ExperimentAccessIssue,
 } from "./experiment-access-status";
 type ConnectionResult = {
   clientId: string;
   material: Record<string, string> | null;
   issue: ExperimentAccessIssue | null;
+  retryable?: boolean;
 };
 /** One live page owns one client secret. Internal navigation never reloads it. */
 export default function ExperimentLearnerPage({
@@ -27,17 +30,16 @@ export default function ExperimentLearnerPage({
   sessionId: string;
   flowMode?: string;
 }) {
-  const [secret] = useState(() =>
-    btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
-      .replaceAll("+", "-")
-      .replaceAll("/", "_")
-      .replace(/=+$/, ""),
-  );
+  const [clientIdentity] = useState(() => getReloadableExperimentClient(sessionId));
+  const secret = clientIdentity.secret;
   const [path, setPath] = useState(window.location.pathname),
     [material, setMaterial] = useState<Record<string, string> | null>(null),
     [issue, setIssue] = useState<ExperimentAccessIssue | null>(null),
     [busy, setBusy] = useState(false),
-    [clientId, setClientId] = useState("");
+    [clientId, setClientId] = useState(""),
+    [retryable, setRetryable] = useState(false),
+    [retryCount, setRetryCount] = useState(0),
+    [tabCollision, setTabCollision] = useState(false);
   const ownerRef = useRef<ReturnType<
     typeof registerExperimentClientOwner
   > | null>(null);
@@ -66,7 +68,7 @@ export default function ExperimentLearnerPage({
       typeof c.clientId !== "string" ||
       !Number.isInteger(c.deviceGeneration)
     ) {
-      bindExperimentClient(null, owner!);
+      if (!isTransientAccessStatus(claim.status)) bindExperimentClient(null, owner!);
       return {
         clientId: typeof c?.clientId === "string" ? c.clientId : "",
         material: null,
@@ -76,6 +78,7 @@ export default function ExperimentLearnerPage({
           c?.error === "experiment_client_in_use"
             ? "conflict"
             : "unavailable",
+        retryable: isTransientAccessStatus(claim.status),
       };
     }
     bindExperimentClient(
@@ -96,6 +99,7 @@ export default function ExperimentLearnerPage({
           r.status,
           await r.json().catch(() => null),
         ),
+        retryable: isTransientAccessStatus(r.status),
       };
     const d = await r.json();
     if (!current()) return null;
@@ -123,25 +127,90 @@ export default function ExperimentLearnerPage({
     setClientId(r.clientId);
     setMaterial(r.material);
     setIssue(r.issue);
+    setRetryable(r.issue === "unavailable" && !!r.retryable);
   }, []);
   useEffect(() => {
     const owner = registerExperimentClientOwner(sessionId);
     ownerRef.current = owner;
     let active = true;
-    void connect()
-      .then((r) => {
-        if (active && isExperimentClientOwnerCurrent(owner)) apply(r);
+    let releaseLease: (() => void) | undefined;
+    const tabController = new AbortController();
+    const current = () => active && isExperimentClientOwnerCurrent(owner);
+    // Do not claim or load maps until exclusive use of a cached tab secret
+    // is established. A duplicate tab must remain a distinct, blocked view.
+    void acquireExperimentTabLease(secret, clientIdentity.reused, tabController.signal, () => {
+      if (!current()) return;
+      requestRef.current++;
+      bindExperimentClient(null, owner);
+      setMaterial(null);
+      setRetryable(false);
+      setTabCollision(true);
+      setIssue("conflict");
+    })
+      .then((lease) => {
+        if (!current()) {
+          lease?.release();
+          return;
+        }
+        if (!lease) {
+          setTabCollision(true);
+          setRetryable(false);
+          setIssue("conflict");
+          return;
+        }
+        releaseLease = lease.release;
+        void connect()
+          .then((r) => {
+            if (current()) apply(r);
+          })
+          .catch(() => {
+            if (current()) {
+              setIssue("unavailable");
+              setRetryable(true);
+            }
+          });
       })
       .catch(() => {
-        if (active && isExperimentClientOwnerCurrent(owner))
+        if (current()) {
           setIssue("unavailable");
+          setRetryable(false);
+        }
       });
     return () => {
       active = false;
+      tabController.abort();
+      releaseLease?.();
       releaseExperimentClientOwner(owner);
       if (ownerRef.current === owner) ownerRef.current = null;
     };
-  }, [connect, apply, sessionId]);
+  }, [connect, apply, sessionId, secret, clientIdentity.reused]);
+  // Bounded backoff avoids turning a brief outage into permanent lockout,
+  // without retrying definite 401/409 or changing client ownership.
+  useEffect(() => {
+    if (!retryable || retryCount >= 3 || busy) return;
+    const timer = window.setTimeout(() => {
+      const owner = ownerRef.current;
+      if (!owner || !isExperimentClientOwnerCurrent(owner)) return;
+      setRetryCount(value => value + 1);
+      setBusy(true);
+      void connect()
+        .then(r => { if (isExperimentClientOwnerCurrent(owner)) apply(r); })
+        .catch(() => {
+          if (isExperimentClientOwnerCurrent(owner)) {
+            setIssue("unavailable");
+            setRetryable(true);
+          }
+        })
+        .finally(() => { if (isExperimentClientOwnerCurrent(owner)) setBusy(false); });
+    }, [4000, 8000, 16000][retryCount]);
+    return () => window.clearTimeout(timer);
+  }, [retryable, retryCount, busy, connect, apply]);
+  useEffect(() => {
+    if (!retryable) return;
+    const online = () => setRetryCount(0);
+    window.addEventListener("online", online);
+    return () => window.removeEventListener("online", online);
+  }, [retryable]);
   const navigate = useCallback((next: string) => {
     history.pushState(null, "", next);
     setPath(next);
@@ -174,24 +243,34 @@ export default function ExperimentLearnerPage({
           aria-labelledby="experiment-access-heading"
         >
           <h1 id="experiment-access-heading">
-            {experimentAccessCopy[issue].title}
+            {tabCollision ? "この画面は別タブで利用中です" : experimentAccessCopy[issue].title}
           </h1>
           {issue === "waiting" && (
             <p>コードの確認と、この画面の端末登録は完了しています。</p>
           )}
-          <p role={issue === "waiting" ? "status" : "alert"}>
-            {experimentAccessCopy[issue].message}
+          <p role={issue === "waiting" || retryable ? "status" : "alert"}>
+            {tabCollision
+              ? "同じ利用画面が別タブで開かれています。元のタブを使ってください。このタブでは登録や操作を行いません。"
+              : experimentAccessCopy[issue].message}
           </p>
+          {issue === "unavailable" && retryable && (
+            <p role="status">
+              {retryCount >= 3
+                ? "一時的な通信エラーが続いています。自動再確認は一旦終了しました。接続を確認し、手動で再確認してください。"
+                : "一時的な通信エラーです。自動的に再確認します。再確認できるまで編集・提出はできません。"}
+            </p>
+          )}
           {clientId && (
             <p>
               画面識別子：<code>{clientId}</code>
             </p>
           )}
           <button
-            disabled={busy}
+            disabled={busy || tabCollision}
             onClick={() => {
               const owner = ownerRef.current;
               if (!owner || !isExperimentClientOwnerCurrent(owner)) return;
+              setRetryCount(0);
               setBusy(true);
               void connect()
                 .then((r) => {
@@ -201,6 +280,7 @@ export default function ExperimentLearnerPage({
                   if (isExperimentClientOwnerCurrent(owner)) {
                     setMaterial(null);
                     setIssue("unavailable");
+                    setRetryable(true);
                   }
                 })
                 .finally(() => {

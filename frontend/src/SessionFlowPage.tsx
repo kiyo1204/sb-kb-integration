@@ -3,6 +3,7 @@ import TutorialPage from "./TutorialPage";
 import {LearnerDeliveryStatus,ResearchDeliveryStatus} from "./DeliveryStatus";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, uiText } from "./auth-client";
+import { isTransientAccessStatus } from "./experiment-access-status";
 import { useObservedLearningScreen, type ObservedLearningEvent } from "./learning-events";
 import { LearnerAssessment, ResearchAssessment } from "./Assessment";
 import { ReadOnlyMapSnapshot, type HistoricalMapSnapshot } from "./MapPage";
@@ -142,6 +143,8 @@ function SessionDashboard({
   const [error, setError] = useState<string | null>(null);
   const [practicing, setPracticing] = useState(false);
   const [practiceBlocked, setPracticeBlocked] = useState(false);
+  const [practiceConnectionUncertain, setPracticeConnectionUncertain] = useState(false);
+  const [practiceRetry, setPracticeRetry] = useState(0);
   const [activityLogWarning, setActivityLogWarning] = useState(false);
   const noteActivityLogFailure = useCallback(() => setActivityLogWarning(true), []);
   const currentStageId = flow?.currentStage?.id;
@@ -164,8 +167,9 @@ function SessionDashboard({
     setFlow(nextFlow);
   }, [sessionId]);
 
-  // Keep the live page's client registration. A rejected access check closes
-  // practice; it never approves a new client or changes Session/Stage state.
+  // Keep the live page's client registration. A definite server rejection
+  // closes practice. A network/5xx failure instead pauses local interactions
+  // without discarding their in-memory content until the same client is checked.
   useEffect(() => {
     if (!practicing) return;
     let active = true;
@@ -176,24 +180,33 @@ function SessionDashboard({
       checking = true;
       try {
         const response = await apiFetch(`/api/sessions/${sessionId}/flow`, { signal: controller.signal });
-        if (!response.ok) throw new Error("access check rejected");
-      } catch {
-        if (active) {
+        if (!active) return;
+        if (response.ok) {
+          setPracticeConnectionUncertain(false);
+        } else if (isTransientAccessStatus(response.status)) {
+          setPracticeConnectionUncertain(true);
+        } else {
           setPracticing(false);
           setPracticeBlocked(true);
         }
+      } catch {
+        if (active) setPracticeConnectionUncertain(true);
       } finally { checking = false; }
     };
     void check();
-    const timer = window.setInterval(() => void check(), 2000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void check();
+    }, 5000);
     window.addEventListener("focus", check);
+    window.addEventListener("online", check);
     return () => {
       active = false;
       controller.abort();
       clearInterval(timer);
       window.removeEventListener("focus", check);
+      window.removeEventListener("online", check);
     };
-  }, [practicing, sessionId]);
+  }, [practicing, sessionId, practiceRetry]);
 
   useEffect(() => {
     let active = true;
@@ -451,10 +464,28 @@ function SessionDashboard({
   }
 
   if (practiceBlocked) {
-    return <main className="page session-page"><section className="session-card" role="alert"><h1>利用状態を確認できません</h1><p>練習を中断しました。通信と、この画面の利用状態を研究者に確認してください。</p></section></main>;
+    return <main className="page session-page"><section className="session-card" role="alert"><h1>利用状態を確認できません</h1><p>練習を中断しました。認証・実施状態・利用画面を研究者に確認してください。</p></section></main>;
   }
   if (practicing) {
-    return <TutorialPage returnHref={`/sessions/${sessionId}`} onExit={() => setPracticing(false)} />;
+    return (
+      <div className="session-practice-wrapper">
+        <div inert={practiceConnectionUncertain}>
+          <TutorialPage returnHref={`/sessions/${sessionId}`} onExit={() => {
+            setPracticing(false);
+            setPracticeConnectionUncertain(false);
+          }} />
+        </div>
+        {practiceConnectionUncertain && (
+          <div className="session-practice-recheck">
+            <section className="session-card" role="status">
+              <h1>接続を再確認しています</h1>
+              <p>通信状態が確認できないため、練習操作を一時停止しています。練習内容はこの画面内に保持しています。権限が確認できると再開します。</p>
+              <button type="button" onClick={() => setPracticeRetry(value => value + 1)}>接続状態を再確認</button>
+            </section>
+          </div>
+        )}
+      </div>
+    );
   }
   if (loading) {
     return (
@@ -469,6 +500,12 @@ function SessionDashboard({
         <section className="session-card" role="alert">
           <h1>セッションを開けません</h1>
           <p>{error ?? "セッションが見つかりません。"}</p>
+          <button type="button" disabled={busy} onClick={() => {
+            setBusy(true);
+            void reload().then(() => setError(null)).catch((reason: unknown) => {
+              setError(reason instanceof Error ? reason.message : "接続状態を確認できませんでした。");
+            }).finally(() => setBusy(false));
+          }}>接続状態を再確認</button>
           <a className="back-link" href="/">トップへ戻る</a>
         </section>
       </main>
@@ -519,7 +556,10 @@ function SessionDashboard({
                     必要に応じて、学習を始める前にマップ操作を試せます。練習は通常の学習Sessionとは別で、内容は保存されません。
                   </p>
                 </div>
-                <button type="button" className="session-secondary-button" onClick={() => setPracticing(true)}>
+                <button type="button" className="session-secondary-button" onClick={() => {
+                  setPracticeConnectionUncertain(true);
+                  setPracticing(true);
+                }}>
                   練習を開く <span aria-hidden="true">→</span>
                 </button>
               </section>
