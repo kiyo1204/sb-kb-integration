@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ConceptCanvas } from "./MapPage";
 import IntegrationPractice from "./IntegrationPractice";
+import { markPracticeCompleted } from "./practice-completion";
 
 type Concept = {
   id: string;
@@ -58,7 +59,7 @@ const practiceTasks: Record<PracticeMode, PracticeTask[]> = {
 
 export default function TutorialPage({ returnHref, onExit }: { returnHref: string; onExit?: () => void }) {
   const [mode, setMode] = useState<PracticeStep>("PRIOR");
-  const [reset, setReset] = useState(0);
+  const [visitedSteps, setVisitedSteps] = useState<PracticeStep[]>(["PRIOR"]);
   const [completedSteps, setCompletedSteps] = useState<PracticeStep[]>([]);
   const completeStep = useCallback((step: PracticeStep) => {
     setCompletedSteps((current) =>
@@ -68,15 +69,23 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
   const currentIndex = practiceSteps.findIndex((step) => step.mode === mode);
   const nextStep = practiceSteps[currentIndex + 1];
   const currentCompleted = completedSteps.includes(mode);
-
-  function restart() {
-    setCompletedSteps([]);
-    setMode("PRIOR");
-    setReset((current) => current + 1);
-  }
+  const allCompleted = practiceSteps.every((step) => completedSteps.includes(step.mode));
+  const canOpen = (index: number) =>
+    practiceSteps.slice(0, index).every((step) => completedSteps.includes(step.mode));
 
   function advanceTo(step: PracticeStep) {
-    if (nextStep?.mode === step && currentCompleted) setMode(step);
+    const index = practiceSteps.findIndex((candidate) => candidate.mode === step);
+    if (index < 0 || !canOpen(index)) return;
+    setVisitedSteps((current) => current.includes(step) ? current : [...current, step]);
+    setMode(step);
+  }
+
+  function finishPractice() {
+    if (!allCompleted) return;
+    const match = /^\/sessions\/([a-f0-9-]{36})$/.exec(returnHref);
+    if (match) markPracticeCompleted(match[1]);
+    if (onExit) onExit();
+    else window.location.assign(returnHref);
   }
 
   return (
@@ -86,7 +95,7 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
           <p className="home-card-kicker">通常の学習Sessionとは別の練習</p>
           <h1>操作の練習</h1>
           <p className="tutorial-practice-note">
-            練習用のMapと達成状況はこの画面内だけで扱い、サーバーや学習Sessionの記録には保存しません。Scratch-Build → Kit-Build → 統合マップの順で、各段階のすべての操作を完了すると次へ進めます。前の段階へは戻れませんが、「最初からやり直す」で最初から練習できます。
+            練習用のMapと達成状況はこの画面内だけで扱い、サーバーや学習Sessionの記録には保存しません。Scratch-Build → Kit-Build → 統合マップの順で、各段階のすべての操作を完了すると次へ進めます。完了した段階へはいつでも戻り、練習内容を続けて確認できます。すべての段階を達成すると「練習を終了」からセッションの案内へ戻れます。
           </p>
         </header>
 
@@ -106,11 +115,7 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
               aria-label={step.label}
               aria-pressed={mode === step.mode}
               aria-current={mode === step.mode ? "step" : undefined}
-              disabled={
-                index < currentIndex ||
-                index > currentIndex + 1 ||
-                (index === currentIndex + 1 && !currentCompleted)
-              }
+              disabled={!canOpen(index)}
               onClick={() => advanceTo(step.mode)}
             >
               {step.label}
@@ -122,13 +127,11 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
           <button
             type="button"
             className="session-secondary-button"
-            onClick={restart}
+            disabled={!allCompleted}
+            onClick={finishPractice}
           >
-            最初からやり直す
-          </button>
-          <a className="session-secondary-button" href={returnHref} onClick={onExit ? (event) => { event.preventDefault(); event.stopPropagation(); onExit(); } : undefined}>
             練習を終了
-          </a>
+          </button>
         </nav>
 
         <div className="tutorial-stage-progress" aria-label="練習の進行">
@@ -158,11 +161,20 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
           className="tutorial-practice-area"
           aria-labelledby="tutorial-practice-heading"
         >
-          {mode === "INTEGRATION" ? (
-            <IntegrationPractice key={`${mode}-${reset}`} onComplete={completeStep} />
-          ) : (
-            <PracticeCanvas key={`${mode}-${reset}`} mode={mode} onComplete={completeStep} />
-          )}
+          {practiceSteps.filter((step) => visitedSteps.includes(step.mode)).map((step) => (
+            <div
+              key={step.mode}
+              className="tutorial-practice-panel"
+              hidden={mode !== step.mode}
+              inert={mode !== step.mode}
+            >
+              {step.mode === "INTEGRATION" ? (
+                <IntegrationPractice onComplete={completeStep} />
+              ) : (
+                <PracticeCanvas mode={step.mode} onComplete={completeStep} />
+              )}
+            </div>
+          ))}
         </section>
       </section>
     </main>
