@@ -5,6 +5,7 @@ import { createServer } from "vite";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { requestDigest } from "../src/client-identity";
 const base = process.env.API_BASE_URL!,
   token = process.env.EXPERIMENT_BROWSER_TOKEN!,
   sid = process.env.EXPERIMENT_BROWSER_SESSION!;
@@ -37,6 +38,11 @@ try {
     viewport: { width: 1366, height: 1200 },
   });
   await page.addInitScript("globalThis.__name = (fn) => fn;");
+  // This real-API browser suite tests learner flow after a previously completed
+  // local rehearsal. Gesture-by-gesture completion is covered by rehearsal UI tests.
+  await page.addInitScript(({ key }) => sessionStorage.setItem(key, "1"), {
+    key: `sbkb-practice-complete-v1:${sid}:${requestDigest(token)}`,
+  });
   page.on("dialog", (d) => void d.accept());
   await page.goto(vite.resolvedUrls!.local[0]);
   await page.locator("#home-access-code").fill(token);
@@ -381,7 +387,7 @@ try {
     await page
       .getByRole("button", { name: "リンクを追加", exact: true })
       .click();
-    await page.getByRole("link", { name: "練習を終了", exact: true }).click();
+    await page.getByRole("button", { name: "案内へ戻る（練習未完了）", exact: true }).click();
     await page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
     phase = "returned";
     const afterQueue = await queueSnapshot();
