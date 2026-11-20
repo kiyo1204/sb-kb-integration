@@ -71,24 +71,49 @@ try {
       }),
     );
   };
+  // A new browser needs one explicit researcher-approved screen transfer.
+  // Later full navigations are same-tab reloads and must retain that ownership.
+  let approvedClientId: string | null = null;
+  const isClaimResponse = (r: import("playwright").Response) =>
+    new URL(r.url()).pathname === "/api/experiment-client/claim" &&
+    r.request().method() === "POST";
   async function enter() {
+    const claimPromise = page.waitForResponse(isClaimResponse);
     await page.goto(vite.resolvedUrls!.local[0] + "maps/" + mapId);
-    await page
-      .getByRole("heading", { name: "この画面では利用できません", exact: true })
-      .waitFor();
-    const clientId = (
-      await page.locator(".session-card code").innerText()
-    ).trim();
-    const p = (
-      await research(`/research/experiment-runs/${run}/participants`)
-    ).participants.find((p: { id: string }) => p.id === sid);
-    await research(
-      `/research/experiment-runs/${run}/participants/${sid}/client-switch`,
-      { clientId, expectedDeviceGeneration: p.deviceGeneration },
-    );
-    await page
-      .getByRole("button", { name: "接続状態を更新", exact: true })
-      .click();
+    const claimResponse = await claimPromise;
+    const claim = await claimResponse.json();
+    if (approvedClientId === null) {
+      assert.equal(claimResponse.status(), 409, "a second client needs explicit approval");
+      assert.equal(claim.ownership, "PENDING");
+      await page
+        .getByRole("heading", { name: "この画面では利用できません", exact: true })
+        .waitFor();
+      const clientId = (
+        await page.locator(".session-card code").innerText()
+      ).trim();
+      assert.equal(clientId, claim.clientId, "show the pending client identity");
+      const p = (
+        await research(`/research/experiment-runs/${run}/participants`)
+      ).participants.find((p: { id: string }) => p.id === sid);
+      await research(
+        `/research/experiment-runs/${run}/participants/${sid}/client-switch`,
+        { clientId, expectedDeviceGeneration: p.deviceGeneration },
+      );
+      const acceptedPromise = page.waitForResponse(isClaimResponse);
+      await page
+        .getByRole("button", { name: "接続状態を更新", exact: true })
+        .click();
+      const accepted = await acceptedPromise;
+      assert.equal(accepted.status(), 200, "approved screen can claim ownership");
+      const acceptedClaim = await accepted.json();
+      assert.equal(acceptedClaim.ownership, "OWNED");
+      assert.equal(acceptedClaim.clientId, clientId);
+      approvedClientId = clientId;
+    } else {
+      assert.equal(claimResponse.status(), 200, "same-tab navigation remains available");
+      assert.equal(claim.ownership, "OWNED");
+      assert.equal(claim.clientId, approvedClientId, "same-tab client must be reused");
+    }
     await page.locator(".concept-canvas").waitFor();
   }
   async function add() {

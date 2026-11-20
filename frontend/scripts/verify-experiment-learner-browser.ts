@@ -838,6 +838,11 @@ try {
   await page
     .getByText("オフライン：保存・提出はできません。", { exact: false })
     .waitFor();
+  assert.equal(
+    await page.getByRole("heading", { name: "この画面では利用できません" }).count(),
+    0,
+    "same-tab F5 does not require researcher client-switch",
+  );
   assert.ok(
     await page
       .getByRole("button", { name: "最終提出", exact: true })
@@ -1007,45 +1012,28 @@ try {
         targetConceptId: ids["TEST ONLY second"],
       });
   }, sid);
-  // A reload has a new screen identity: researcher explicitly transfers it;
-  // current graph survives, but no cached KB match is treated as confirmation.
-  await page.reload();
-  await page
-    .getByRole("heading", { name: "この画面では利用できません" })
-    .waitFor();
-  const candidate = (
-    await page.locator(".session-card code").innerText()
-  ).trim();
-  const researcher = process.env.RESEARCHER_API_TOKEN!,
-    run = process.env.EXPERIMENT_BROWSER_RUN!;
-  const viewResponse = await fetch(
-    base + `/api/research/experiment-runs/${run}/participants`,
-    { headers: { Authorization: "Bearer " + researcher } },
+  // Same-tab F5 reuses the registered client, but must re-claim ownership
+  // from the real API. It must not require a researcher device transfer.
+  // The current map survives; a prior KB match is not reused as confirmation.
+  const [reloadClaim] = await Promise.all([
+    page.waitForResponse((response) =>
+      new URL(response.url()).pathname === "/api/experiment-client/claim" &&
+      response.request().method() === "POST",
+    ),
+    page.reload(),
+  ]);
+  assert.equal(reloadClaim.status(), 200, "same-tab F5 can re-claim ownership");
+  const reloadOwnership = await reloadClaim.json();
+  assert.equal(reloadOwnership.ownership, "OWNED");
+  assert.equal(
+    reloadOwnership.clientId,
+    initialClient.trim(),
+    "same-tab F5 preserves the original registered client",
   );
-  assert.equal(viewResponse.status, 200);
-  const participant = (await viewResponse.json()).participants.find(
-    (p: { id: string }) => p.id === sid,
+  assert.ok(
+    Number.isInteger(reloadOwnership.deviceGeneration),
+    "server still supplies a valid device generation",
   );
-  const switched = await fetch(
-    base +
-      `/api/research/experiment-runs/${run}/participants/${sid}/client-switch`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer " + researcher,
-        "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
-      },
-      body: JSON.stringify({
-        clientId: candidate,
-        expectedDeviceGeneration: participant.deviceGeneration,
-      }),
-    },
-  );
-  assert.equal(switched.status, 200);
-  await page
-    .getByRole("button", { name: "接続状態を更新", exact: true })
-    .click();
   await page
     .getByRole("heading", { name: "STEP 3：Kit-Build", exact: true })
     .waitFor();
