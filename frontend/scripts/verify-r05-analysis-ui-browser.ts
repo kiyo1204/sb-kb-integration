@@ -598,10 +598,20 @@ try {
           3,
           "new-protocol JSON/CSV export actions remain present",
         );
+        // Issue #70: saved maps now use a selector and one shared preview.
+        // Keep checking actual saved status and provenance without relying on
+        // the old per-map disclosure caption.
+        const mapPicker = page.getByRole("group", { name: "保存マップを選択" });
+        const priorChoice = mapPicker.getByRole("button", { name: /Scratch-Build/ });
+        await priorChoice.waitFor();
+        assert.equal(await priorChoice.getAttribute("aria-pressed"), "true");
         await page
-          .getByText("Scratch-Buildの保存状態・出所情報", { exact: true })
-          .click();
-        await page.getByText("SUBMITTED", { exact: false }).first().waitFor();
+          .getByRole("heading", { name: "表示中：Scratch-Build", exact: true })
+          .waitFor();
+        const provenance = page.locator(".analysis-map-provenance");
+        await provenance.locator("summary").click();
+        await provenance.getByText("保存状態：SUBMITTED", { exact: false }).waitFor();
+        await provenance.locator("pre").waitFor();
         await page
           .getByText("状態記録なし／算出不可：未提出", { exact: true })
           .waitFor();
