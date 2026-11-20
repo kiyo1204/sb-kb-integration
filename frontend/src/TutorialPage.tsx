@@ -57,7 +57,7 @@ const practiceTasks: Record<PracticeMode, PracticeTask[]> = {
   ],
 };
 
-export default function TutorialPage({ returnHref, onExit }: { returnHref: string; onExit?: () => void }) {
+export default function TutorialPage({ returnHref, onExit, onCancel }: { returnHref: string; onExit?: () => void; onCancel?: () => void }) {
   const [mode, setMode] = useState<PracticeStep>("PRIOR");
   const [visitedSteps, setVisitedSteps] = useState<PracticeStep[]>(["PRIOR"]);
   const [completedSteps, setCompletedSteps] = useState<PracticeStep[]>([]);
@@ -124,6 +124,15 @@ export default function TutorialPage({ returnHref, onExit }: { returnHref: strin
               )}
             </button>
           ))}
+          {onCancel && !allCompleted && (
+            <button
+              type="button"
+              className="session-secondary-button"
+              onClick={onCancel}
+            >
+              案内へ戻る（練習未完了）
+            </button>
+          )}
           <button
             type="button"
             className="session-secondary-button"
