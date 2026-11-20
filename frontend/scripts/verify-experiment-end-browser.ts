@@ -1,6 +1,7 @@
 // TEST ONLY: actual API, browser, researcher confirmation, no research data.
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
+import { requestDigest } from "../src/client-identity";
 import { createServer } from "vite";
 const base = process.env.API_BASE_URL!,
   token = process.env.EXPERIMENT_BROWSER_TOKEN!,
@@ -20,6 +21,11 @@ const browser = await chromium.launch({
 try {
   const page = await browser.newPage();
   await page.addInitScript("globalThis.__name=(fn)=>fn");
+  // This end-of-run API regression starts from an already completed local
+  // practice. Completion gestures and the start gate are verified separately.
+  await page.addInitScript(({key}) => sessionStorage.setItem(key,"1"), {
+    key: `sbkb-practice-complete-v1:${process.env.EXPERIMENT_BROWSER_SESSION!}:${requestDigest(token)}`,
+  });
   await page.goto(vite.resolvedUrls!.local[0]);
   await page.locator("#home-access-code").fill(token);
   await page.locator("#home-access-code").press("Enter");
