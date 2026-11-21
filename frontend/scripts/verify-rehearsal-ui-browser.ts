@@ -1231,65 +1231,32 @@ try {
         .getAttribute("href"),
       "/research/experiment-runs",
     );
-    assert.equal(
-      await homePage.locator('a[href="/research/stage1/new"]').count(),
-      1,
-    );
-    const legacyFlow = homePage.locator(".home-researcher-legacy-details");
-    const legacySummary = legacyFlow.locator("summary");
-    const legacyCreateLink = homePage.locator('a[href="/research/stage1/new"]');
-    assert.equal((await legacySummary.textContent())?.trim(), "旧フローの作成");
-    assert.equal(
-      await homePage
-        .locator('.home-research-primary-grid a[href="/research/stage1/new"]')
-        .count(),
-      0,
-    );
-    assert.equal(
-      await legacyFlow.evaluate(
-        (element) => (element as HTMLDetailsElement).open,
-      ),
-      false,
-    );
-    assert.equal(await legacyCreateLink.isVisible(), false);
-    await legacySummary.focus();
-    assert.equal(
-      await legacySummary.evaluate(
-        (element) => getComputedStyle(element).outlineStyle,
-      ),
-      "solid",
-    );
-    await legacySummary.press("Enter");
-    assert.equal(
-      await legacyFlow.evaluate(
-        (element) => (element as HTMLDetailsElement).open,
-      ),
-      true,
-    );
-    assert.equal(await legacyCreateLink.isVisible(), true);
-    assert.equal(
-      await legacyCreateLink.getAttribute("href"),
-      "/research/stage1/new",
-    );
-    await legacySummary.press("Enter");
-    assert.equal(
-      await legacyFlow.evaluate(
-        (element) => (element as HTMLDetailsElement).open,
-      ),
-      false,
-    );
-    await legacySummary.evaluate((element) => element.blur());
+    // Researcher home exposes only the current management workflow.
+    // Legacy Session data and researcher-only APIs remain available by direct route.
     for (const path of [
+      "/research/stage1/new",
       "/research/data-management",
       "/research/events",
       "/research/event-exports",
-      "/research/goal-maps",
     ]) {
       assert.equal(
         await homePage.locator(`a[href="${path}"]`).count(),
-        path === "/research/data-management" ? 2 : 1,
+        0,
+        `obsolete researcher-home entry ${path} must be absent`,
       );
     }
+    assert.equal(
+      await homePage.getByText("旧フローの作成", { exact: true }).count(),
+      0,
+    );
+    assert.equal(
+      await homePage.getByText("研究データ・ログ", { exact: true }).count(),
+      0,
+    );
+    assert.equal(
+      await homePage.locator('a[href="/research/goal-maps"]').count(),
+      1,
+    );
     assert.equal(
       await homePage
         .locator('a[href="/research/goal-maps"]')
@@ -1490,7 +1457,7 @@ try {
   await mobileContext.close();
 
   console.log(
-    `Rehearsal UI: PASS (signed-out code entry without practice card; P02 inline practice/return with unchanged client claims and no learning writes; precompleted start gate survives F5; 390px P02/practice smoke; normal start and legacy link preserved; unpublished/waiting/ended; researcher states; Edge synthetic fixtures at 1366x768 and 1440x900; screenshots: ${directory}; no real API or DB persistence verified)`,
+    `Rehearsal UI: PASS (signed-out code entry without practice card; P02 inline practice/return with unchanged client claims and no learning writes; precompleted start gate survives F5; 390px P02/practice smoke; normal start and historical session compatibility preserved; unpublished/waiting/ended; researcher states; Edge synthetic fixtures at 1366x768 and 1440x900; screenshots: ${directory}; no real API or DB persistence verified)`,
   );
 } finally {
   await browser?.close();
