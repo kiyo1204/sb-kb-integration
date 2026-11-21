@@ -99,7 +99,7 @@ export async function authenticateExperimentToken(
 ): Promise<ExperimentProof | null> {
   const row = (
     await pool.query(
-      `SELECT s.id AS "sessionId",p.run_id AS "runId",s.research_kit_definition_id AS "kitId",a.code_hash AS "credentialHash",a.credential_generation AS "credentialGeneration" FROM experiment_participant_access a JOIN sessions s ON s.id=a.session_id JOIN experiment_run_sessions p ON p.session_id=s.id JOIN experiment_run_catalog x ON x.run_id=p.run_id JOIN experiment_runs r ON r.id=p.run_id JOIN experiment_material_versions v ON v.id=r.material_version_id WHERE a.code_hash=$1 AND s.protocol_key=$2 AND s.research_kit_definition_id=v.kit_id AND s.group_activity_seconds=v.integration_seconds`,
+      `SELECT s.id AS "sessionId",p.run_id AS "runId",s.research_kit_definition_id AS "kitId",a.code_hash AS "credentialHash",a.credential_generation AS "credentialGeneration" FROM experiment_participant_access a JOIN sessions s ON s.id=a.session_id JOIN experiment_run_sessions p ON p.session_id=s.id JOIN experiment_run_catalog x ON x.run_id=p.run_id JOIN experiment_runs r ON r.id=p.run_id JOIN experiment_material_versions v ON v.id=r.material_version_id WHERE a.code_hash=$1 AND s.protocol_key=$2 AND s.research_kit_definition_id=v.kit_id AND s.group_activity_seconds=v.integration_seconds AND NOT EXISTS(SELECT 1 FROM experiment_session_withdrawals w WHERE w.session_id=s.id)`,
       [hash, EXPERIMENT_PROTOCOL],
     )
   ).rows[0];
@@ -107,7 +107,10 @@ export async function authenticateExperimentToken(
   if (
     (
       await pool.query(
-        "SELECT 1 FROM experiment_retired_credentials WHERE token_hash=$1",
+        `SELECT 1 FROM experiment_retired_credentials WHERE token_hash=$1
+         UNION ALL SELECT 1 FROM experiment_participant_access a
+         JOIN experiment_session_withdrawals w ON w.session_id=a.session_id
+         WHERE a.code_hash=$1`,
         [hash],
       )
     ).rowCount
@@ -133,6 +136,12 @@ async function checkExperimentProof(
     row.code_hash !== proof.credentialHash ||
     row.credential_generation !== proof.credentialGeneration
   )
+    fail("experiment_code_invalidated", 401);
+  // Fresh query after locking the access row closes the withdrawal race.
+  if ((await c.query(
+    "SELECT 1 FROM experiment_session_withdrawals WHERE session_id=$1",
+    [proof.sessionId],
+  )).rowCount)
     fail("experiment_code_invalidated", 401);
   return row;
 }
@@ -314,6 +323,11 @@ export async function mutateParticipant(
     if (previous) {
       if (previous.request_hash !== hash || previous.action !== action)
         fail("access_conflict", 409);
+      if ((await c.query(
+        "SELECT 1 FROM experiment_session_withdrawals WHERE session_id=$1",
+        [previous.session_id],
+      )).rowCount)
+        fail("not_found", 404);
       await c.query("COMMIT");
       return {
         ...previous.result,
@@ -353,6 +367,11 @@ export async function mutateParticipant(
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
       "experiment-session:" + sid,
     ]);
+    if ((await c.query(
+      "SELECT 1 FROM experiment_session_withdrawals WHERE session_id=$1",
+      [sid],
+    )).rowCount)
+      fail("not_found", 404);
     let access = (
       await c.query(
         "SELECT * FROM experiment_participant_access WHERE session_id=$1 FOR UPDATE",
@@ -457,7 +476,7 @@ export async function participantView(
  coalesce((SELECT jsonb_agg(jsonb_build_object('id',c.id,'createdAt',c.created_at) ORDER BY c.created_at,c.id) FROM experiment_client_candidates c WHERE c.session_id=s.id AND c.credential_generation=a.credential_generation),'[]'::jsonb) AS clients
  FROM experiment_run_sessions p JOIN sessions s ON s.id=p.session_id LEFT JOIN experiment_participant_access a ON a.session_id=s.id
  LEFT JOIN LATERAL (SELECT count(*)::int AS active_stage_count,CASE WHEN count(*)=1 THEN (array_agg(st.stage_type ORDER BY st.order_index))[1] END AS current_stage_type FROM session_stages st WHERE st.session_id=s.id AND st.status='IN_PROGRESS') active ON true
- WHERE p.run_id=$1 AND s.protocol_key=$2 ORDER BY p.registered_at,s.id`,
+ WHERE p.run_id=$1 AND s.protocol_key=$2 AND NOT EXISTS(SELECT 1 FROM experiment_session_withdrawals w WHERE w.session_id=s.id) ORDER BY p.registered_at,s.id`,
       [runId, EXPERIMENT_PROTOCOL],
     )
   ).rows;
