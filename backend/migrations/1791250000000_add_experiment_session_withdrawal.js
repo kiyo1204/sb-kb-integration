@@ -6,7 +6,21 @@ CREATE TABLE experiment_session_withdrawals(
   request_key uuid NOT NULL UNIQUE,
   withdrawn_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE FUNCTION experiment_validate_session_withdrawal() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE TABLE experiment_session_withdrawal_audit(
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id uuid,
+  session_id uuid,
+  http_status integer NOT NULL CHECK(http_status BETWEEN 200 AND 599),
+  outcome text NOT NULL CHECK(outcome IN ('SUCCESS','REJECTED','FAILURE')),
+  reason_code text NOT NULL CHECK(reason_code IN (
+    'ok','invalid_confirmation','not_found','already_withdrawn','not_eligible',
+    'request_conflict','withdrawal_unavailable'
+  )),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TRIGGER experiment_withdrawal_audit_immutable BEFORE UPDATE OR DELETE ON experiment_session_withdrawal_audit
+  FOR EACH ROW EXECUTE FUNCTION experiment_immutable();
+CREATE FUNCTION experiment_validate_session_withdrawal() RETURNS trigger LANGUAGE plpgsql AS $
 DECLARE run_state text; session_state text; session_started timestamptz; session_completed timestamptz;
 BEGIN
   SELECT r.state,s.status,s.started_at,s.completed_at
