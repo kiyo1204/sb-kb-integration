@@ -182,9 +182,11 @@
 }
 .tutorial-page {
   max-width: 1240px;
+  grid-template-columns: minmax(0, 1fr);
 }
 .tutorial-card {
   width: 100%;
+  min-width: 0;
 }
 .tutorial-heading {
   display: grid;

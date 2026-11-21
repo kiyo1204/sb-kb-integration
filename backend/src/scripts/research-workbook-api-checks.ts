@@ -53,6 +53,20 @@ async function unzip(buffer: Buffer): Promise<Map<string, string>> {
   });
 }
 
+// Read the actual XLSX worksheets; ZIP bytes cannot be searched as plain text.
+export async function assertPracticeLabelsAbsentFromWorkbook(
+  workbook: Buffer,
+  markers: readonly string[],
+): Promise<void> {
+  const entries = await unzip(workbook);
+  for (const [path, xml] of entries) {
+    if (!path.startsWith("xl/worksheets/") || !path.endsWith(".xml")) continue;
+    for (const marker of markers) {
+      assert.equal(xml.includes(marker), false, `practice-only text in XLSX ${path}`);
+    }
+  }
+}
+
 function decodeXml(value: string): string {
   const entities: Record<string, string> = {
     amp: "&", lt: "<", gt: ">", quot: '"', apos: "'",

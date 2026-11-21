@@ -20,6 +20,7 @@ import { createServer } from "node:net";
 import { Pool } from "pg";
 import { writeFile } from "node:fs/promises";
 import { verifyMockTestUrl, verificationReportPath } from "./mock-db.js";
+import { assertPracticeLabelsAbsentFromWorkbook } from "./research-workbook-api-checks.js";
 await verifyMockTestUrl(process.env.DATABASE_URL!);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL }),
   researcher = process.env.RESEARCHER_API_TOKEN!,
@@ -858,6 +859,52 @@ try {
       } catch { console.log("scroll-coordinate-db diagnostic unavailable; browser exit retained"); }
     }
     assert.equal(browserExit, 0, "learner browser");
+
+    // This exact text was entered into local rehearsal Map/Link controls.
+    // The real browser continues into normal learning afterwards; only this
+    // practice-only marker must be absent from persisted research records.
+    const practiceMarker = "TEST ONLY practice";
+    const counts = (await pool.query(
+      `SELECT
+        (SELECT count(*)::int FROM concepts c
+         JOIN maps m ON m.id=c.map_id JOIN session_stages st ON st.id=m.session_stage_id
+         WHERE st.session_id=$1 AND c.label LIKE $2) AS concepts,
+        (SELECT count(*)::int FROM links l
+         JOIN maps m ON m.id=l.map_id JOIN session_stages st ON st.id=m.session_stage_id
+         WHERE st.session_id=$1 AND l.label LIKE $2) AS links,
+        (SELECT count(*)::int FROM map_operation_logs o
+         JOIN maps m ON m.id=o.map_id JOIN session_stages st ON st.id=m.session_stage_id
+         WHERE st.session_id=$1 AND to_jsonb(o)::text LIKE $2) AS legacy_logs,
+        (SELECT count(*)::int FROM map_initial_snapshots s
+         JOIN maps m ON m.id=s.map_id JOIN session_stages st ON st.id=m.session_stage_id
+         WHERE st.session_id=$1 AND to_jsonb(s)::text LIKE $2) AS snapshots,
+        (SELECT count(*)::int FROM map_history_boundaries b
+         JOIN maps m ON m.id=b.map_id JOIN session_stages st ON st.id=m.session_stage_id
+         WHERE st.session_id=$1 AND to_jsonb(b)::text LIKE $2) AS boundaries,
+        (SELECT count(*)::int FROM research_events e
+         WHERE e.session_id=$1 AND to_jsonb(e)::text LIKE $2) AS events`,
+      [bp.sessionId, `%${practiceMarker}%`],
+    )).rows[0];
+    assert.deepEqual(counts, {
+      concepts: 0, links: 0, legacy_logs: 0,
+      snapshots: 0, boundaries: 0, events: 0,
+    }, "practice-only text must not enter stored Session/Map/research records");
+
+    const researchPath = `/api/research/experiment-runs/${browserRun.id}/research`;
+    const exportHeaders = { Authorization: `Bearer ${researcher}` };
+    for (const suffix of ["json", "csv"] as const) {
+      const response = await fetch(base + `${researchPath}.${suffix}`, { headers: exportHeaders });
+      assert.equal(response.status, 200, `practice non-leak ${suffix} export`);
+      assert.equal((await response.text()).includes(practiceMarker), false, `practice-only text in ${suffix}`);
+    }
+    const workbookResponse = await fetch(base + `${researchPath}.xlsx`, { headers: exportHeaders });
+    assert.equal(workbookResponse.status, 200, "practice non-leak XLSX export");
+    await assertPracticeLabelsAbsentFromWorkbook(
+      Buffer.from(await workbookResponse.arrayBuffer()),
+      [practiceMarker],
+    );
+    console.log(JSON.stringify({check: "practice-no-persistence", ...counts, json: true, csv: true, xlsx: true}));
+
     const practiceDelivery = await pool.query(
       `SELECT count(*)::int AS events, count(r.event_id)::int AS receipts
        FROM research_events e

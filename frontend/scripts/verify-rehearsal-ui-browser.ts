@@ -235,10 +235,54 @@ async function captureBeforeAfter(
 }
 
 async function assertNoHorizontalOverflow(page: Page, name: string, width: number) {
+  const layout = await page.evaluate(() => {
+    const viewportWidth = window.innerWidth;
+    const scrollWidth = document.documentElement.scrollWidth;
+    if (scrollWidth <= viewportWidth) return { viewportWidth, scrollWidth, suspects: [] };
+
+    const suspects: Array<{
+      element: string;
+      left: number;
+      right: number;
+      width: number;
+      scrollWidth: number;
+      clientWidth: number;
+      minWidth: string;
+      overflowX: string;
+      clippedBy: string | null;
+    }> = [];
+    for (const element of document.body.querySelectorAll<HTMLElement>("*")) {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      if (style.display === "none" || rect.width <= 0 || rect.right <= viewportWidth + 1) continue;
+      let clippedBy: string | null = null;
+      for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const ancestorStyle = getComputedStyle(ancestor);
+        if (!/^(auto|scroll|hidden|clip)$/.test(ancestorStyle.overflowX)) continue;
+        if (rect.right > ancestor.getBoundingClientRect().right + 1) {
+          clippedBy = `${ancestor.tagName.toLowerCase()}${ancestor.id ? `#${ancestor.id}` : ""}.${Array.from(ancestor.classList).slice(0, 3).join(".")}`;
+          break;
+        }
+      }
+      suspects.push({
+        element: `${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ""}.${Array.from(element.classList).slice(0, 3).join(".")}`,
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        width: Math.round(rect.width),
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+        minWidth: style.minWidth,
+        overflowX: style.overflowX,
+        clippedBy,
+      });
+    }
+    suspects.sort((a, b) => Number(!!a.clippedBy) - Number(!!b.clippedBy) || b.right - a.right);
+    return { viewportWidth, scrollWidth, suspects: suspects.slice(0, 16) };
+  });
   assert.equal(
-    await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+    layout.scrollWidth > layout.viewportWidth,
     false,
-    `${name}: no horizontal overflow at ${width}px`,
+    `${name}: no horizontal overflow at ${width}px; layout=${JSON.stringify(layout)}`,
   );
 }
 
@@ -460,10 +504,21 @@ try {
     await p02Page.getByRole("button", { name: "概念を追加" }).click();
     assert.equal(await p02Page.locator(".concept-node").count(), 1);
     const tutorialRequests = p02ApiObservations.slice(beforeTutorialRequestIndex);
-    assert.equal(
-      tutorialRequests.some((request) => request.method !== "GET" || !request.path.endsWith("/flow")),
-      false,
-      "inline practice only reads existing flow access; no learning/map/logging writes",
+
+    const allowedPracticeReads = new Set([
+      "/api/experiment-status",
+      "/api/sessions/00000000-0000-4000-8000-000000000001/flow",
+    ]);
+    const unexpectedTutorialRequests = tutorialRequests.filter(
+      (request) =>
+        request.method !== "GET" ||
+        !allowedPracticeReads.has(request.path),
+    );
+
+    assert.deepEqual(
+      unexpectedTutorialRequests,
+      [],
+      "inline practice must not send mutations or unexpected API requests",
     );
     await p02Page.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
     await p02Page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
@@ -594,6 +649,18 @@ try {
     await installApiFixture(startPage, "p02");
     await startPage.goto(vite.resolvedUrls!.local[0]!);
     await startPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    assert.equal(
+      await startPage.getByRole("button", { name: "セッションを開始", exact: true }).isEnabled(),
+      true,
+      "previously completed practice unlocks session start",
+    );
+    await startPage.reload();
+    await startPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    assert.equal(
+      await startPage.getByRole("button", { name: "セッションを開始", exact: true }).isEnabled(),
+      true,
+      "same-tab F5 restores the previously completed practice start gate",
+    );
     const sessionStart = startPage.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/api/sessions/00000000-0000-4000-8000-000000000001/start" &&
@@ -631,23 +698,45 @@ try {
       deviceScaleFactor: 1,
     });
     const tutorialPage = await tutorialContext.newPage();
-    const tutorialApiRequests: string[] = [];
+    // The 1440px run completes every practice task *inside* the P02 session,
+    // then verifies the same-tab F5/start handoff. The 1366px run still tests
+    // the standalone tutorial and performs the 390px native Kit gestures.
+    const inlineP02 = width === 1440;
+    const p02SessionId = "00000000-0000-4000-8000-000000000001";
+    const p02FlowPath = `/api/sessions/${p02SessionId}/flow`;
+    const tutorialApiRequests: Array<{ path: string; method: string }> = [];
+    const tutorialClaimSecrets: string[] = [];
     tutorialPage.on("request", (request) => {
-      if (new URL(request.url()).pathname.startsWith("/api/"))
-        tutorialApiRequests.push(new URL(request.url()).pathname);
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith("/api/"))
+        tutorialApiRequests.push({ path, method: request.method() });
+      if (path === "/api/experiment-client/claim")
+        tutorialClaimSecrets.push(request.headers()["x-experiment-client"] ?? "");
     });
-    await tutorialPage.goto(`${vite.resolvedUrls!.local[0]}tutorial`);
+    if (inlineP02) {
+      await installApiFixture(tutorialPage, "p02");
+      await tutorialPage.goto(vite.resolvedUrls!.local[0]!);
+      await tutorialPage.getByLabel("アクセスコード", { exact: true }).fill(syntheticAccessCode);
+      await tutorialPage.getByRole("button", { name: "続行", exact: true }).click();
+      await tutorialPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+      assert.equal(
+        await tutorialPage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(),
+        true,
+        "P02 start is gated before all actual practice operations",
+      );
+      await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+    } else {
+      await tutorialPage.goto(`${vite.resolvedUrls!.local[0]}tutorial`);
+    }
     await tutorialPage.getByRole("heading", { name: "操作の練習" }).waitFor();
+    const practiceRequestIndex = tutorialApiRequests.length;
+    const tutorialClaimsBeforePractice = tutorialClaimSecrets.length;
     const activeTutorialPanel = tutorialPage.locator(".tutorial-practice-panel:not([hidden])");
     assert.match(
       await tutorialPage.locator(".tutorial-heading").innerText(),
       /通常の学習Sessionとは別.*保存しません/s,
     );
-    assert.equal(
-      tutorialApiRequests.length,
-      0,
-      "tutorial does not call the API",
-    );
+    if (!inlineP02) assert.deepEqual(tutorialApiRequests, [], "standalone tutorial never calls the API");
     assert.equal(
       await tutorialPage.getByRole("button", { name: "練習を終了" }).isDisabled(),
       true,
@@ -722,14 +811,71 @@ try {
       "0 / 3 件達成",
     );
     await captureBeforeAfter(tutorialPage, "tutorial-kit-build", width, directory);
+    // At one desktop iteration, run the *real* Kit pointer drag/connect sequence
+    // at mobile width. The other iteration retains its desktop coverage.
+    // Keep the entire 960px Map canvas scrollable within the narrow viewport.
+    if (width === 1366) {
+      await tutorialPage.setViewportSize({ width: 390, height: 844 });
+      await assertNoHorizontalOverflow(tutorialPage, "mobile kit before gestures", 390);
+    }
     assert.equal(await activeTutorialPanel.locator(".tutorial-tools form").count(), 0);
     const canvas = activeTutorialPanel.locator(".concept-canvas");
 
-    for (const [index, x, y] of [
+    // Native mobile-width mouse drag: put the palette item and drop point in
+    // the visible browser viewport before starting. Locator.dragTo() may
+    // re-scroll the tall page to center the 960px Canvas, hiding the palette.
+    const dragVisibleMobileKitPart = async (
+      part: ReturnType<typeof activeTutorialPanel.locator>,
+      dropX: number,
+      dropY: number,
+    ) => {
+      const mapViewport = activeTutorialPanel.locator(".concept-canvas-viewport");
+      // Center the desired Canvas coordinate in its *internal* horizontal scroll.
+      await mapViewport.evaluate((element, x) => {
+        element.scrollLeft = Math.max(0, x - element.clientWidth / 2);
+      }, dropX);
+      const before = await part.boundingBox();
+      assert.ok(before, "mobile Kit palette item exists");
+      // Place the source near the top; the Canvas then remains lower in view.
+      await tutorialPage.evaluate((sourceY) => {
+        window.scrollBy(0, sourceY - 100);
+      }, before.y);
+      const source = await part.boundingBox();
+      const target = await canvas.boundingBox();
+      const clip = await mapViewport.boundingBox();
+      assert.ok(source && target && clip, "mobile Kit drag elements have bounds");
+      const fromX = source.x + source.width / 2;
+      const fromY = source.y + source.height / 2;
+      const toX = target.x + dropX;
+      const toY = target.y + dropY;
+      const visible =
+        fromX > 2 && fromX < 388 && fromY > 2 && fromY < 842 &&
+        toX > clip.x + 2 && toX < clip.x + clip.width - 2 &&
+        toY > clip.y + 2 && toY < clip.y + clip.height - 2 &&
+        toY > 2 && toY < 842;
+      assert.ok(visible,
+        `mobile Kit drag source/target must both be visible: ${JSON.stringify({ source, target, clip, fromX, fromY, toX, toY })}`,
+      );
+      // Actual pointer movement: no synthetic DragEvent or direct callback.
+      await tutorialPage.mouse.move(fromX, fromY);
+      await tutorialPage.mouse.down();
+      await tutorialPage.mouse.move(fromX + 8, fromY + 8, { steps: 3 });
+      await tutorialPage.mouse.move(toX, toY, { steps: 20 });
+      await tutorialPage.mouse.up();
+    };
+
+    // Playwright may horizontally center the 960px Canvas while preparing dragTo.
+    // Drop near its center so the native pointer target stays inside the
+    // narrow viewport even after that automatic scrolling.
+    for (const [index, x, y] of (width === 1366 ? [
+      [0, 480, 90],
+      [1, 480, 220],
+      [2, 480, 350],
+    ] : [
       [0, 150, 130],
       [1, 440, 170],
       [2, 720, 130],
-    ]) {
+    ])) {
       const part = activeTutorialPanel
         .locator(".kit-palette-part.is-concept")
         .nth(index);
@@ -737,13 +883,14 @@ try {
       const expected = index + 1;
 
       for (let attempt = 0; attempt < 2; attempt++) {
-        await part.dragTo(canvas, {
-          targetPosition: {
-            x,
-            y: attempt === 0 ? y : 390,
-          },
-          steps: 16,
-        });
+        if (width === 1366) {
+          await dragVisibleMobileKitPart(part, x, attempt === 0 ? y : Math.min(y + 40, 320));
+        } else {
+          await part.dragTo(canvas, {
+            targetPosition: { x, y: attempt === 0 ? y : 390 },
+            steps: 16,
+          });
+        }
 
         try {
           await tutorialPage.waitForFunction(
@@ -764,11 +911,24 @@ try {
         const feedback = await activeTutorialPanel
           .locator(".kit-palette-feedback")
           .allInnerTexts();
+        const viewport = await activeTutorialPanel.locator(".concept-canvas-viewport")
+          .evaluate((element) => ({
+            scrollLeft: element.scrollLeft,
+            clientWidth: element.clientWidth,
+            scrollWidth: element.scrollWidth,
+            left: element.getBoundingClientRect().left,
+            right: element.getBoundingClientRect().right,
+          }));
+        const partBox = await part.boundingBox();
+        const canvasBox = await canvas.boundingBox();
 
         throw new Error(
           `KB概念 ${expected} 個目の配置に失敗しました。\n` +
           `実際の概念数: ${actual}\n` +
-          `配置結果: ${JSON.stringify(feedback)}`
+          `配置結果: ${JSON.stringify(feedback)}\n` +
+          `viewport: ${JSON.stringify(viewport)}\n` +
+          `part: ${JSON.stringify(partBox)}\n` +
+          `canvas: ${JSON.stringify(canvasBox)}`
         );
       }
     }
@@ -778,12 +938,16 @@ try {
       "KBリンク部品が使用可能である",
     );
 
-    // Canvas左上の空白部分へドラッグ
-    await activeTutorialPanel.locator(".kit-palette-part.is-link").first()
-      .dragTo(canvas, {
+    // Keep the link's central handle in the same visible Canvas region on mobile.
+    const kitLinkPart = activeTutorialPanel.locator(".kit-palette-part.is-link").first();
+    if (width === 1366) {
+      await dragVisibleMobileKitPart(kitLinkPart, 480, 30);
+    } else {
+      await kitLinkPart.dragTo(canvas, {
         targetPosition: { x: 30, y: 30 },
         steps: 16,
       });
+    }
 
     const temporaryLink = activeTutorialPanel.locator(".link-connector.is-temporary");
 
@@ -811,6 +975,10 @@ try {
       "3 / 3 件達成",
       "all three KB tasks are completed by actual interactions",
     );
+    if (width === 1366) {
+      await assertNoHorizontalOverflow(tutorialPage, "mobile kit after gestures", 390);
+      await tutorialPage.setViewportSize({ width, height });
+    }
     await tutorialPage.getByRole("button", { name: "次へ：統合マップの練習", exact: true }).click();
     await tutorialPage.getByRole("heading", { name: "統合マップの練習" }).waitFor();
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
@@ -963,9 +1131,69 @@ try {
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
       "7 / 7 件達成",
     );
-    assert.equal(tutorialApiRequests.length, 0, "all three practice modes are API-free");
+    if (inlineP02) {
+      const allowedPracticeReads = new Set(["/api/experiment-status", p02FlowPath]);
+      assert.deepEqual(
+        tutorialApiRequests.slice(practiceRequestIndex).filter(
+          (request) => request.method !== "GET" || !allowedPracticeReads.has(request.path),
+        ),
+        [],
+        "actual three-mode P02 practice makes no research writes or unexpected API calls",
+      );
+      assert.equal(
+        tutorialClaimSecrets.length,
+        tutorialClaimsBeforePractice,
+        "actual practice never registers another experiment client",
+      );
+    } else {
+      assert.deepEqual(tutorialApiRequests, [], "standalone three-mode practice makes no API requests");
+    }
     await tutorialPage.getByRole("button", { name: "練習を終了", exact: true }).click();
-    await tutorialPage.waitForURL(vite.resolvedUrls!.local[0]!);
+    if (inlineP02) {
+      await tutorialPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+      const startButton = tutorialPage.getByRole("button", { name: "セッションを開始", exact: true });
+      assert.equal(await startButton.isEnabled(), true, "actual completion unlocks P02 start");
+      const completionKey = `sbkb-practice-complete-v1:${p02SessionId}:${requestDigest(syntheticAccessCode)}`;
+      assert.equal(
+        await tutorialPage.evaluate((key) => sessionStorage.getItem(key), completionKey),
+        "1",
+        "real practice finish records only the tab-local completion marker",
+      );
+      assert.equal(
+        await tutorialPage.evaluate(() => sessionStorage.getItem("stage1-access-token")),
+        syntheticAccessCode,
+        "the access token survives actual practice completion",
+      );
+      const claimSecret = tutorialClaimSecrets.at(-1);
+      assert.ok(claimSecret, "P02 has an existing experiment client identity");
+      const clientKey = `sbkb-experiment-client-v1:${p02SessionId}`;
+      const clientState = await tutorialPage.evaluate((key) => sessionStorage.getItem(key), clientKey);
+      assert.ok(clientState, "same-tab client ownership is stored before F5");
+      const claimsBeforeF5 = tutorialClaimSecrets.length;
+      await tutorialPage.reload();
+      await tutorialPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+      assert.ok(tutorialClaimSecrets.length > claimsBeforeF5, "F5 rechecks client ownership");
+      assert.equal(tutorialClaimSecrets.at(-1), claimSecret, "F5 reuses the original client identity");
+      assert.equal(await tutorialPage.evaluate((key) => sessionStorage.getItem(key), clientKey), clientState);
+      assert.equal(await tutorialPage.evaluate((key) => sessionStorage.getItem(key), completionKey), "1");
+      assert.equal(await startButton.isEnabled(), true, "actual completion survives F5");
+
+      const startPath = `/api/sessions/${p02SessionId}/start`;
+      const requestIndexBeforeStart = tutorialApiRequests.length;
+      const started = tutorialPage.waitForResponse(
+        (response) => new URL(response.url()).pathname === startPath && response.request().method() === "POST",
+      );
+      await startButton.click();
+      assert.equal((await started).ok(), true, "session starts after real practice and F5");
+      await tutorialPage.getByRole("button", { name: "開始する", exact: true }).waitFor();
+      assert.deepEqual(
+        tutorialApiRequests.slice(requestIndexBeforeStart).filter((request) => request.method !== "GET"),
+        [{ path: startPath, method: "POST" }],
+        "only the expected session start mutates the synthetic API",
+      );
+    } else {
+      await tutorialPage.waitForURL(vite.resolvedUrls!.local[0]!);
+    }
     await tutorialContext.close();
 
     const homeContext = await browser.newContext({
@@ -1200,8 +1428,69 @@ try {
     await pendingContext.close();
   }
 
+  // Narrow-screen smoke test uses isolated API fixtures and never touches a DB.
+  // The desktop gesture suite above still covers the full three-mode exercise.
+  const mobileContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 1,
+  });
+  const mobilePage = await mobileContext.newPage();
+  const mobileApiRequests: Array<{ path: string; method: string }> = [];
+  mobilePage.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/api/"))
+      mobileApiRequests.push({ path, method: request.method() });
+  });
+  await installApiFixture(mobilePage, "p02");
+  await mobilePage.goto(vite.resolvedUrls!.local[0]!);
+  await mobilePage.getByLabel("アクセスコード", { exact: true }).fill(syntheticAccessCode);
+  await mobilePage.getByRole("button", { name: "続行", exact: true }).click();
+  await mobilePage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+  await assertNoHorizontalOverflow(mobilePage, "P02 mobile entry", 390);
+  assert.equal(
+    await mobilePage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(),
+    true,
+  );
+  const beforeMobilePractice = mobileApiRequests.length;
+  await mobilePage.getByRole("button", { name: /練習を開く/ }).click();
+  await mobilePage.getByRole("heading", { name: "操作の練習" }).waitFor();
+  await assertNoHorizontalOverflow(mobilePage, "mobile practice", 390);
+  for (const label of ["Scratch-Buildの練習", "Kit-Buildの練習", "統合マップの練習"]) {
+    assert.equal(
+      await mobilePage.getByRole("button", { name: label, exact: true }).isVisible(),
+      true,
+      `${label} is visible at 390px`,
+    );
+  }
+  assert.equal(
+    await mobilePage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(
+    await mobilePage.getByRole("button", { name: "練習を終了", exact: true }).isDisabled(),
+    true,
+  );
+  await mobilePage.getByLabel("概念の名前").fill("390px合成概念");
+  await mobilePage.getByRole("button", { name: "概念を追加" }).click();
+  assert.equal(await mobilePage.locator(".tutorial-practice-panel:not([hidden]) .concept-node").count(), 1);
+  await assertNoHorizontalOverflow(mobilePage, "mobile practice after concept creation", 390);
+  const mobilePracticeRequests = mobileApiRequests.slice(beforeMobilePractice);
+  assert.deepEqual(
+    mobilePracticeRequests.filter((request) => request.method !== "GET"),
+    [],
+    "mobile practice must not issue API mutations",
+  );
+  await mobilePage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
+  await mobilePage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+  assert.equal(
+    await mobilePage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(),
+    true,
+  );
+  await assertNoHorizontalOverflow(mobilePage, "P02 mobile return", 390);
+  await mobileContext.close();
+
   console.log(
-    `Rehearsal UI: PASS (signed-out code entry without practice card; P02 inline practice/return with unchanged client claims and no learning writes; normal start and legacy link preserved; unpublished/waiting/ended; researcher states; Edge synthetic fixtures at 1366x768 and 1440x900; screenshots: ${directory}; no real API or DB persistence verified)`,
+    `Rehearsal UI: PASS (signed-out code entry without practice card; P02 inline practice/return with unchanged client claims and no learning writes; precompleted start gate survives F5; 390px P02/practice smoke; normal start and legacy link preserved; unpublished/waiting/ended; researcher states; Edge synthetic fixtures at 1366x768 and 1440x900; screenshots: ${directory}; no real API or DB persistence verified)`,
   );
 } finally {
   await browser?.close();
