@@ -62,7 +62,7 @@ try {
   const databaseTotalsAtMeasurement=(await pool.query("SELECT (SELECT count(*)::int FROM sessions) sessions,(SELECT count(*)::int FROM research_events) events,(SELECT count(*)::int FROM map_operation_logs) legacy_logs")).rows[0];
   const fixtureMs = performance.now() - fixtureStart,
     start = performance.now();
-  const prepared = await fetch(base + "event-views", {
+  const prepared = await fetch(base + "event-exports", {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -73,38 +73,27 @@ try {
   const metadata = await prepared.json();
   const prepareMs = performance.now() - start;
   assert.equal(metadata.eventCount, 4000);
-  let offset: number | null = 0;
-  const seen: string[] = [],
-    pageMs: number[] = [];
-  while (offset !== null) {
-    const t = performance.now();
-    const response: Response = await fetch(
-      base + "event-views/" + metadata.exportId + "?offset=" + offset,
-      { headers },
-    );
-    assert.equal(response.status, 200);
-    const p = (await response.json()) as {
-      events: ExportEvent[];
-      next: number | null;
-    };
-    pageMs.push(performance.now() - t);
-    seen.push(...p.events.map((e: { event_id: string }) => e.event_id));
-    offset = p.next;
-  }
-  assert.equal(seen.length, 4000);
-  assert.equal(new Set(seen).size, 4000);
   const download = performance.now();
+  const jsonStart = performance.now();
   const jsonResponse = await fetch(
     base + "event-exports/" + metadata.exportId + "/events.json",
     { headers },
   );
+  assert.equal(jsonResponse.status, 200);
   const text = await jsonResponse.text();
+  const jsonDownloadMs = performance.now() - jsonStart;
   const events = JSON.parse(text).events as ExportEvent[];
+  const seen = events.map((event) => event.event_id);
+  assert.equal(seen.length, 4000);
+  assert.equal(new Set(seen).size, 4000);
+  const csvStart = performance.now();
   const csvResponse = await fetch(
     base + "event-exports/" + metadata.exportId + "/events.csv",
     { headers },
   );
+  assert.equal(csvResponse.status, 200);
   const csvText = await csvResponse.text(),
+    csvDownloadMs = performance.now() - csvStart,
     csv = parse(csvText, { bom: true, columns: true }) as Record<
       string,
       string
@@ -126,7 +115,6 @@ try {
     ] as const)
       assert.equal(csv[i][k], events[i][k]);
   assert.ok(events.every((e) => e.learner_id?.startsWith("P-")));
-  const sorted = [...pageMs].sort((a, b) => a - b);
   const result = {
     fixture:
       "synthetic SQL fixture for loading measurement; not an end-to-end acquisition benchmark",
@@ -134,12 +122,10 @@ try {
     participants: 20,
     sessions: 20,
     events: 4000,
-    pageSize: 25,
-    pages: pageMs.length,
     fixtureMs,
     prepareJsonCsvZipMs: prepareMs,
-    pageMedianMs: sorted[Math.floor(sorted.length * 0.5)],
-    pageP95Ms: sorted[Math.floor(sorted.length * 0.95)],
+    jsonDownloadMs,
+    csvDownloadMs,
     downloadAndValidateMs: performance.now() - download,
     jsonBytes: Buffer.byteLength(text),
     csvBytes: Buffer.byteLength(csvText),
