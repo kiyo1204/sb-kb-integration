@@ -655,40 +655,25 @@ try {
     parse(await file(large, "events.csv"), { columns: true, bom: true }).length,
     3000,
   );
-  // Issue #10: real researcher HTTP view uses the exact downloadable snapshot.
-  const viewed = await api("/research/event-views", {filters:{sessionIds:[bulk.id],eventTypes:["VIDEO_PLAY"],outcomes:["SUCCESS"]}});
-  assert.equal(viewed.status,201,viewed.text);
-  const view = JSON.parse(viewed.text) as ExportMetadata;
-  const pages: string[] = [];
-  let cursor: number|null = 0;
-  while(cursor !== null) {
-    const response = await api(`/research/event-views/${view.exportId}?offset=${cursor}`);
-    assert.equal(response.status,200);
-    const page = JSON.parse(response.text);
-    assert.ok(page.events.length<=25);
-    for (const e of page.events) { assert.equal(e.before,undefined); pages.push(e.event_id); }
-    cursor=page.next;
-  }
-  const expected=(await data(view)).events;
-  assert.deepEqual(pages,expected.map(e=>e.event_id));
-  assert.equal(new Set(pages).size,3000);
-  for(let i=1;i<expected.length;i++) assert.ok(expected[i-1].server_timestamp<=expected[i].server_timestamp);
-  const detail=JSON.parse((await api(`/research/event-views/${view.exportId}?offset=0&detail=1`)).text);
-  assert.deepEqual(detail.events[0],expected[0]);
-  assert.equal((await api(`/research/event-views/${view.exportId}`,undefined,control.token)).status,403);
-  assert.equal((await api("/research/event-views",{filters:{}},control.token)).status,403);
-  assert.equal((await api(`/research/event-views/${view.exportId}`,undefined,"invalid")).status,401);
-  assert.equal((await api(`/research/event-views/${view.exportId}?offset=-1`)).status,400);
-  assert.equal((await api(`/research/event-views/${view.exportId}?detail=2`)).status,400);
-  assert.equal(parseFilters({outcomes:["invented"]}),null);
-  await release(view);
-  assert.equal((await api(`/research/event-views/${view.exportId}`)).status,404);
+  // The old timeline-view API is retired. The downloadable research
+  // snapshot remains complete, consistent and restricted to researchers.
+  const expected = (await data(large)).events;
+  assert.equal(expected.length, 3000);
+  assert.equal(new Set(expected.map((event) => event.event_id)).size, 3000);
+  assert.equal(
+    (await api("/research/event-exports/" + large.exportId + "/events.json", undefined, control.token)).status,
+    403,
+  );
+  assert.equal((await api("/research/event-views", { filters: {} })).status, 404);
+  assert.equal((await api("/research/event-views/" + large.exportId)).status, 404);
+  assert.equal((await api("/research/event-exports/catalog")).status, 404);
+  assert.equal(parseFilters({ outcomes: ["invented"] }), null);
   for (const outcome of ["SUCCESS","FAILURE","REJECTED","CANCELLED","UNKNOWN"]) {
     const filtered = await create({sessionIds:[control.id,experimental.id],outcomes:[outcome]});
     assert.ok((await data(filtered)).events.every(e=>e.outcome===outcome));
     await release(filtered);
   }
-  console.log("Issue 10 snapshot paging/details/export/filters/auth: PASS");
+  console.log("Research export snapshot completeness, auth and filters: PASS");
   await release(large);
   let injected = false;
   const intercepted = new Proxy(pool, {
