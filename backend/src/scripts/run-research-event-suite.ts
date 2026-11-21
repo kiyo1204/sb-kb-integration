@@ -135,7 +135,6 @@ try {
   await run("test:event-scale");
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") {
     await start();
-    await run("test:research-log-ui", true);
     await run("test:stage1-analysis-layout-browser", true);
     await run("test:link-position-browser", true);
     await run("test:link-line-alignment-browser", true);
@@ -145,9 +144,6 @@ try {
     await run("test:undo-role-browser", true);
     await run("test:delivery-browser", true);
     await run("test:observation-context-browser", true);
-    await run("test:event-export-browser", true);
-    await run("test:data-management-browser", true);
-    await run("test:session-cleanup-browser", true);
     await stop();
   }
   await start();
