@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write src migrations package.json tsconfig.json eslint.config.js",
     "format:check": "prettier --check src migrations package.json tsconfig.json eslint.config.js",
+    "test:legacy-creation-disabled": "tsx src/scripts/verify-legacy-creation-disabled.ts",
     "test:stage1:integration": "tsx src/scripts/verify-stage1.ts",
     "test:undo-redo:unit": "tsx src/scripts/verify-undo-redo.ts",
     "test:research-events": "tsx src/scripts/verify-research-events.ts",
