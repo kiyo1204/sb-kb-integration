@@ -13,7 +13,7 @@ import {
   type ExportEvent,
 } from "./event-export-contract.js";
 
-export function extractionQuery(filters: ExportFilters, chronological = false) {
+export function extractionQuery(filters: ExportFilters) {
   const values: unknown[] = [],
     where: string[] = [];
   const list = (column: string, value: string[], cast = "text[]") => {
@@ -74,7 +74,7 @@ export function extractionQuery(filters: ExportFilters, chronological = false) {
  FROM research_events e LEFT JOIN sessions s ON s.id=e.session_id LEFT JOIN session_stages st ON st.id=e.stage_id LEFT JOIN map_history_boundaries b ON b.map_id=e.map_id
  WHERE s.protocol_key IN ('STAGE1_4','STAGE1_6','STAGE1_5','SBKB_INTEGRATION_V1') OR e.session_id IS NULL
  ) SELECT source.*,(SELECT protocol_key FROM sessions s WHERE s.id=source.session_id) AS protocol_key,(SELECT pseudonym FROM research_session_ids i WHERE i.session_id=source.session_id) AS pseudonym FROM source ${where.length ? "WHERE " + where.join(" AND ") : ""}
- ORDER BY ${chronological ? "server_timestamp,event_id" : "session_id ASC NULLS LAST,stream_order,CASE WHEN source_format='LEGACY' THEN map_id END ASC,sequence_number,event_id"}`,
+ ORDER BY session_id ASC NULLS LAST,stream_order,CASE WHEN source_format='LEGACY' THEN map_id END ASC,sequence_number,event_id`,
   };
 }
 export type RawExportRow = Omit<
