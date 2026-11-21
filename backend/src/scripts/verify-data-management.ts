@@ -1,5 +1,6 @@
 import {verifyMockTestUrl} from "./mock-db.js";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import express from "express";
 import { Pool } from "pg";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
@@ -130,13 +131,28 @@ try {
     [a.id, clientId],
   );
   await assert.rejects(pool.query("DELETE FROM map_history_boundaries WHERE map_id=$1",[a.map]), (e: unknown)=>!!e&&typeof e==='object'&&'code' in e&&e.code==='23514');
-  const listing = await api("/research/data-management");
-  assert.equal(listing.status, 200);
-  assert.ok(!JSON.stringify(listing.data).includes("participant_id"));
-  assert.ok(!JSON.stringify(listing.data).includes("dummy-code"));
-  const pa = listing.data.sessions.find(
-    (x: { session_id: string }) => x.session_id === a.id,
-  ).pseudonym;
+  // The retired administration UI has no API. Keep deletion protection and
+  // simulated historical participant linking in this disposable mock DB.
+  const oldPseudonym = (
+    await pool.query<{ pseudonym: string }>(
+      "SELECT pseudonym FROM research_session_ids WHERE session_id=$1",
+      [a.id],
+    )
+  ).rows[0]?.pseudonym;
+  assert.match(oldPseudonym, /^P-/);
+  for (const [path, method, body] of [
+    ["/research/data-management", "GET", null],
+    ["/research/data-management/studies", "POST", {}],
+    ["/research/data-management/studies/" + randomUUID(), "PATCH", { retainUntil: null }],
+    ["/research/data-management/assign", "POST", { sessionId: b.id, pseudonym: oldPseudonym }],
+  ] as const) {
+    const response = await fetch(base + path, {
+      method,
+      headers: { Authorization: "Bearer " + researcher, "Content-Type": "application/json" },
+      ...(body === null ? {} : { body: JSON.stringify(body) }),
+    });
+    assert.equal(response.status, 404, `retired administration route: ${method} ${path}`);
+  }
   assert.equal(
     (await api("/research/data-management", undefined, a.token)).status,
     403,
@@ -145,48 +161,33 @@ try {
     (await api("/research/data-management", undefined, "invalid")).status,
     401,
   );
-  const study = await api("/research/data-management/studies", {});
-  assert.equal(study.status, 200);
-  assert.equal(
-    (
-      await api(
-        "/research/data-management/studies/" + study.data.id,
-        { retainUntil: "2000-01-01T00:00:00Z" },
-        researcher,
-        "PATCH",
-      )
-    ).status,
-    200,
+
+  const participantId = (
+    await pool.query<{ participant_id: string }>(
+      "SELECT participant_id FROM research_identity.membership WHERE session_id=$1",
+      [a.id],
+    )
+  ).rows[0]?.participant_id;
+  assert.ok(participantId);
+  await pool.query(
+    "UPDATE research_identity.membership SET participant_id=$2 WHERE session_id=$1",
+    [b.id, participantId],
   );
-  assert.equal(
-    (await api("/research/data-management")).data.studies.find(
-      (x: { id: string }) => x.id === study.data.id,
-    ).retention_state,
-    "EXPIRED",
+  const updatedPseudonym = "P-" + randomUUID();
+  await pool.query(
+    "UPDATE research_identity.participants SET pseudonym=$2 WHERE id=$1",
+    [participantId, updatedPseudonym],
   );
-  assert.equal(
-    (
-      await api("/research/data-management/assign", {
-        sessionId: b.id,
-        pseudonym: pa,
-      })
-    ).status,
-    200,
-  );
-  assert.equal(
-    (
-      await api("/research/data-management/assign", {
-        sessionId: a.id,
-        reissue: true,
-      })
-    ).status,
-    200,
-  );
-  const updated = (await api("/research/data-management")).data.sessions.filter(
-    (x: { session_id: string }) => [a.id, b.id].includes(x.session_id),
-  );
+  const updated = (
+    await pool.query<{ session_id: string; pseudonym: string }>(
+      "SELECT session_id,pseudonym FROM research_session_ids WHERE session_id=ANY($1::uuid[]) ORDER BY session_id",
+      [[a.id, b.id]],
+    )
+  ).rows;
+  assert.equal(updated.length, 2);
   assert.equal(updated[0].pseudonym, updated[1].pseudonym);
-  assert.notEqual(updated[0].pseudonym, pa);
+  assert.equal(updated[0].pseudonym, updatedPseudonym);
+  assert.notEqual(updated[0].pseudonym, oldPseudonym);
   const exported = await service.create(
     parseFilters({ learnerIds: [updated[0].pseudonym] })!,
   );
@@ -343,18 +344,28 @@ try {
       .status,
     410,
   );
-  const audit = (await api("/research/data-management")).data.deletions.find(
-    (x: { id: string }) => x.id === deleted.data.receiptId,
-  );
-  assert.ok(audit.pending_devices >= 2);
+  const pendingDevices = async (id: string) => {
+    const row = (
+      await pool.query<{ pending_devices: number; receipt: unknown }>(
+        `SELECT to_jsonb(r) AS receipt,
+           (SELECT count(*)::int FROM research_identity.device_deletions d
+            JOIN research_identity.revocations v USING(token_hash)
+            WHERE v.receipt_id=r.id AND NOT d.acknowledged) AS pending_devices
+         FROM research_deletion_receipts r WHERE r.id=$1`,
+        [id],
+      )
+    ).rows[0];
+    assert.ok(row, "deletion receipt must survive deletion");
+    assert.ok(!JSON.stringify(row.receipt).includes(a.id));
+    return row.pending_devices;
+  };
+  const pendingBeforeAck = await pendingDevices(deleted.data.receiptId);
+  assert.ok(pendingBeforeAck >= 2);
   assert.equal((await api("/deletion-ack", { clientId }, a.token)).status, 200);
-  const afterAck = (await api("/research/data-management")).data.deletions.find(
-    (x: { id: string }) => x.id === deleted.data.receiptId,
-  );
-  assert.equal(afterAck.pending_devices, audit.pending_devices - 1);
-  assert.ok(!JSON.stringify(audit).includes(a.id));
+  const pendingAfterAck = await pendingDevices(deleted.data.receiptId);
+  assert.equal(pendingAfterAck, pendingBeforeAck - 1);
   console.log(
-    "Issue11 identity/reissue/retention/deletion/rollback/export/auth/replay prevention: PASS",
+    "Research data safeguards: synthetic identity linking, deletion/rollback/export/auth/replay prevention: PASS",
   );
 } finally {
   await service.dispose();
