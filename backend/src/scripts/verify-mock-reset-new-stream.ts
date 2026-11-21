@@ -232,12 +232,10 @@ try {
   const raw = await api("/research/sessions/" + s.id + "/export");
   assert.equal(raw.exportVersion, 2);
 
-  const exportResult = await api("/research/event-views", "POST", {
+  const exportResult = await api("/research/event-exports", "POST", {
     filters: { sessionIds: [s.id] },
   });
   assert.ok(exportResult.eventCount > 0);
-  const page = await api("/research/event-views/" + exportResult.exportId);
-  assert.ok(page.events.length > 0);
   const json = await fetch(
     base +
       "/api/research/event-exports/" +
@@ -254,7 +252,7 @@ try {
     ),
   );
   const denied = await fetch(
-    base + "/api/research/event-views/" + exportResult.exportId,
+    base + "/api/research/event-exports/" + exportResult.exportId + "/events.json",
     { headers: { Authorization: "Bearer " + token } },
   );
   assert.equal(denied.status, 403);

@@ -8,29 +8,13 @@ import {
   EventExportService,
   ExportLimitError,
 } from "./event-export-service.js";
-import { eventTargets } from "./research-events.js";
 import { parseFilters, exportFiles } from "./event-export-contract.js";
 export function registerEventExportRoutes(
   app: Express,
   pool: Pool,
   service = new EventExportService(pool),
 ) {
-  app.get("/api/research/event-exports/catalog", (_req, res) => {
-    if (principalOf(res).role !== "researcher")
-      return res.status(403).json({ error: "forbidden" });
-    return res.json({ eventTypes: Object.keys(eventTargets) });
-  });
-  app.get("/api/research/event-views/:exportId", async (req,res) => {
-    if (principalOf(res).role !== "researcher") return res.status(403).json({error:"forbidden"});
-    const offset = req.query.offset ?? "0";
-    if (!isUuid(req.params.exportId) || typeof offset !== "string" || !/^(0|[1-9][0-9]{0,8})$/.test(offset) || Object.keys(req.query).some(k => !["offset","detail"].includes(k)) || (req.query.detail !== undefined && req.query.detail !== "1")) return res.status(400).json({error:"invalid_cursor"});
-    try {
-      const page = await service.page(req.params.exportId,Number(offset), req.query.detail === "1" ? 1 : 25);
-      if (!page) return res.status(404).json({error:"snapshot_expired"});
-      return res.set("Cache-Control","no-store").json({...page, events: req.query.detail === "1" ? page.events : page.events.map(event => ({...event,before:undefined,after:undefined,details:undefined}))});
-    } catch { return res.status(503).json({error:"event_view_unavailable"}); }
-  });
-  app.post(["/api/research/event-exports", "/api/research/event-views"], async (req, res) => {
+  app.post("/api/research/event-exports", async (req, res) => {
     if (principalOf(res).role !== "researcher")
       return res.status(403).json({ error: "forbidden" });
     const body = req.body,
@@ -59,7 +43,7 @@ export function registerEventExportRoutes(
         });
     }
     try {
-      const result = await service.create(filters, req.path.endsWith("event-views"));
+      const result = await service.create(filters);
       result.auditSaved = await recordAudit(
         pool,
         {

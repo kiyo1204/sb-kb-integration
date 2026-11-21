@@ -22,7 +22,6 @@ import {
   detailColumns,
   csvRows,
   type ExportFilters,
-  type ExportEvent,
   exportFiles,
 } from "./event-export-contract.js";
 import {
@@ -50,7 +49,6 @@ type Job = {
   ready: boolean;
   readers: number;
   deleting: boolean;
-  offsets: number[];
   sessionIds: Set<string>;
 };
 export class EventExportService {
@@ -104,7 +102,7 @@ export class EventExportService {
           await this.removeDirectory(path);
       }
   }
-  async create(filters: ExportFilters, chronological = false) {
+  async create(filters: ExportFilters) {
     await this.sweep();
     if (this.jobs.size >= this.maxJobs) throw new ExportLimitError("capacity");
     const id = randomUUID(),
@@ -127,7 +125,6 @@ export class EventExportService {
       ready: false,
       readers: 0,
       deleting: false,
-      offsets: [],
       sessionIds: new Set(filters.sessionIds),
     };
     this.jobs.set(id, job);
@@ -152,7 +149,7 @@ export class EventExportService {
     let transaction = false, identityLock = false;
     try {
       await mkdir(directory, { mode: 0o700 });
-      for (const name of [...exportFiles.filter((x) => x !== "bundle.zip"), "view.ndjson"]) {
+      for (const name of exportFiles.filter((x) => x !== "bundle.zip")) {
         handles.set(name, await open(join(directory, name), "wx", 0o600));
       }
       await client.query("SELECT pg_advisory_lock_shared(111011)");
@@ -166,7 +163,7 @@ export class EventExportService {
       metadata.snapshotAt = (
         await client.query("SELECT transaction_timestamp() AS time")
       ).rows[0].time.toISOString();
-      const query = extractionQuery(filters, chronological);
+      const query = extractionQuery(filters);
       await client.query(
         "DECLARE export_events NO SCROLL CURSOR FOR " + query.text,
         query.values,
@@ -200,8 +197,6 @@ export class EventExportService {
             "events.json",
             (metadata.eventCount ? "," : "") + JSON.stringify(event),
           );
-          job.offsets.push(sizes.get("view.ndjson") ?? 0);
-          await write("view.ndjson", JSON.stringify(event) + "\n");
           metadata.eventCount++;
           if (!["EXPORTED", "NO_PAYLOAD"].includes(event.payload_status))
             metadata.payloadWarnings++;
@@ -238,9 +233,9 @@ export class EventExportService {
           metadata.boundaryWarnings +
           "}\n",
       );
-      await write("data-dictionary.md", dataDictionary(chronological));
+      await write("data-dictionary.md", dataDictionary());
       metadata.expiresAt = new Date(Date.now() + this.ttlMs).toISOString();
-      metadata.files = [...sizes].filter(([name]) => name !== "view.ndjson").map(([name, bytes]) => ({
+      metadata.files = [...sizes].map(([name, bytes]) => ({
         name,
         bytes,
         rows:
@@ -305,23 +300,6 @@ export class EventExportService {
     )
       return null;
     return job;
-  }
-  async page(id: string, offset: number, limit = 25) {
-    const job = this.get(id);
-    if (!job) return null;
-    job.readers++;
-    let handle: FileHandle | undefined;
-    try {
-      handle = await open(join(job.directory, "view.ndjson"), "r");
-      const events: ExportEvent[] = [];
-      for (let i=offset; i<Math.min(offset+limit,job.offsets.length); i++) {
-        const end = job.offsets[i+1] ?? (await handle.stat()).size;
-        const buffer = Buffer.alloc(end-job.offsets[i]);
-        await handle.read(buffer,0,buffer.length,job.offsets[i]);
-        events.push(JSON.parse(buffer.toString("utf8")) as ExportEvent);
-      }
-      return {events, next: offset+events.length<job.offsets.length ? offset+events.length : null};
-    } finally { await handle?.close(); await this.release(id); }
   }
   async invalidateSessions(ids: string[]) {
     for (const [id,job] of this.jobs) if (ids.some(s=>job.sessionIds.has(s))) await this.delete(id);
