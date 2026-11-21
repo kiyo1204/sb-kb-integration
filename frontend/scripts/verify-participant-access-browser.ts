@@ -115,13 +115,15 @@ try {
     .getByRole("heading", { name: "セッションの削除", exact: true })
     .waitFor();
   assert.equal(
-    await researcherPage.getByRole("button", { name: /セッションを削除/ }).count(),
-    0,
-    "new-protocol Session deletion must remain unavailable until a protected API exists",
+    await researcherPage
+      .getByRole("button", { name: "登録を取り消す", exact: true })
+      .isDisabled(),
+    true,
+    "withdrawal requires selection of an eligible pristine registration",
   );
   assert.equal(
     await researcherPage
-      .getByText("新しい実験フローのSessionは、既存の削除API", { exact: false })
+      .getByText("物理削除ではありません。", { exact: false })
       .count(),
     1,
   );
