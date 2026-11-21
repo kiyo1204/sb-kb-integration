@@ -296,27 +296,7 @@ export default function HomePage({
                     ゴールマップ・Kitを管理
                   </a>
                 </section>
-                <details className="home-researcher-legacy-details">
-                  <summary>旧フローの作成</summary>
-                  <p>新しい実施管理とは別形式のSessionを作成します。</p>
-                  <a className="home-secondary-link" href="/research/stage1/new">
-                    旧形式のSessionを作成
-                  </a>
-                </details>
-                <section className="home-researcher-utility-group">
-                  <h3>研究データ・ログ</h3>
-                  <div className="home-researcher-utility-links">
-                    <a className="home-secondary-link" href="/research/data-management">
-                      研究データ・保存期限・明示削除
-                    </a>
-                    <a className="home-secondary-link" href="/research/events">
-                      研究イベントの時系列ログ
-                    </a>
-                    <a className="home-secondary-link" href="/research/event-exports">
-                      研究イベントを絞り込み出力
-                    </a>
-                  </div>
-                </section>
+
               </nav>
             </section>
             <ResearchSessions />
@@ -360,7 +340,7 @@ function ResearchSessions() {
     try {
       const response=await apiFetch("/api/research/data-management/cleanup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:session.id,confirm:"DELETE_UNSTARTED"})});
       const result=await response.json();
-      if(!response.ok) {setCleanupMessage(result.error==="confirmed_deletion_required"?"開始済み、または記録があるため簡易削除できません。確認付きデータ削除を使用してください。":"削除は確定していません。一覧を更新して再確認してください。");return;}
+      if(!response.ok) {setCleanupMessage(result.error==="confirmed_deletion_required"?"開始済み、または記録があるため簡易削除できません。対象の記録は保持されます。":"削除は確定していません。一覧を更新して再確認してください。");return;}
       setSessions(current=>current?.filter(item=>item.id!==session.id)??null);
       setCleanupMessage("未開始セッションを削除しました。");
     } catch {setCleanupMessage("削除結果を確認できません。一覧を更新して再確認してください。");}
@@ -378,7 +358,7 @@ function ResearchSessions() {
   return <section className="home-card research-session-list" aria-labelledby="research-sessions-heading">
     <div className="home-card-heading-row"><div><h2 id="research-sessions-heading">参加Sessionと結果</h2><p>新しいSessionから表示します。新protocolの「開く」は分析・出力へ、旧形式はSession画面へ進みます。</p></div>
       <button type="button" className="home-refresh-button" onClick={() => setReload(value => value + 1)}>更新</button></div>
-    {cleanupMessage && <p role="status">{cleanupMessage} <a href="/research/data-management">確認付きデータ削除</a></p>}
+    {cleanupMessage && <p role="status">{cleanupMessage}</p>}
     {error && <p className="home-action-error" role="alert">一覧を取得できませんでした。接続を確認して更新してください。</p>}
     {!sessions && !error && <p className="home-list-state" role="status">{loadingMessage("参加Session")}</p>}
     {sessions?.length === 0 && <p className="home-list-state" role="status">参加Sessionはまだありません。</p>}
@@ -389,7 +369,7 @@ function ResearchSessions() {
         <td>{session.status === "NOT_STARTED" ? "未開始" : session.status === "IN_PROGRESS" ? "進行中" : "完了"}</td>
         <td>{session.status === "IN_PROGRESS" && session.currentStageType ? `STEP ${(session.currentStageOrder ?? 0) + 1}：${stageNames[session.currentStageType] ?? session.currentStageType}` : "—"}</td>
         <td>{session.startedAt ? formatDate(session.startedAt) : "—"}</td><td>{session.completedAt ? formatDate(session.completedAt) : "—"}</td>
-        <td><div className="research-session-actions"><a className="home-secondary-button" href={session.protocolKey==="SBKB_INTEGRATION_V1"?`/research/stage1/${session.id}/analysis`:`/sessions/${session.id}`} aria-label={`${session.participantCode || "参加者コードなし"}のセッションを開く`}>開く</a>{session.protocolKey==="SBKB_INTEGRATION_V1"?<span>実施・参加者管理の対象</span>:session.status==="NOT_STARTED"?<button className="home-secondary-button" type="button" disabled={deleting!==null} onClick={()=>void cleanup(session)} aria-label={`${session.participantCode || "参加者コードなし"}の未開始セッションを削除`}>未開始セッションを削除</button>:<a href="/research/data-management">確認付きデータ削除</a>}</div></td>
+        <td><div className="research-session-actions"><a className="home-secondary-button" href={session.protocolKey==="SBKB_INTEGRATION_V1"?`/research/stage1/${session.id}/analysis`:`/sessions/${session.id}`} aria-label={`${session.participantCode || "参加者コードなし"}のセッションを開く`}>開く</a>{session.protocolKey==="SBKB_INTEGRATION_V1"?<span>実施・参加者管理の対象</span>:session.status==="NOT_STARTED"?<button className="home-secondary-button" type="button" disabled={deleting!==null} onClick={()=>void cleanup(session)} aria-label={`${session.participantCode || "参加者コードなし"}の未開始セッションを削除`}>未開始セッションを削除</button>:<span>この一覧からは削除できません</span>}</div></td>
       </tr>)}</tbody>
     </table></div>}
   </section>;
