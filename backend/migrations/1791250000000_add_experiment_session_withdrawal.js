@@ -55,7 +55,20 @@ CREATE TRIGGER experiment_withdrawal_validate BEFORE INSERT ON experiment_sessio
   FOR EACH ROW EXECUTE FUNCTION experiment_validate_session_withdrawal();
 CREATE TRIGGER experiment_withdrawal_immutable BEFORE UPDATE OR DELETE ON experiment_session_withdrawals
   FOR EACH ROW EXECUTE FUNCTION experiment_immutable();
-CREATE FUNCTION experiment_withdrawal_prevent_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION experiment_withdrawal_block_access_update() RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+  IF EXISTS(SELECT 1 FROM experiment_session_withdrawals WHERE session_id=NEW.session_id) THEN
+    RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='experiment_code_invalidated';
+  END IF;
+  RETURN NEW;
+END $;
+CREATE TRIGGER experiment_withdrawal_access_update_guard BEFORE UPDATE ON experiment_participant_access
+  FOR EACH ROW EXECUTE FUNCTION experiment_withdrawal_block_access_update();
+CREATE TRIGGER experiment_withdrawal_no_truncate BEFORE TRUNCATE ON experiment_session_withdrawals
+  FOR EACH STATEMENT EXECUTE FUNCTION experiment_no_truncate();
+CREATE TRIGGER experiment_withdrawal_audit_no_truncate BEFORE TRUNCATE ON experiment_session_withdrawal_audit
+  FOR EACH STATEMENT EXECUTE FUNCTION experiment_no_truncate();
+CREATE FUNCTION experiment_withdrawal_prevent_claim() RETURNS trigger LANGUAGE plpgsql AS $
 BEGIN
   PERFORM 1 FROM experiment_participant_access WHERE session_id=NEW.session_id FOR SHARE;
   IF EXISTS(SELECT 1 FROM experiment_session_withdrawals WHERE session_id=NEW.session_id) THEN
