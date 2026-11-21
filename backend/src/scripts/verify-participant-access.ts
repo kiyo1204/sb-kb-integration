@@ -637,7 +637,15 @@ try {
   assert.equal(repeatWithdrawal.withdrawnAt, withdrawn.withdrawnAt);
   assert.deepEqual(await counts(), beforeWithdrawal, "withdrawal must preserve Session and access rows");
   assert.equal((await call(`${root}/${other.id}`)).data.registeredSessions, 0);
-  assert.equal((await call(`${root}/${other.id}/participants`)).data.participants.length, 0);
+  const withdrawnView = (await call(`${root}/${other.id}/participants`)).data;
+  assert.equal(withdrawnView.participants.length, 0);
+  assert.equal(withdrawnView.withdrawals.length, 1);
+  assert.deepEqual(Object.keys(withdrawnView.withdrawals[0]).sort(), ["id", "label", "withdrawnAt"]);
+  assert.equal(withdrawnView.withdrawals[0].id, disposableId);
+  assert.equal(withdrawnView.withdrawals[0].label, "TEST ONLY withdrawable");
+  assert.equal(new Date(withdrawnView.withdrawals[0].withdrawnAt).toISOString(), withdrawn.withdrawnAt);
+  assert.equal((await call(`${root}/${run.id}/participants`)).data.withdrawals.length, 0);
+  assert.equal(JSON.stringify(withdrawnView).includes(disposableCode), false);
   const withdrawAudit = (
     await pool.query(
       "SELECT count(*)::int AS n FROM experiment_session_withdrawal_audit WHERE session_id=$1 AND outcome='SUCCESS'",
@@ -667,7 +675,7 @@ try {
     pool.query("DELETE FROM experiment_session_withdrawals WHERE session_id=$1", [disposableId]),
     (e: unknown) => typeof e === "object" && e !== null && "code" in e && e.code === "23514",
   );
-  checks.push("pristine withdrawal rejects claimed clients; durable idempotent tombstone revokes code, preserves history, hides counts and forbids replay");
+  checks.push("pristine withdrawal rejects claimed clients; durable idempotent tombstone revokes code, preserves history, hides counts and forbids replay; scoped redacted history returns label and timestamp without credentials");
   const safety = await loadResearchTextSafety(pool);
   for (const secret of [code1, code2, currentCode, clientA, clientB])
     assert.equal(safety.containsKnownSecret(secret), true);
