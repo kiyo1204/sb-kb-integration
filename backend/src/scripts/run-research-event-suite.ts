@@ -89,6 +89,7 @@ try {
   for (const test of [
     "test:experiment-flow-config",
     "test:test-target-guards",
+    "test:legacy-creation-disabled",
     "test:event-catalog",
     "test:research-event-schema",
     "test:undo-redo:unit",
