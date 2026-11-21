@@ -2,7 +2,7 @@ import {verifyMockTestUrl} from "./mock-db.js";
 import assert from "node:assert/strict";
 import express from "express";
 import { Pool } from "pg";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createStage1Session } from "../sessions.js";
@@ -191,7 +191,14 @@ try {
     parseFilters({ learnerIds: [updated[0].pseudonym] })!,
   );
   assert.equal(exported.eventCount, 4);
-  const rows = (await service.page(exported.exportId, 0))!.events;
+  const rows = (
+    JSON.parse(
+      await readFile(
+        join(service.root, exported.exportId, "events.json"),
+        "utf8",
+      ),
+    ) as { events: Array<{ learner_id: string | null }> }
+  ).events;
   assert.ok(rows.every((e) => e.learner_id === updated[0].pseudonym));
   assert.ok(!JSON.stringify(rows).includes("dummy-code"));
   const internal = (
