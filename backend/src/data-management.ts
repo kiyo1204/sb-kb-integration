@@ -1,7 +1,6 @@
 import { EXPERIMENT_PROTOCOL, FoundationError } from "./experiment-foundation.js";
 import type { Express } from "express";
 import type { Pool, PoolClient } from "pg";
-import { parseInstant } from "./event-export-contract.js";
 import { randomUUID } from "node:crypto";
 import { principalOf, tokenHash } from "./access-control.js";
 import { isUuid } from "./delivery-reliability.js";
@@ -211,118 +210,6 @@ export function registerDataManagement(
       ? n()
       : r.status(403).json({ error: "forbidden" }),
   );
-  app.get("/api/research/data-management", async (_q, r) => {
-    try {
-      const [s, m, d] = await Promise.all([
-        pool.query(
-          "SELECT id,retain_until,CASE WHEN retain_until IS NULL THEN 'UNSET' WHEN retain_until<clock_timestamp() THEN 'EXPIRED' WHEN retain_until<clock_timestamp()+interval '30 days' THEN 'DUE_SOON' ELSE 'SET' END retention_state FROM research_studies ORDER BY id",
-        ),
-        pool.query(
-          "SELECT session_id,pseudonym,study_id FROM research_session_ids ORDER BY session_id",
-        ),
-        pool.query(
-          "SELECT r.*,(SELECT count(*)::int FROM research_identity.device_deletions d JOIN research_identity.revocations v USING(token_hash) WHERE v.receipt_id=r.id AND NOT d.acknowledged) pending_devices FROM research_deletion_receipts r ORDER BY deleted_at DESC LIMIT 100",
-        ),
-      ]);
-      return r.json({ studies: s.rows, sessions: m.rows, deletions: d.rows });
-    } catch {
-      return r.status(503).json({ error: "management_unavailable" });
-    }
-  });
-  app.post("/api/research/data-management/studies", async (q, r) => {
-    if (Object.keys(q.body ?? {}).length)
-      return r.status(400).json({ error: "invalid_input" });
-    try {
-      return r.json(
-        (
-          await pool.query(
-            "INSERT INTO research_studies DEFAULT VALUES RETURNING id",
-          )
-        ).rows[0],
-      );
-    } catch {
-      return r.status(503).json({ error: "management_unavailable" });
-    }
-  });
-  app.patch("/api/research/data-management/studies/:id", async (q, r) => {
-    const v = q.body?.retainUntil;
-    if (
-      !isUuid(q.params.id) ||
-      Object.keys(q.body ?? {}).length !== 1 ||
-      (v !== null && !parseInstant(v))
-    )
-      return r.status(400).json({ error: "invalid_retention" });
-    try {
-      const x = await pool.query(
-        "UPDATE research_studies SET retain_until=$2 WHERE id=$1 RETURNING id",
-        [q.params.id, v],
-      );
-      return r.status(x.rowCount ? 200 : 404).json({ saved: !!x.rowCount });
-    } catch {
-      return r.status(503).json({ error: "management_unavailable" });
-    }
-  });
-  app.post("/api/research/data-management/assign", async (q, r) => {
-    const { sessionId, pseudonym, studyId, reissue } = q.body ?? {};
-    if (
-      !isUuid(sessionId) ||
-      Object.keys(q.body ?? {}).some(
-        (k) => !["sessionId", "pseudonym", "studyId", "reissue"].includes(k),
-      ) ||
-      (pseudonym !== undefined && !validPublic(pseudonym)) ||
-      (studyId !== undefined && !isUuid(studyId)) ||
-      (reissue !== undefined && typeof reissue !== "boolean")
-    )
-      return r.status(400).json({ error: "invalid_assignment" });
-    const c = await pool.connect().catch(() => null);
-    if (!c) return r.status(503).json({ error: "management_unavailable" });
-    try {
-      await c.query("BEGIN");
-      await c.query("SELECT pg_advisory_xact_lock(111011)");
-      const m = await c.query(
-        "SELECT participant_id FROM research_identity.membership WHERE session_id=$1 FOR UPDATE",
-        [sessionId],
-      );
-      if (!m.rowCount) throw new Error();
-      if (pseudonym) {
-        const p = await c.query(
-          "SELECT id FROM research_identity.participants WHERE pseudonym=$1",
-          [pseudonym],
-        );
-        if (!p.rowCount) throw new Error();
-        await c.query(
-          "UPDATE research_identity.membership SET participant_id=$2 WHERE session_id=$1",
-          [sessionId, p.rows[0].id],
-        );
-      } else {
-        if (studyId)
-          await c.query(
-            "UPDATE research_identity.participants SET study_id=$2 WHERE id=$1",
-            [m.rows[0].participant_id, studyId],
-          );
-        if (reissue)
-          await c.query(
-            "UPDATE research_identity.participants SET pseudonym=$2 WHERE id=$1",
-            [m.rows[0].participant_id, "P-" + randomUUID()],
-          );
-      }
-      await exports.invalidateSessions(
-        (
-          await c.query(
-            "SELECT session_id FROM research_identity.membership WHERE participant_id=$1 OR session_id=$2",
-            [m.rows[0].participant_id, sessionId],
-          )
-        ).rows.map((x) => x.session_id),
-      );
-      await c.query("COMMIT");
-      return r.json({ saved: true });
-    } catch {
-      await c.query("ROLLBACK");
-      return r.status(409).json({ error: "assignment_conflict" });
-    } finally {
-      c.release();
-    }
-  });
   app.post("/api/research/data-management/preview", async (q, r) => {
     const { sessionId, pseudonym } = q.body ?? {};
     if (
@@ -381,7 +268,7 @@ export function registerDataManagement(
       if (!session) { await c.query("ROLLBACK"); return r.status(404).json({error:"not_found"}); }
       if (session.status !== "NOT_STARTED" || session.started_at || session.completed_at || !await cleanupEligible(c,id)) {
         await c.query("ROLLBACK");
-        return r.status(409).json({error:"confirmed_deletion_required",message:"開始済み、または学習者データ等の記録があります。確認付きデータ削除を使用してください。",managementUrl:"/research/data-management"});
+        return r.status(409).json({error:"confirmed_deletion_required",message:"開始済み、または学習者データ等の記録があるため、この操作では削除できません。研究データは保持されます。"});
       }
       const receipt = await deleteSessionData(c,[id],exports);
       await c.query("COMMIT");
