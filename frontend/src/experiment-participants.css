@@ -131,6 +131,36 @@
 .participant-withdrawal button {
   flex: 0 1 auto;
 }
+.participant-withdrawal-history {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.participant-withdrawal-history summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.participant-withdrawal-history ul {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+}
+.participant-withdrawal-history li {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 14px;
+  row-gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.participant-withdrawal-history li > span,
+.participant-withdrawal-history li > code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.participant-withdrawal-history li > code {
+  flex-basis: 100%;
+}
 .participant-data-scope {
   margin: 14px 0 0;
   color: var(--muted);
