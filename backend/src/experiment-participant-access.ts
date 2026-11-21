@@ -480,9 +480,23 @@ export async function participantView(
       [runId, EXPERIMENT_PROTOCOL],
     )
   ).rows;
+  // Immutable registration tombstones are visible to researchers, but never
+  // returned with access codes, credential hashes or idempotency request keys.
+  const withdrawals = (
+    await pool.query(
+      `SELECT s.id,s.participant_code AS label,w.withdrawn_at AS "withdrawnAt"
+       FROM experiment_session_withdrawals w
+       JOIN experiment_run_sessions p ON p.session_id=w.session_id
+       JOIN sessions s ON s.id=p.session_id
+       WHERE p.run_id=$1 AND s.protocol_key=$2
+       ORDER BY w.withdrawn_at DESC,s.id`,
+      [runId, EXPERIMENT_PROTOCOL],
+    )
+  ).rows;
   return (await loadResearchTextSafety(pool)).redact({
     run,
     participants,
+    withdrawals,
     flowMode: experimentLearnerMode(),
     learnerFlowAvailable: experimentLearnerEnabled(),
     startAvailable: experimentLearnerEnabled(),

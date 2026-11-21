@@ -23,6 +23,11 @@ type Participant = {
   currentStageType: string | null;
   clients: Array<{ id: string; createdAt: string }>;
 };
+type Withdrawal = {
+  id: string;
+  label: string;
+  withdrawnAt: string;
+};
 type View = {
   run: {
     id: string;
@@ -39,6 +44,7 @@ type View = {
   startAvailable?: boolean;
   flowMode?: "disabled" | "preview" | "enabled";
   participants: Participant[];
+  withdrawals: Withdrawal[];
 };
 const stageNames: Record<string, { label: string; completedBefore: number }> = {
   LESSON: { label: "授業", completedBefore: 0 },
@@ -221,6 +227,7 @@ export default function ExperimentParticipantsPage({
   }
   const r = view?.run,
     participants = view?.participants ?? [],
+    withdrawals = view?.withdrawals ?? [],
     withdrawParticipant = participants.find((p) => p.id === withdrawSessionId),
     withdrawEligible =
       !!withdrawParticipant &&
@@ -491,6 +498,26 @@ export default function ExperimentParticipantsPage({
                 端末登録・学習操作の記録がある場合、または実施開始後は取り消せません。
                 一覧の表示だけでは判断できない記録もサーバー側で検査します。
               </p>
+              <details className="participant-withdrawal-history">
+                <summary>登録取消履歴（{withdrawals.length}件）</summary>
+                {withdrawals.length === 0 ? (
+                  <p className="material-muted">この実施に登録取消の記録はありません。</p>
+                ) : (
+                  <ul>
+                    {withdrawals.map((item) => (
+                      <li key={item.id}>
+                        <strong>{item.label}</strong>
+                        <span>取消日時：{new Date(item.withdrawnAt).toLocaleString("ja-JP")}</span>
+                        <code>Session ID：{item.id}</code>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="material-muted">
+                  取消済みSessionは参加者一覧と通常の研究用出力には含まれません。
+                  登録履歴と監査記録は保持され、ここから復元・再発行はできません。
+                </p>
+              </details>
             </section>
           </>
         )}

@@ -343,6 +343,35 @@ try {
   );
   await a.context.close();
   await b.context.close();
+  // An untouched second Session can be withdrawn from the actual researcher UI.
+  // Its record must remain in the scoped history without revealing credentials.
+  const available = (await api(`${root}/${run.id}/participants`)).participants as Array<{
+    id: string; label: string;
+  }>;
+  const p2Id = available.find((p) => p.label === "TEST ONLY browser P2")?.id;
+  assert.ok(p2Id);
+  await researcherPage.locator("#withdraw-participant-session").selectOption(p2Id);
+  assert.equal(
+    await researcherPage.getByRole("button", { name: "登録を取り消す", exact: true }).isEnabled(),
+    true,
+  );
+  researcherPage.once("dialog", (d) => d.accept());
+  await researcherPage.getByRole("button", { name: "登録を取り消す", exact: true }).click();
+  await researcherPage.getByRole("status")
+    .filter({ hasText: "参加者Sessionの登録を取り消しました" }).waitFor();
+  const afterWithdrawal = await api(`${root}/${run.id}/participants`);
+  assert.equal(afterWithdrawal.participants.length, 1);
+  assert.equal(afterWithdrawal.withdrawals.length, 1);
+  assert.equal(afterWithdrawal.withdrawals[0].id, p2Id);
+  assert.equal(afterWithdrawal.withdrawals[0].label, "TEST ONLY browser P2");
+  await researcherPage.locator(".participant-withdrawal-history summary").click();
+  await researcherPage.locator(".participant-withdrawal-history")
+    .getByText("TEST ONLY browser P2", { exact: true }).waitFor();
+  assert.equal(
+    await researcherPage.locator(".participants-table")
+      .getByText("TEST ONLY browser P2", { exact: true }).count(),
+    0,
+  );
   await writeFile(
     verificationReportPath("invariants").replace(
       /invariants\.json$/,
@@ -357,6 +386,7 @@ try {
           "lost committed registration ACK, same-key retry without duplicate/plaintext replay",
           "one-time UI reissue, two pages pending/owned, researcher switch and old-page rejection",
           "registration beyond planned, desktop/mobile, reissue keeps Session and old code cannot authenticate",
+           "real confirmed UI withdrawal, Session hidden from active list, immutable history visible with label/date",
         ],
         screenshotsContainCredentials: false,
         startEnabled: false,
@@ -366,7 +396,7 @@ try {
     ) + "\n",
   );
   console.log(
-    "Participant access browser: PASS (real R08/code response loss/reissue/client switch, unpublished learner gate, desktop/mobile; no codes in screenshots)",
+    "Participant access browser: PASS (real R08/code reissue/client switch, confirmed withdrawal and history, desktop/mobile; no codes in screenshots)",
   );
 } finally {
   await browser.close();
