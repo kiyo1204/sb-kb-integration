@@ -1354,40 +1354,6 @@ textarea:focus {
   color: var(--danger, #8a3333);
 }
 
-.research-session-list {
-  margin-top: 20px;
-}
-
-.research-session-table-wrap {
-  overflow-x: auto;
-}
-
-.research-session-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
-
-.research-session-table th,
-.research-session-table td {
-  padding: 12px 10px;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-  vertical-align: middle;
-}
-
-.research-session-table th {
-  color: var(--muted);
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.research-session-table .home-secondary-button {
-  display: inline-flex;
-  white-space: nowrap;
-  text-decoration: none;
-}
-
 .stage1-analysis-log button strong,
 .stage1-analysis-log button span {
   display: block;
@@ -1597,23 +1563,6 @@ textarea:focus {
     transition-duration: 0.01ms !important;
   }
 }
-
-/* Research event export layout; colors, controls and typography use shared tokens. */
-.event-export-form { display: grid; gap: 16px; }
-.event-export-form > label, .event-export-period label { display: grid; gap: 8px; }
-.event-export-options { display: flex; flex-wrap: wrap; gap: 12px 20px; }
-.event-export-options label { display: inline-flex; align-items: center; gap: 8px; }
-.event-export-period { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
-.event-export-table { overflow-x: auto; }
-.event-export-table table { width: 100%; border-collapse: collapse; text-align: left; }
-.event-export-table td, .event-export-table th { padding: 10px; border-bottom: 1px solid var(--line); }
-
-/* Research timeline retains readable columns; narrow screens scroll the table. */
-.page.event-view-page { max-width: 1600px; width: calc(100% - 48px); }
-.event-timeline-table { min-width: 1280px; }
-.event-timeline-table td:first-child { min-width: 190px; white-space: nowrap; }
-.event-timeline-table td:nth-child(2) { min-width: 280px; overflow-wrap: anywhere; }
-.event-timeline-table th { white-space: nowrap; }
 
 /* High-contrast concept map palette (SB / KB / Integration).
    Color and line style both distinguish saved, selected and draft links.

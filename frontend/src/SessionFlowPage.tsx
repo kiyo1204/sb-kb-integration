@@ -548,7 +548,7 @@ function SessionDashboard({
       <section className="session-card" aria-labelledby="session-title">
         <h1 id="session-title">学習・再構成フロー</h1>
         {!isLearner && (
-          <p className="session-id">セッション ID: {flow.session.id} <a href={`/research/event-exports?sessionId=${sessionId}`}>研究イベントを絞り込み出力</a></p>
+          <p className="session-id">セッション ID: {flow.session.id}</p>
         )}
 
         {flow.session.status === "NOT_STARTED" && (

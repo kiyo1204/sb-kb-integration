@@ -1,8 +1,6 @@
 import ExperimentEndBoundary from "./ExperimentEndBoundary";
 import R05Page from "./R05Page";
 import ExperimentLearnerPage from "./ExperimentLearnerPage";
-import DataManagementPage from "./DataManagementPage";
-import EventExportPage from "./EventExportPage";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   apiFetch,
@@ -13,7 +11,6 @@ import {
 import HomePage from "./HomePage";
 import MapPage from "./MapPage";
 import SessionFlowPage from "./SessionFlowPage";
-import Stage1NewSessionPage from "./Stage1NewSessionPage";
 import Stage1AnalysisPage from "./Stage1AnalysisPage";
 import Stage1GoalMapsPage from "./Stage1GoalMapsPage";
 import TutorialPage from "./TutorialPage";
@@ -182,15 +179,6 @@ function AuthenticatedApp({
     return (
       <ResearcherOnly>
         <Stage1AnalysisPage sessionId={analysisSessionId} />
-      </ResearcherOnly>
-    );
-  if (window.location.pathname === "/research/data-management") return <ResearcherOnly><DataManagementPage/></ResearcherOnly>;
-  if (window.location.pathname === "/research/events") return <ResearcherOnly><EventExportPage browse/></ResearcherOnly>;
-  if (window.location.pathname === "/research/event-exports")return <ResearcherOnly><EventExportPage/></ResearcherOnly>;
-  if (window.location.pathname === "/research/stage1/new")
-    return (
-      <ResearcherOnly>
-        <Stage1NewSessionPage />
       </ResearcherOnly>
     );
   if (window.location.pathname === "/research/goal-maps")

@@ -290,7 +290,6 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
           {data?.experiment && <button type="button" onClick={()=>void downloadApiFile(`/api/research/stage1/sessions/${sessionId}/map-states.csv`).catch(e=>setError(e instanceof Error?e.message:"CSVを取得できませんでした。"))}>保存Map・開始／提出状態CSV</button>}
         </div>
         <nav className="stage1-analysis-navigation" aria-label="関連画面">
-          <a href={`/research/event-exports?sessionId=${sessionId}`}>研究イベントの絞り込み出力</a>
           {data?.experiment ? <a href={`/research/experiment-runs/${data.experiment.runId}`}>実施・参加者一覧へ戻る</a> : <a href={`/sessions/${sessionId}`}>セッションへ戻る</a>}
         </nav>
         {error && (data ? <p className="session-error" role="alert">{error}</p> : <div className="stage1-analysis-load-error">

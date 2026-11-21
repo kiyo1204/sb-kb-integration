@@ -16,35 +16,8 @@ type Scenario =
   | "ended"
   | "p02"
   | "legacy-session"
-  | "researcher-populated"
-  | "researcher-empty"
-  | "researcher-loading"
-  | "researcher-error";
+  | "researcher-populated";
 
-const syntheticSessions = [
-  {
-    id: "00000000-0000-4000-8000-000000000011",
-    participantCode: "合成A",
-    studyGroup: null,
-    status: "COMPLETED",
-    protocolKey: "SBKB_INTEGRATION_V1",
-    currentStageType: null,
-    currentStageOrder: null,
-    startedAt: "2026-11-14T01:00:00.000Z",
-    completedAt: "2026-11-14T01:45:00.000Z",
-  },
-  {
-    id: "00000000-0000-4000-8000-000000000012",
-    participantCode: "合成B",
-    studyGroup: "CONTROL",
-    status: "IN_PROGRESS",
-    protocolKey: "STAGE1_6",
-    currentStageType: "PRIOR_MAP",
-    currentStageOrder: 2,
-    startedAt: "2026-11-14T02:00:00.000Z",
-    completedAt: null,
-  },
-];
 const syntheticAccessCode = "SYNTHETIC_UI_ACCESS_CODE_ONLY_0000000000000001";
 
 function json(route: Route, body: unknown, status = 200) {
@@ -95,7 +68,6 @@ function syntheticSessionFlow(
 async function installApiFixture(
   page: Page,
   scenario: Scenario,
-  onSessionListRequest?: () => Promise<void>,
   onAccessRequest?: () => Promise<void>,
 ) {
   let p02Started = false;
@@ -132,14 +104,6 @@ async function installApiFixture(
       });
     }
     if (path === "/api/health") return json(route, { database: true });
-    if (path === "/api/research/stage1/sessions") {
-      await onSessionListRequest?.();
-      if (scenario === "researcher-error")
-        return json(route, { error: "synthetic_unavailable" }, 503);
-      return json(route, {
-        sessions: scenario === "researcher-populated" ? syntheticSessions : [],
-      });
-    }
     if (path === "/api/experiment-status")
       return json(route, {
         state: scenario === "ended" ? "ENDED" : scenario === "p02" ? "RUNNING" : "PREPARING",
@@ -1210,14 +1174,11 @@ try {
     await installApiFixture(homePage, "researcher-populated");
     await homePage.goto(vite.resolvedUrls!.local[0]!);
     await homePage.getByRole("heading", { name: "研究者トップ" }).waitFor();
-    await homePage
-      .getByRole("heading", { name: "参加Sessionと結果" })
-      .waitFor({ state: "attached" });
     assert.equal(await homePage.getByLabel("アクセスコード").count(), 0);
     assert.equal(await homePage.locator(".home-research-primary-grid .home-workflow-card").count(), 2);
     assert.equal(await homePage.getByRole("heading", { name: "教材を管理" }).count(), 1);
     assert.equal(await homePage.getByRole("heading", { name: "実施を管理" }).count(), 1);
-    assert.equal(await homePage.getByRole("heading", { name: "参加Sessionを確認" }).count(), 1);
+    assert.equal(await homePage.getByRole("heading", { name: "実施の結果を確認" }).count(), 1);
     assert.equal(await homePage.getByRole("heading", { name: "システム状態", exact: true }).count(), 1);
     assert.equal(
       await homePage
@@ -1231,65 +1192,32 @@ try {
         .getAttribute("href"),
       "/research/experiment-runs",
     );
-    assert.equal(
-      await homePage.locator('a[href="/research/stage1/new"]').count(),
-      1,
-    );
-    const legacyFlow = homePage.locator(".home-researcher-legacy-details");
-    const legacySummary = legacyFlow.locator("summary");
-    const legacyCreateLink = homePage.locator('a[href="/research/stage1/new"]');
-    assert.equal((await legacySummary.textContent())?.trim(), "旧フローの作成");
-    assert.equal(
-      await homePage
-        .locator('.home-research-primary-grid a[href="/research/stage1/new"]')
-        .count(),
-      0,
-    );
-    assert.equal(
-      await legacyFlow.evaluate(
-        (element) => (element as HTMLDetailsElement).open,
-      ),
-      false,
-    );
-    assert.equal(await legacyCreateLink.isVisible(), false);
-    await legacySummary.focus();
-    assert.equal(
-      await legacySummary.evaluate(
-        (element) => getComputedStyle(element).outlineStyle,
-      ),
-      "solid",
-    );
-    await legacySummary.press("Enter");
-    assert.equal(
-      await legacyFlow.evaluate(
-        (element) => (element as HTMLDetailsElement).open,
-      ),
-      true,
-    );
-    assert.equal(await legacyCreateLink.isVisible(), true);
-    assert.equal(
-      await legacyCreateLink.getAttribute("href"),
-      "/research/stage1/new",
-    );
-    await legacySummary.press("Enter");
-    assert.equal(
-      await legacyFlow.evaluate(
-        (element) => (element as HTMLDetailsElement).open,
-      ),
-      false,
-    );
-    await legacySummary.evaluate((element) => element.blur());
+    // Researcher home exposes only the current management workflow.
+    // Legacy Session data and researcher-only APIs remain available by direct route.
     for (const path of [
+      "/research/stage1/new",
       "/research/data-management",
       "/research/events",
       "/research/event-exports",
-      "/research/goal-maps",
     ]) {
       assert.equal(
         await homePage.locator(`a[href="${path}"]`).count(),
-        path === "/research/data-management" ? 2 : 1,
+        0,
+        `obsolete researcher-home entry ${path} must be absent`,
       );
     }
+    assert.equal(
+      await homePage.getByText("旧フローの作成", { exact: true }).count(),
+      0,
+    );
+    assert.equal(
+      await homePage.getByText("研究データ・ログ", { exact: true }).count(),
+      0,
+    );
+    assert.equal(
+      await homePage.locator('a[href="/research/goal-maps"]').count(),
+      1,
+    );
     assert.equal(
       await homePage
         .locator('a[href="/research/goal-maps"]')
@@ -1297,18 +1225,9 @@ try {
       true,
     );
     assert.equal(
-      await homePage
-        .locator(
-          'a[href="/research/stage1/00000000-0000-4000-8000-000000000011/analysis"]',
-        )
-        .count(),
-      1,
-    );
-    assert.equal(
-      await homePage
-        .locator('a[href="/sessions/00000000-0000-4000-8000-000000000012"]')
-        .count(),
-      1,
+      await homePage.locator(".research-session-list").count(),
+      0,
+      "old mixed-protocol Session listing is retired",
     );
     await captureBeforeAfter(
       homePage,
@@ -1325,70 +1244,6 @@ try {
       "main researcher navigation has a visible keyboard focus",
     );
     await homeContext.close();
-  }
-
-  for (const width of [1366, 1440]) {
-    const height = width === 1366 ? 768 : 900;
-    for (const scenario of ["researcher-empty", "researcher-error"] as const) {
-      const context = await browser.newContext({
-        viewport: { width, height },
-      });
-      await context.addInitScript(() =>
-        sessionStorage.setItem(
-          "stage1-access-token",
-          "SYNTHETIC_RESEARCHER_TOKEN_ONLY",
-        ),
-      );
-      const page = await context.newPage();
-      await installApiFixture(page, scenario);
-      await page.goto(vite.resolvedUrls!.local[0]!);
-      if (scenario === "researcher-empty")
-        await page
-          .getByText("参加Sessionはまだありません。", { exact: true })
-          .waitFor();
-      else
-        await page
-          .getByRole("alert")
-          .getByText(/一覧を取得できませんでした/)
-          .waitFor();
-      assert.equal(
-        await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
-        false,
-        `${scenario}: no horizontal overflow at ${width}px`,
-      );
-      await context.close();
-    }
-
-    let releaseHold = () => {};
-    const hold = new Promise<void>((resolve) => {
-      releaseHold = resolve;
-    });
-    const loadingContext = await browser.newContext({ viewport: { width, height } });
-    await loadingContext.addInitScript(() =>
-      sessionStorage.setItem(
-        "stage1-access-token",
-        "SYNTHETIC_RESEARCHER_TOKEN_ONLY",
-      ),
-    );
-    const loadingPage = await loadingContext.newPage();
-    await installApiFixture(loadingPage, "researcher-loading", async () => {
-      await hold;
-    });
-    const requestStarted = loadingPage.waitForRequest(
-      (request) =>
-        new URL(request.url()).pathname === "/api/research/stage1/sessions",
-    );
-    await loadingPage.goto(vite.resolvedUrls!.local[0]!);
-    await requestStarted;
-    await loadingPage
-      .getByText("参加Sessionを読み込んでいます…", { exact: true })
-      .waitFor();
-    await assertNoHorizontalOverflow(loadingPage, "researcher-loading", width);
-    releaseHold();
-    await loadingPage
-      .getByText("参加Sessionはまだありません。", { exact: true })
-      .waitFor();
-    await loadingContext.close();
   }
 
   for (const width of [1366, 1440]) {
@@ -1410,7 +1265,7 @@ try {
     });
     const pendingContext = await browser.newContext({ viewport: { width, height } });
     const pendingPage = await pendingContext.newPage();
-    await installApiFixture(pendingPage, "login-pending", undefined, async () => {
+    await installApiFixture(pendingPage, "login-pending", async () => {
       await pending;
     });
     await pendingPage.goto(vite.resolvedUrls!.local[0]!);
@@ -1490,7 +1345,7 @@ try {
   await mobileContext.close();
 
   console.log(
-    `Rehearsal UI: PASS (signed-out code entry without practice card; P02 inline practice/return with unchanged client claims and no learning writes; precompleted start gate survives F5; 390px P02/practice smoke; normal start and legacy link preserved; unpublished/waiting/ended; researcher states; Edge synthetic fixtures at 1366x768 and 1440x900; screenshots: ${directory}; no real API or DB persistence verified)`,
+    `Rehearsal UI: PASS (signed-out code entry without practice card; P02 inline practice/return with unchanged client claims and no learning writes; precompleted start gate survives F5; 390px P02/practice smoke; normal start and historical session compatibility preserved; unpublished/waiting/ended; researcher states; Edge synthetic fixtures at 1366x768 and 1440x900; screenshots: ${directory}; no real API or DB persistence verified)`,
   );
 } finally {
   await browser?.close();

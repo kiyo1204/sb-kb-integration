@@ -32,13 +32,13 @@
 .materials-content :is(input, select, textarea), .home-access-control input { font-size: 15px; }
 .materials-content textarea { line-height: 1.7; }
 .materials-content label, .home-access-form > label { color: var(--ink); font-weight: 600; }
-.material-table-scroll, .research-session-table-wrap { border: 1px solid var(--line); border-radius: var(--radius-md); }
-.materials-content table, .research-session-table { border-collapse: collapse; width: 100%; }
-.materials-content th, .research-session-table th { background: var(--surface-accent); color: var(--ink); font-size: 13px; text-align: left; }
-.materials-content :is(th, td), .research-session-table :is(th, td) { padding: 13px 16px; line-height: 1.6; }
-.materials-content tbody tr + tr, .research-session-table tbody tr + tr { border-top: 1px solid var(--line); }
-.materials-content tbody tr:hover, .research-session-table tbody tr:hover { background: var(--surface-muted); }
-.materials-content td a, .research-session-table td a { text-underline-offset: 3px; }
+.material-table-scroll { border: 1px solid var(--line); border-radius: var(--radius-md); }
+.materials-content table { border-collapse: collapse; width: 100%; }
+.materials-content th { background: var(--surface-accent); color: var(--ink); font-size: 13px; text-align: left; }
+.materials-content :is(th, td) { padding: 13px 16px; line-height: 1.6; }
+.materials-content tbody tr + tr { border-top: 1px solid var(--line); }
+.materials-content tbody tr:hover { background: var(--surface-muted); }
+.materials-content td a { text-underline-offset: 3px; }
 .materials-content summary { padding-block: 6px; }
 .materials-content :is(.material-muted, .material-footer), .participant-data-scope { color: var(--ink-soft); }
 .session-page.is-learner { padding: 28px 24px; }
@@ -105,45 +105,28 @@
 }
 .home-researcher-utilities {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   margin: 14px 0 0;
 }
-.home-researcher-utility-group,
-.home-researcher-legacy-details {
+.home-researcher-utility-group {
   min-width: 0;
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
-.home-researcher-utility-group h3,
-.home-researcher-legacy-details summary {
+.home-researcher-utility-group h3 {
   margin: 0 0 8px;
   color: var(--ink-soft);
   font-size: 13px;
   font-weight: 650;
 }
-.home-researcher-utility-group > p,
-.home-researcher-legacy-details > p {
+.home-researcher-utility-group > p {
   margin: 0 0 8px;
   color: var(--ink-soft);
   font-size: 13px;
   line-height: 1.55;
-}
-.home-researcher-legacy-details summary {
-  min-height: 32px;
-  padding: 5px 0;
-  cursor: pointer;
-}
-.home-researcher-legacy-details[open] summary {
-  margin-bottom: 8px;
-}
-.home-researcher-utility-links {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
 }
 .home-researcher-utilities .home-secondary-link {
   min-height: 32px;
@@ -151,34 +134,6 @@
   padding: 5px 0;
   font-size: 13px;
   text-underline-offset: 3px;
-}
-.research-session-list {
-  margin-top: 20px;
-}
-.research-session-list .home-card-heading-row {
-  margin-bottom: 12px;
-}
-.research-session-list .home-card-heading-row > div {
-  min-width: 0;
-}
-.research-session-list .home-card-heading-row > div > p {
-  max-width: 80ch;
-  line-height: 1.55;
-}
-.research-session-actions {
-  display: flex;
-  min-width: 210px;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.research-session-actions > span {
-  color: var(--ink-soft);
-  font-size: 12px;
-}
-.research-session-actions > :is(a, button) {
-  min-height: 36px;
-  padding: 5px 10px;
 }
 .tutorial-page {
   max-width: 1240px;
