@@ -268,7 +268,7 @@ export function registerDataManagement(
       if (!session) { await c.query("ROLLBACK"); return r.status(404).json({error:"not_found"}); }
       if (session.status !== "NOT_STARTED" || session.started_at || session.completed_at || !await cleanupEligible(c,id)) {
         await c.query("ROLLBACK");
-        return r.status(409).json({error:"confirmed_deletion_required",message:"開始済み、または学習者データ等の記録があります。確認付きデータ削除を使用してください。",managementUrl:"/research/data-management"});
+        return r.status(409).json({error:"confirmed_deletion_required",message:"開始済み、または学習者データ等の記録があるため、この操作では削除できません。研究データは保持されます。"});
       }
       const receipt = await deleteSessionData(c,[id],exports);
       await c.query("COMMIT");
