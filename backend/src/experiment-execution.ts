@@ -240,7 +240,7 @@ export function registerExperimentExecutionRoutes(app: Express, pool: Pool) {
       } else if (
         !(
           await c.query(
-            "SELECT 1 FROM experiment_run_sessions WHERE run_id=$1 LIMIT 1",
+            "SELECT 1 FROM experiment_run_sessions p WHERE p.run_id=$1 AND NOT EXISTS(SELECT 1 FROM experiment_session_withdrawals w WHERE w.session_id=p.session_id) LIMIT 1",
             [id],
           )
         ).rowCount

@@ -596,6 +596,78 @@ try {
     old.release();
   }
   assert.deepEqual(await state(sid), snapshot);
+  // Withdrawal is only a logical cancellation of pristine registrations;
+  // immutable Session, access hashes and participant audit remain intact.
+  const claimedGeneration = (
+    await pool.query<{ credential_generation: number }>(
+      "SELECT credential_generation FROM experiment_participant_access WHERE session_id=$1",
+      [sid],
+    )
+  ).rows[0].credential_generation;
+  const claimedWithdrawal = await call(
+    `${root}/${run.id}/participants/${sid}/withdraw`,
+    "POST",
+    { confirmed: true, expectedCredentialGeneration: claimedGeneration },
+    409,
+  );
+  assert.equal(claimedWithdrawal.data.error, "not_eligible");
+  const disposableKey = randomUUID();
+  const disposable = (
+    await call(
+      `${root}/${other.id}/participants`,
+      "POST",
+      { participantLabel: "TEST ONLY withdrawable" },
+      201,
+      disposableKey,
+    )
+  ).data;
+  const disposableId = disposable.sessionId as string,
+    disposableCode = disposable.issuedCode as string,
+    withdrawalPath = `${root}/${other.id}/participants/${disposableId}/withdraw`,
+    withdrawKey = randomUUID(),
+    withdrawalInput = { confirmed: true, expectedCredentialGeneration: 1 };
+  assert.equal((await call(`${root}/${other.id}`)).data.registeredSessions, 1);
+  await call(withdrawalPath, "POST", { ...withdrawalInput, confirmed: false }, 400);
+  const beforeWithdrawal = await counts();
+  const withdrawn = (await call(withdrawalPath, "POST", withdrawalInput, 200, withdrawKey)).data;
+  assert.equal(withdrawn.sessionId, disposableId);
+  assert.equal(withdrawn.withdrawn, true);
+  assert.ok(withdrawn.withdrawnAt);
+  const repeatWithdrawal = (await call(withdrawalPath, "POST", withdrawalInput, 200, withdrawKey)).data;
+  assert.equal(repeatWithdrawal.withdrawnAt, withdrawn.withdrawnAt);
+  assert.deepEqual(await counts(), beforeWithdrawal, "withdrawal must preserve Session and access rows");
+  assert.equal((await call(`${root}/${other.id}`)).data.registeredSessions, 0);
+  assert.equal((await call(`${root}/${other.id}/participants`)).data.participants.length, 0);
+  const withdrawAudit = (
+    await pool.query(
+      "SELECT count(*)::int AS n FROM experiment_session_withdrawal_audit WHERE session_id=$1 AND outcome='SUCCESS'",
+      [disposableId],
+    )
+  ).rows[0].n;
+  assert.ok(withdrawAudit >= 1);
+  await assert.rejects(
+    authenticateExperimentToken(pool, tokenHash(disposableCode)),
+    (e: unknown) => e instanceof ParticipantAccessError && e.code === "experiment_code_invalidated",
+  );
+  await call(withdrawalPath, "POST", withdrawalInput, 409);
+  await call(
+    `${root}/${other.id}/participants/${disposableId}/code/reissue`,
+    "POST",
+    { expectedCredentialGeneration: 1 },
+    404,
+  );
+  await call(
+    `${root}/${other.id}/participants`,
+    "POST",
+    { participantLabel: "TEST ONLY withdrawable" },
+    404,
+    disposableKey,
+  );
+  await assert.rejects(
+    pool.query("DELETE FROM experiment_session_withdrawals WHERE session_id=$1", [disposableId]),
+    (e: unknown) => typeof e === "object" && e !== null && "code" in e && e.code === "23514",
+  );
+  checks.push("pristine withdrawal rejects claimed clients; durable idempotent tombstone revokes code, preserves history, hides counts and forbids replay");
   const safety = await loadResearchTextSafety(pool);
   for (const secret of [code1, code2, currentCode, clientA, clientB])
     assert.equal(safety.containsKnownSecret(secret), true);

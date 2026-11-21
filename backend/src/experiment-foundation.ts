@@ -354,7 +354,7 @@ export async function getExperimentRun(
     (
       await pool.query(
         `SELECT id,material_version_id,planned_participants,state,created_at,
-    (SELECT count(*)::int FROM experiment_run_sessions WHERE run_id=r.id) AS registered_participants FROM experiment_runs r WHERE id=$1`,
+    (SELECT count(*)::int FROM experiment_run_sessions p WHERE p.run_id=r.id AND NOT EXISTS(SELECT 1 FROM experiment_session_withdrawals w WHERE w.session_id=p.session_id)) AS registered_participants FROM experiment_runs r WHERE id=$1`,
         [id],
       )
     ).rows[0] ?? null

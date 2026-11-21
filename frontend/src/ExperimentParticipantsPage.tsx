@@ -133,6 +133,7 @@ export default function ExperimentParticipantsPage({
 }) {
   const [view, setView] = useState<View | null>(null),
     [label, setLabel] = useState(""),
+    [withdrawSessionId, setWithdrawSessionId] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState<string | null>(null),
     [notice, setNotice] = useState<string | null>(null),
@@ -168,7 +169,7 @@ export default function ExperimentParticipantsPage({
         key = newClientId();
         keys.current.set(signature, key);
       }
-      const r = await api<{ issuedCode: string | null; codeDelivery: string }>(
+      const r = await api<{ issuedCode?: string | null; codeDelivery?: string; withdrawn?: boolean }>(
         path,
         {
           method: "POST",
@@ -183,11 +184,14 @@ export default function ExperimentParticipantsPage({
       // the key only across uncertain/lost responses, not forever by label.
       keys.current.delete(signature);
       if (register) setLabel("");
+      if (r.withdrawn) setWithdrawSessionId("");
       if (r.issuedCode) setIssued(r.issuedCode);
       setNotice(
-        r.codeDelivery === "NOT_REPLAYED"
-          ? "受付済みの操作です。Sessionやコードは重複作成していません。コードは再表示しないため、必要なら参加者行から明示的に再発行してください。"
-          : "管理操作を保存しました。",
+        r.withdrawn
+          ? "参加者Sessionの登録を取り消しました。アクセスコードは無効化され、学習・監査履歴は保持されます。"
+          : r.codeDelivery === "NOT_REPLAYED"
+            ? "受付済みの操作です。Sessionやコードは重複作成していません。コードは再表示しないため、必要なら参加者行から明示的に再発行してください。"
+            : "管理操作を保存しました。",
       );
       await load();
     } catch (e) {
@@ -216,7 +220,17 @@ export default function ExperimentParticipantsPage({
     }
   }
   const r = view?.run,
-    participants = view?.participants ?? [];
+    participants = view?.participants ?? [],
+    withdrawParticipant = participants.find((p) => p.id === withdrawSessionId),
+    withdrawEligible =
+      !!withdrawParticipant &&
+      r?.state === "PREPARING" &&
+      withdrawParticipant.status === "NOT_STARTED" &&
+      withdrawParticipant.completedStages === 0 &&
+      withdrawParticipant.activeStageCount === 0 &&
+      withdrawParticipant.activeClientId === null &&
+      withdrawParticipant.clients.length === 0 &&
+      withdrawParticipant.credentialGeneration > 0;
   return (
     <main className="materials-page">
       <header className="materials-header">
@@ -434,13 +448,48 @@ export default function ExperimentParticipantsPage({
             <section className="material-panel material-series" aria-labelledby="experiment-session-delete-heading">
               <h2 id="experiment-session-delete-heading">セッションの削除</h2>
               <p className="material-muted">
-                この実施の参加者Sessionは、現在この画面から削除できません。
-                新しい実験フローのSessionは、既存の削除APIとデータベースの保護によって削除を拒否します。
-                開始前のSessionも含め、利用コード・操作記録・研究イベントと登録履歴の整合性を守るためです。
+                ここでは準備中の実施に限り、未開始・未接続・学習記録なしの参加者Sessionの<strong>登録を取り消せます</strong>。
+                物理削除ではありません。登録と利用コードを無効化し、参加者一覧と通常の研究用出力から除外します。
+                既存のSession・登録履歴・監査記録は保持します。
               </p>
+              <div className="participant-withdrawal">
+                <label htmlFor="withdraw-participant-session">登録を取り消す参加者Session</label>
+                <select
+                  id="withdraw-participant-session"
+                  value={withdrawSessionId}
+                  onChange={(event) => setWithdrawSessionId(event.target.value)}
+                  disabled={busy || r.state !== "PREPARING"}
+                >
+                  <option value="">選択してください</option>
+                  {participants.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}（{p.id}）
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={busy || !withdrawEligible}
+                  onClick={() => {
+                    if (!withdrawParticipant) return;
+                    if (window.confirm(
+                      `「${withdrawParticipant.label}」の登録を取り消します。利用コードは失効し、再利用できません。Sessionの記録・監査履歴は保存され、復元できません。続行しますか？`,
+                    ))
+                      void perform(
+                        `/${runId}/participants/${withdrawParticipant.id}/withdraw`,
+                        {
+                          confirmed: true,
+                          expectedCredentialGeneration: withdrawParticipant.credentialGeneration,
+                        },
+                      );
+                  }}
+                >
+                  登録を取り消す
+                </button>
+              </div>
               <p className="material-muted">
-                削除操作を提供するには、対象条件、失効・監査・出力への影響を定め、
-                専用APIと隔離DBでの受け入れ検証が必要です。削除の代わりに実施を終了しても、保存データは消えません。
+                端末登録・学習操作の記録がある場合、または実施開始後は取り消せません。
+                一覧の表示だけでは判断できない記録もサーバー側で検査します。
               </p>
             </section>
           </>
