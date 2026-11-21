@@ -1,178 +1,288 @@
-# Stage 1研究用学習システム
+# Stage 1研究用学習システム — SB/KB Integration
 
-## このシステムについて
+授業後の概念マップの作成・再構成を支援し、学習過程を研究者が検証できるようにする**開発・模擬研究用プロトタイプ**です。Scratch-Build、Kit-Build、統合マップ、操作履歴、研究イベント、研究者向け分析・出力を扱います。
 
-授業後のマップ作成・再構成の過程を記録し、研究者が後から分析できるようにするローカル動作確認用プロトタイプです。React / TypeScriptの画面、Express / TypeScriptのAPI、PostgreSQLのデータベースで構成し、Docker Composeで起動します。
+> [!WARNING]
+> **実研究データ・本番研究への利用は想定していません。** 既定構成はローカル開発用で、HTTPSや研究者ごとのアカウント分離は備えていません。実参加者の情報や本番DBを使って検証しないでください。
 
-### 学習者の活動
+## 目次
 
-新規セッションは群なしの `STAGE1_5` として、次の5活動を順に実施します。
+- [システム概要](#システム概要)
+- [クイックスタート](#クイックスタート)
+- [学習フローと操作練習](#学習フローと操作練習)
+- [研究データと出力](#研究データと出力)
+- [開発・テスト](#開発テスト)
+- [実験用4活動フローの有効化](#実験用4活動フローの有効化)
+- [LANでの模擬利用](#lanでの模擬利用)
+- [安全上の注意と運用制約](#安全上の注意と運用制約)
+- [関連ドキュメント](#関連ドキュメント)
 
-1. **動画視聴** — セッションに設定した動画を視聴します。
-2. **学習者マップ作成（Scratch-Build）** — 作成時に教師が使用Kitから選んだ概念だけを初期配置します。リンクは含めません。初期概念は移動・リンク作成ができ、名前変更・削除はできません。
-3. **Kit-Build** — 「一致状況を確認」を押したときだけ結果を表示します。未確認・古い結果でも提出時はサーバーが最新保存内容を判定します。
-4. **統合マップ作成** — 設定された制限時間内に編集し、手動で提出できます。期限時はサーバーが最新保存状態を自動提出します。自動提出後はセッションの「次へ」で進みます。
-5. **アンケート** — 自由記述・選択式（単一選択）・段階評価に回答します。設問・順序・必須／任意・選択肢・尺度の端点ラベルは研究者が作成時に設定し、セッション開始まで編集できます。開始後は固定です。
+## システム概要
 
-新規作成では実験群・統制群や事前／事後説明問題を設定しません。`study_group` はnullです。旧 `STAGE1_4`（4活動）・`STAGE1_6`（群別6活動）の進行中・完了済みセッション、評価回答・群・イベントは変換せず保持します。旧6活動は事前評価→群別活動→事後評価の条件を維持します。
+| 項目 | 内容 |
+| --- | --- |
+| フロントエンド | React / TypeScript / Vite |
+| API | Express / TypeScript |
+| データベース | PostgreSQL |
+| 起動 | Docker Compose |
+| ローカル画面 | <http://localhost:5173>（既定） |
+| 主要な利用者 | 学習者、研究者 |
+| 対象用途 | ローカル開発、合成データを用いた模擬実験、研究イベントの検証 |
 
-研究者の一覧・分析はプロトコルを区別します。セッション生データJSONは旧4活動=1、旧6活動=2、新5活動=3で、旧評価は `assessment`、新アンケートは `survey` に分離します。絞り込みイベント出力はschemaVersion=3となり、既存共通列を維持して末尾に `protocol_key`、別ファイル `survey_events.csv` を追加します。詳しくは[5活動フローとアンケートの仕様](docs/session-flow-survey.md)を参照してください。
+学習者は、割り当てられたアクセスコードで自分のSessionを開き、学習活動とマップ操作を行います。研究者は教材・実施・参加者の管理、マップの状態や履歴の確認、手動評価、JSON/CSV/Excel出力を行えます。API側で利用者の役割とSessionへのアクセス権を検証します。
 
-### 記録・分析機能
+### 主な機能
 
-- Concept / Linkの追加、編集、削除、移動、再接続、Kit部品の取込み、Conceptの統合
-- Concept / LinkのIDとProvenanceを含む操作ログ、マップ編集開始時の初期スナップショット
-- 研究者向けの読み取り専用履歴再生と、学習者向けUndo / Redo
-- 3種類のマップと操作履歴の研究者向け表示
-- 研究者によるU/I/P/V手動評価、評価理由・評価者コード、操作や命題に結び付けた振り返りメモ
-- JSON / CSV Exportと`stage1-descriptive-v2`記述的特徴量
-- Kit-Buildに限り、Goal Mapとの一致状況を概念・関係の集計で反復フィードバックします。Stage 1 SessionにはGoal Map全体を含むKitDefinitionだけを割り当てられます。フィードバック要求と結果は研究イベントへ記録し、統合マップには表示しません。
+- Concept / Link の作成・編集・移動・削除・接続・再接続、Kit部品の取り込み、Conceptの統合
+- 学習者のUndo / Redo、研究者による保存済み履歴の再生、初期スナップショットとProvenanceの追跡
+- Kit-BuildのGoal Mapとの一致確認（**明示的な確認操作時**）。一致結果を学習の総合点数として扱いません
+- 研究イベント・操作ログの取得、未送信データの再送と受信状態の確認
+- 研究者向け分析、JSON / CSV、実施単位の**11シートExcel**出力
+- 旧プロトコルの既存データ・操作履歴との互換性
 
-履歴再生は保存された初期状態と操作ログを適用します。スナップショット導入前のマップや、ログに欠損がある場合は完全再生できず、利用可能な履歴状態を明示します。操作数やU/I/P/Vを学習の良さを示す点数として扱う機能はありません。Kit-Buildの一致確認以外の正誤診断やAI評価は行いません。
+## クイックスタート
 
-### アクセス制御と適用範囲
-
-- 研究者は研究者用BearerコードでSessionを作成・分析し、評価・振り返り・Exportを行います。
-- 学習者はSession専用コードでログインし、自分に割り当てられたSessionとKit部品を利用します。他参加者のデータ、Goal Map、研究者用分析APIにはアクセスできません。
-- API側でロールとSessionの権限を確認します。ブラウザーの画面表示だけに依存した制御ではありません。
-
-研究者コードは全研究Sessionにアクセスできる共有資格情報で、個別研究者アカウントや研究者ごとの権限管理はありません。Composeの公開ポートは既定で`127.0.0.1`にバインドされ、HTTPSも設定されません。明示的に有効にするLAN接続は閉じたネットワークでの開発・模擬データ確認専用です。実際の研究参加者データを扱う運用には使用しないでください。運用上の仕様と制約は[Stage 1研究プロトタイプ](docs/stage1-research-prototype.md)を参照してください。
-
-## 必要なもの
+### 必要なもの
 
 - Git
 - Docker Desktop（Docker Compose v2を含む）
+- PowerShell（以下はWindowsでの例）
 
-Node.jsとPostgreSQLはコンテナ内で動作するため、PCへ個別にインストールする必要はありません。
+通常のDocker起動では、Node.jsやPostgreSQLをホストPCへ個別にインストールする必要はありません。ホスト上でテストを実行する場合は、Node.jsと各ディレクトリのnpm依存関係が別途必要です。
 
-## 初回起動
+### 1. 設定ファイルを準備
 
-リポジトリのルートで`.env.example`を`.env`へコピーし、`.env`の`RESEARCHER_API_TOKEN`に32文字以上のランダムな秘密値を設定します。空欄ではAPIは起動しません。`.env`やトークンをGitへコミットしないでください。
-
-PowerShell:
+リポジトリのルートで実行します。
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-その後、リポジトリのルートで実行します。
+`.env` の `RESEARCHER_API_TOKEN` に**32文字以上のランダムな秘密値**を設定してください。設定しないとAPIは起動できません。`.env`、トークン、DBパスワードはGitへコミットしないでください。
 
-```sh
+既定では `FRONTEND_BIND_ADDRESS=127.0.0.1` です。APIとDBのホスト公開もループバックに限定されています。`.env.example` のDBパスワードは開発専用の例です。
+
+### 2. 起動・DB更新・開発Kit準備
+
+```powershell
 docker compose up --build -d
 docker compose exec api npm run db:migrate -- up
 docker compose exec api npm run db:seed:dev
 ```
 
-最後のコマンドで開発用Kitを登録します。ブラウザーで<http://localhost:5173>を開き、研究者コードでログインしてください。独自のゴールマップを登録する場合は、トップ画面の「ゴールマップを作成・管理」から新しいマップを作成し、ConceptとLinkを編集してKitとして登録します。Kit登録後は元のゴールマップが読み取り専用になります。セッション作成画面で使用するKitを選び、発行された学習者コードを渡してください。
+`db:seed:dev` は開発用のGoal Map / Kitを登録するための操作です。既存環境での再実行が必要かは用途を確認してください。DB migrationは対象とバックアップを確認したうえで行い、実研究DBへ適用しないでください。
 
-`.env`のデータベース初期値はローカル開発用です。パスワードを変更する場合は、Composeが`DATABASE_URL`を組み立てられるURL安全な文字を使ってください。フロントエンドの公開先 `FRONTEND_BIND_ADDRESS` は既定で `127.0.0.1` です。APIとデータベースのホスト側ポートは常に `127.0.0.1` に限定されます。従来の `STAGE1_BIND_ADDRESS` は使用されません。既存の `.env` に残っていても公開先には反映されないため、必要なら削除してください。
+### 3. ブラウザーを開く
 
-## 2回目以降の起動と停止
+<http://localhost:5173> にアクセスし、研究者コードでログインします。研究者画面から教材・Kit、実施、参加者を準備し、発行した**学習者用コード**を学習者へ渡します。研究者コードは学習者に共有しません。
 
-```sh
+### 4. 2回目以降の起動・停止
+
+```powershell
+# 起動
 docker compose up -d
-```
 
-更新後は、既存のデータを保持したまま次のコマンドで未適用のデータベース変更を適用してください。統合マップの自動提出には、この変更が必要です。
-
-```sh
+# 必要な新規migrationを確認してから適用
 docker compose exec api npm run db:migrate -- up
-```
 
-実験群の統合マップは、APIが稼働している間、期限後にサーバーで自動提出します。停止中に期限を過ぎた場合は、API再起動後に未提出分を回復します。マップが存在しない場合は新規作成せず、セッション画面に案内を表示します。
-
-ブラウザーで<http://localhost:5173>を開きます。停止するときは次を実行します。
-
-```sh
+# 停止（DBデータを保持）
 docker compose down
 ```
 
-通常の停止ではデータベースの内容は保持されます。Dockerfileや依存パッケージを変更した場合は、`docker compose up --build -d`でイメージを再構築してください。
+**`docker compose down -v` は実行しないでください。** DBボリュームが削除されます。また、通常の停止や更新にリセット・破壊的migrationを組み込まないでください。
 
-Windowsで日本語を含むパスからDockerイメージの構築に失敗する場合は、`C:\work`など英数字だけのフォルダーにリポジトリを置いて起動してください。
+## 学習フローと操作練習
 
-## WindowsでLAN接続する（開発・模擬データ専用）
+このリポジトリには、作成するSessionの種類により**異なるフロー**があります。混同しないようにしてください。
 
-研究者のWindows PCをサーバーとし、同じ閉じたLAN上の参加者PCからフロントエンドに接続します。**HTTP通信は暗号化されません**。共有LAN上ではアクセスコードや入力内容を第三者に読み取られる可能性があります。この手順は開発・模擬データの確認用であり、実際の研究参加者データには使用しないでください。実データで運用するには、別途、認証、HTTPSなどの通信保護、ネットワーク設定を検討する必要があります。インターネットには公開せず、ルーターのポート転送も設定しないでください。
+### Stage 1の新規Session：5活動（`STAGE1_5`）
 
-1. 研究者PCと参加者PCを同じWi-FiまたはEthernetに接続します。初回は上記「初回起動」のとおり `.env.example` から `.env` を作成して `RESEARCHER_API_TOKEN` を設定し、Dockerイメージの構築、データベース変更の適用と開発用Kitの登録を済ませてください。LAN起動ショートカットはDocker Desktopを自動起動し、Engineの準備を最大3分待ちます。初回設定や更新などの追加操作を求められた場合は完了してから、ショートカットを再実行してください。更新後も、必要なデータベース変更を適用してください。
-2. 初回に、リポジトリのルートで次を実行し、デスクトップに起動・停止のショートカットを作成します。ショートカットにはこのPC上のリポジトリの場所が登録されるため、リポジトリを移動した場合は古いショートカットを削除して作り直してください。同名のファイルがすでにある場合は上書きしません。
+1. 動画視聴
+2. 学習者マップ作成（Scratch-Build）
+3. Kit-Build
+4. 統合マップ作成
+5. アンケート（自由記述・単一選択・段階評価）
 
-   ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-shortcuts.ps1
-   ```
+新規作成時に実験群・統制群は設定せず、`study_group` は `null` です。Scratch-Buildの初期概念は選ばれたKitの一部から配置され、初期概念は移動・リンク接続できますが名前変更・削除はできません。Kit-Buildの一致判定は確認ボタンを押したときに表示され、提出時はサーバーが最新の保存内容を判定します。統合マップには制限時間と自動提出があります。
 
-3. デスクトップの「研究用学習システム - LAN起動」を開きます。表示されたアドレスとアダプター名から、参加者PCと同じ閉じたLANにつながるWi-FiまたはEthernetを選びます。選択時は一覧の番号またはIPv4アドレスを入力し、`Q` で中止できます。ループバック、リンクローカル、切断中のアダプターは候補に含まれません。Docker・WSL・仮想・VPNの可能性があるアダプターは注意書き付きで表示されます。必要なネットワークまで自動的に除外しないため、参加者が到達できるアドレスを選んでください。判断できない場合は `ipconfig` やネットワークの管理者に確認してください。インターネット向けのアドレスは選ばないでください。
-   スクリプトはサービスの起動後、参加者用 URL を表示し、このPCのブラウザーで `http://localhost:5173`（ポート変更時はその番号）を開きます。研究者はそこで研究者コードを入力します。ショートカットを使わずに起動する場合は `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-lan.ps1` を実行してください。
-4. Windowsの「Windows Defender ファイアウォール（セキュリティが強化された管理ツール）」を開き、「受信の規則」→「新しい規則」→「ポート」を選びます。TCPの「特定のローカル ポート」に `5173` を指定し、「接続を許可する」を選んで、プロファイルは **プライベートのみ** にチェックします。規則のプロパティの「スコープ」でリモートIPアドレスを「ローカル サブネット」に限定し、必要に応じて許可する参加者側サブネットを明示します。規則には識別できる名前を付けます。ネットワークのプロファイルがプライベートであることも確認してください。`FRONTEND_PORT` を変更した場合は、そのポート番号を許可します。APIやPostgreSQLのポートは許可しません。ファイアウォールを自動変更する機能はありません。
-5. 起動後に表示される「参加者用 URL」を参加者に案内します。例は `http://192.168.1.10:5173` ですが、実際にはスクリプトが選択したアドレスと設定済みのポートから組み立てた URL を使います。各参加者には本人用の学習者コードを別途渡します。研究者コードやAPIトークンはURLに含めず、参加者に共有しないでください。
+旧 `STAGE1_4`（4活動）・`STAGE1_6`（群別6活動）の記録・条件・評価は保持します。旧評価 `assessment` と新アンケート `survey` は別の項目です。[詳細仕様](docs/session-flow-survey.md)を参照してください。
 
-ブラウザーの `/api` への通信はフロントエンドを経由してCompose内部のAPIに送られます。LAN起動時のフロントエンドは選択したIPv4アドレスと `127.0.0.1` の両方で待ち受けます。APIとPostgreSQLのホスト側ポートは `127.0.0.1` のみで、参加者PCから直接接続するためのものではありません。LAN用の追加設定には Docker Compose v2.24.4 以降が必要です。
+### 実験用の4活動（`SBKB_INTEGRATION_V1`）
 
-接続できない場合は、両PCが同じネットワークにいるか、Wi-Fiの端末間通信が制限されていないか、選んだIPv4アドレスと `FRONTEND_PORT` が正しいか、コンテナが起動しているか、プライベート用のファイアウォール規則が有効かを確認してください。VPNや複数のネットワーク接続がある場合は、参加者が到達できるアダプターのアドレスを選び直してください。
+**授業・動画 → Scratch-Build → Kit-Build → 統合マップ**の実施フローです。教材の完成登録・実施作成・参加者登録を行い、研究者が実施開始を確定します。通常Composeでは**既定で無効**です。有効化の条件は後述します。
 
-LANでの利用を終えたら、研究者PCのデスクトップにある「研究用学習システム - 停止」を開き、参加者全員の接続が終了する旨を確認して `Y` を入力します。同時に複数の停止操作は実行できません。停止後は受信規則を無効化または削除してください。Web画面から安全に停止するためのサーバーPC限定の制御経路が現在の構成にないため、DockerソケットやDocker操作権限をWebアプリに渡さず、このローカルのショートカットで停止します。ショートカットを使わずに停止する場合は `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-lan.ps1` を実行してください。
+### P02からの操作練習
 
-起動スクリプトのアドレス設定は一時的なもので、親の PowerShell や `.env` は書き換えません。ローカル専用に戻して続ける場合は、次を実行してフロントエンドを再作成します。
+実験用4活動の参加者は、P02「活動の案内」から、本番の研究用マップとは独立した操作練習を行います。
+
+- 練習順序は **Scratch-Build → Kit-Build → 統合マップ**。各練習で必要な操作を終えると、次の練習を選べます。
+- 途中で前の練習に戻っても、同じ練習画面内のマップ・達成状態は維持されます。
+- 3モードすべてを完了するまで、P02の「セッションを開始」は利用できません。
+- 練習終了後はP02に戻り、同じタブで再読み込み（F5）しても完了条件と端末登録を引き継いで開始できます。
+- **練習用Concept / Linkは学習Sessionの保存Mapや研究イベントに記録しない設計**です。研究データへの非混入を合成APIブラウザーテストと隔離DB検証で確認しています。
+
+練習完了状態はそのタブ内のSessionとアクセスコードに紐付きます。他の端末や別Sessionへ一律に引き継ぐものではありません。画面幅390pxでもKit部品のドラッグ・接続・再接続を操作できるよう検証しています。
+
+## 研究データと出力
+
+### 記録と分析
+
+保存されるマップにはConcept / Link、接続、操作履歴、初期状態、Provenanceを含む情報があります。研究者は履歴再生、Map比較、U/I/P/V手動評価、振り返りメモ等を利用できます。
+
+ブラウザー観測は一時キューに保持され、再接続時に送信されます。送信済み／確認済み／欠損可能性を区別して扱います。**配信報告がないことは、欠損がない証拠ではありません。** 履歴・スナップショットが不足する場合、再生・差分・保存状態を推測で補完しません。
+
+### 出力形式
+
+| 出力 | 主な用途 |
+| --- | --- |
+| Session生データJSON | Session、Stage、保存Map、イベント、履歴等の確認 |
+| 共通／用途別CSV、イベントJSON、ZIP | 絞り込み研究イベントや操作履歴の抽出 |
+| 実施単位 `research.json` / `research.csv` | 実施に属するSessionの状態や研究データの照合 |
+| `research.xlsx` | **Overview、Events、Map_Operations、Activity_Times、Map_States、Operations、System_Events、Researcher_Events、SB_Analysis、KB_Analysis、Integration_Analysis** の11シート |
+
+Excelは派生出力であり、既存のJSON/CSVを置き換える原本ではありません。Excelの行・セル・展開サイズ等には上限があり、上限超過時は一部切り捨てではなくエラーになります。[Excel仕様](docs/research-workbook-11-sheets.md)・[イベント出力仕様](docs/research-event-export.md)を参照してください。
+
+## 開発・テスト
+
+### 静的チェックとビルド
+
+ホスト側にNode.js / npmと依存関係がある場合、リポジトリのルートから実行します。
+
+```powershell
+npm ci --prefix frontend
+npm ci --prefix backend
+
+npm run typecheck --prefix frontend
+npm run lint --prefix frontend
+npm run build --prefix frontend
+
+npm run typecheck --prefix backend
+npm run lint --prefix backend
+npm run build --prefix backend
+```
+
+Viteの500KB超チャンク警告はビルドの失敗とは異なります。**通常の本番ビルド時には `NODE_ENV=development` を残さないでください**。合成APIのブラウザーテストと、実API・DBテストの意味を区別します。
+
+### ブラウザー受け入れ検証（合成API）
+
+```powershell
+npm run test:rehearsal-ui-browser --prefix frontend
+npm run test:stage1-analysis-layout-browser --prefix frontend
+npm run test:r05-analysis-ui-browser --prefix frontend
+```
+
+`test:rehearsal-ui-browser` はP02、3モードの練習、終了/F5/開始、390px操作、既存画面への回帰を検証します。Stage 1 / R05の分析画面テストは合成応答・ブラウザーでの表示検証であり、実DBへの保存検証ではありません。Windowsのブラウザー検証では既存のMicrosoft Edgeを利用します。
+
+既存のスクリーンショットを保護するため、Stage 1分析テストの出力先は一時パスを指定できます。
+
+```powershell
+$env:ANALYSIS_SCREENSHOT = Join-Path $env:TEMP "stage1-analysis-check.png"
+npm run test:stage1-analysis-layout-browser --prefix frontend
+Remove-Item Env:ANALYSIS_SCREENSHOT -ErrorAction SilentlyContinue
+```
+
+### 隔離DBと実APIの検証
+
+**既存Compose DBや実研究DBを対象にしないでください。** 専用の合成データPostgreSQLコンテナーと、照合可能な専用manifestを使います。
+
+PowerShellで新規の隔離環境を準備する例：
+
+```powershell
+# DATABASE_URLが設定されたシェルでは実行しない
+if (Test-Path Env:DATABASE_URL) { throw "DATABASE_URL is set; abort" }
+
+$mockName = "stage1_mock_readme_$(Get-Date -Format 'yyyyMMddHHmmss')"
+$env:NODE_ENV = "development"
+$env:STAGE1_MOCK_DATA = "ONLY_SYNTHETIC"
+$env:RESEARCH_CHECK_REPORT_PREFIX = "readme-$(Get-Date -Format 'yyyyMMddHHmmss')"
+
+docker info
+npm run db:mock --prefix backend -- create --name $mockName --mock-data-only
+npm run db:mock --prefix backend -- migrate --name $mockName
+npm run db:mock --prefix backend -- seed --name $mockName
+npm run build --prefix backend
+npm run db:mock --prefix backend -- check --name $mockName
+```
+
+`check` は模擬レコードを作成します。各コマンドが成功した場合だけ次へ進んでください。テスト対象は必ず新規作成した専用模擬DBに限定します。
+
+```powershell
+$env:RESEARCH_BROWSER_CHECKS = "1"
+$env:RESEARCH_SUITE_ONLY = "test:experiment-research"
+npm run db:mock --prefix backend -- suite --name $mockName
+```
+
+隔離DBテストでは、練習専用ラベルのConcept / Link、保存履歴、研究イベント、JSON/CSV/Excelへの非混入を検証します。研究データの自動削除やリセットは行いません。
+
+```powershell
+# テスト後は現在のシェル内の設定を解除
+Remove-Item Env:NODE_ENV,Env:STAGE1_MOCK_DATA,Env:RESEARCH_BROWSER_CHECKS,Env:RESEARCH_SUITE_ONLY -ErrorAction SilentlyContinue
+```
+
+詳しくは[隔離DBの作成・保護・検証手順](docs/development-event-stream-reset.md)を参照してください。`db:mock reset` は**明示的な確認付き操作**であり、通常の開発・回帰確認では使用しません。
+
+### Issue #75 の受け入れ検証
+
+[Issue #75](https://github.com/kiyo1204/sb-kb-integration/issues/75) / [PR #76](https://github.com/kiyo1204/sb-kb-integration/pull/76) で、390pxの実ドラッグ・接続、3モード完了後のF5/開始、研究データ非混入を検証しました。ローカルの型チェック・Lint・ビルド・ブラウザーテスト、隔離DBテストおよびGitHub Actionsの研究イベント整合性CIが成功しています。これは**合成・隔離環境における受け入れ結果**であり、実研究参加者を使った検証を意味しません。
+
+## 実験用4活動フローの有効化
+
+通常Composeでは、`STAGE1_EXPERIMENT_LEARNER_ENABLED=0`（既定）です。教材管理・実施準備ができても、この状態では実施開始や学習者の活動・Map編集・提出を有効化しません。
+
+**対象DBとバックアップを確認し、必要なmigrationを明示的に適用した後に限り**、`.env` の設定を `STAGE1_EXPERIMENT_LEARNER_ENABLED=1` へ変更し、APIコンテナーを**再作成**します。
+
+```powershell
+docker compose up -d --no-deps --force-recreate api
+```
+
+`.env` を変更して `docker compose restart api` しただけでは環境設定は更新されません。`STAGE1_EXPERIMENT_LEARNER_PREVIEW=1` は別の隔離開発用経路であり、通常Composeの有効化に使用しません。機能停止時は設定を `0` に戻してAPIを再作成します。既存の保存データや終了済み実施をリセットしません。**この設定は実研究での利用許可を意味しません。**
+
+## LANでの模擬利用
+
+閉じたLANでの開発・模擬データ確認に限り、Windowsの起動ショートカットを利用できます。
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-shortcuts.ps1
+```
+
+作成した「研究用学習システム - LAN起動」を開き、参加者と同じローカルネットワーク上のアダプターを選択します。手動起動・停止用スクリプトは `scripts/start-lan.ps1` / `scripts/stop-lan.ps1` です。
+
+LANモードのHTTP通信は**暗号化されません**。利用する場合はプライベートネットワークに限定し、Windowsファイアウォールの対象ポートをローカルサブネットのみに許可してください。ルーターのポート転送やインターネット公開を行わず、API・DBポートを外部公開しないでください。API・DBはloopback限定です。
+
+通常のローカル接続に戻す例：
 
 ```powershell
 $env:FRONTEND_BIND_ADDRESS = "127.0.0.1"
 docker compose up -d --force-recreate frontend
-Remove-Item Env:\FRONTEND_BIND_ADDRESS
+Remove-Item Env:FRONTEND_BIND_ADDRESS -ErrorAction SilentlyContinue
 ```
 
-`.env` に `FRONTEND_BIND_ADDRESS` を明示している場合も `127.0.0.1` に戻してください。`docker compose down` に `-v` は付けないでください。データベースのボリュームを削除するためです。
+詳しい設定や障害対応は現行運用の手順・[Stage 1研究プロトタイプ仕様](docs/stage1-research-prototype.md)を確認してください。
 
-## 参考資料
+## 安全上の注意と運用制約
 
-研究イベントの新基盤と旧ログの関係は[研究イベント仕様 v1](docs/research-events-v1.md)を参照してください。この統合ブランチでは、Map・活動・評価・監査をv1〜v4で記録し、旧履歴も保持します。統合の詳細は[統合検証記録](docs/research-event-integration.md)を参照してください。
+- **実研究参加者のデータを入力・取り込まない。** HTTPS、秘密情報管理、バックアップ、復旧、参加者への説明・同意等の運用要件は別途整備が必要です。
+- 研究者用Bearerコードは共有資格情報です。研究者別の個別アカウント・細分化した権限管理ではありません。
+- 認証コードやパスワードをURL・スクリーンショット・Gitのコミットに残さないでください。
+- 旧プロトコル、既存のDB、マップ・操作ログ、Provenance、出力形式を変更・消去せず保持してください。
+- `docker compose down -v`、無条件のDBリセット、`git clean -fd`、`git reset --hard` は使わないでください。
+- テスト成果物（`.local/`、`docs/*-results.json`、一時画像など）の削除・上書き・コミットは、所有者と用途を確認してから行ってください。
 
-Kit-Build手法の論文引用、既存実装の調査、ライセンスの扱いは[Kit-Buildの参考資料](docs/kit-build-interaction-references.md)を参照してください。
+## 関連ドキュメント
 
-評価回答履歴（Issue #6）は研究者の評価画面・評価回答CSV・生データJSONで確認できます。CSVの recordType=ANSWER は現在回答、EVENT は確定編集・提出結果です。検証は使い捨てDBを指定して cd backend の後 npm run test:assessment-events を実行します。詳細は docs/research-events-v1.md を参照してください。
+- [Stage 1研究プロトタイプの仕様・制約](docs/stage1-research-prototype.md)
+- [新5活動フローとアンケート](docs/session-flow-survey.md)
+- [研究イベント・検証マトリクス](docs/research-event-test-matrix.md)
+- [研究データ辞書](docs/research-data-dictionary.md)
+- [研究イベントの保持・再送・ACK](docs/research-event-delivery.md)
+- [イベント出力仕様](docs/research-event-export.md)
+- [研究イベントの閲覧](docs/research-event-viewer.md)
+- [研究データ管理](docs/research-data-management.md)
+- [11シート研究Excelの仕様](docs/research-workbook-11-sheets.md)
+- [隔離DBの作成・リセット防護](docs/development-event-stream-reset.md)
+- [Kit-Build関連の参考資料](docs/kit-build-interaction-references.md)
+- [Issue #75の受け入れ検証](https://github.com/kiyo1204/sb-kb-integration/issues/75)
 
-## 操作記録の送信・欠損確認（Issue #8）
+---
 
-ブラウザー観測はIndexedDBに一時保持し、再接続・再表示後に順番に再送します。ACK済みの記録はキューから削除し、同じIDの再送でDBを重複させません。Map編集・評価保存はイベントだけを後送せず、操作と記録を同じトランザクションで確定します。操作の再送キーは本文を含めず別のIndexedDBに保持します。
-
-研究者はセッション画面・分析画面の「操作記録の送信状態」で、ブラウザー申告、サーバーで確認した保存件数、復旧不能・件数不明を確認できます。生データJSONにもdeliveryを追加しています。報告がないことは欠損がない証拠ではありません。
-
-保持上限、再試行・認可、既存回答ドラフトの扱い、復旧できない条件、検証手順は[保持・再送・ACK仕様](docs/research-event-delivery.md)を参照してください。新しいDB変更179097〜179099も必要です。本作業での適用は使い捨ての隔離DBだけで行っています。
-
-## 研究イベントの絞り込み出力（Issue #9）
-
-研究者トップの「研究イベントを絞り込み出力」、または各セッション・分析画面の同名リンクから利用できます。セッション、セッション内の仮名ID、群、活動、操作種別、期間を指定し、同じ抽出結果の詳細JSON・共通CSV・用途別CSVを個別またはZIPで取得します。画面の期間指定は日本時間、出力の時刻はUTCです。
-
-既存のJSON/CSVは維持します。DBスキーマ変更は不要です。一時出力は15分で期限切れになり、元の研究データは変更しません。仮名IDは `L-セッションUUID` で、別セッションを同一人物とは推測しません。[出力仕様](docs/research-event-export.md)、[データ辞書と模擬サンプル](docs/samples/event-export/)を参照してください。
-
-研究者向け時系列ログは [閲覧仕様](docs/research-event-viewer.md) を参照してください。
-
-研究者向けの仮名ID・保存期限・確認付き削除は [データ管理手順](docs/research-data-management.md) を参照してください。開発・模擬データ専用です。
-
-## 開発用の旧ログリセット（明示操作のみ）
-
-既存DBは旧・新の混在履歴を保持し、旧ログの変換・自動削除は行いません。模擬専用の新しい隔離DBを作る場合だけ、[開発用リセット・切替手順](docs/development-event-stream-reset.md) を利用してください。既存Compose DBや実研究データは対象にできません。
-
-`npm run db:mock --prefix backend -- plan --name stage1_mock_demo` はドライランです。実行には専用環境の検証、対象名・件数・確認hash・バックアップ確認等が必要です。リセットは回答・評価/メモ・仮名対応・Map・旧/新ログ・Goal/Kit等を消去し、復元には別途バックアップが必要です。通常起動や学習者・研究者画面からリセットする処理はありません。
-
-## 研究イベントの総合検証（Issue #13）
-
-[統合データ辞書](docs/research-data-dictionary.md) と [イベント別のテスト対応表](docs/research-event-test-matrix.md) を参照してください。専用模擬DBを作成・migrate・seedした後、`npm run db:mock --prefix backend -- suite --name stage1_mock_demo` で総合検証できます。通常のDATABASE_URLは受け付けず、既存DBへ接続しません。ブラウザー検証を含める場合は `$env:RESEARCH_BROWSER_CHECKS='1'` を設定してください。Linux CIはChromium、Windowsは既存Edgeを使用します。CIは同じ経路に加えて専用模擬DBでリセット防護と新形式のみの起動確認を行います。
-
-
-研究イベントの監査残課題対応（Link位置v5・Kit確認v6・旧下書き隔離・検証結果）は [追補報告](docs/parent-followup.md) を参照してください。開発・模擬データ用で、既存DBへ自動適用・リセットする変更ではありません。
-
-
-### 通常Composeで新しい4活動フローを明示的に有効化する
-
-既定は無効です。教材管理・実施準備ができても、無効時は研究者の開始、参加者の活動・Map編集・提出、自動提出は許可しません。`.env` に `STAGE1_EXPERIMENT_LEARNER_ENABLED=1` を明示し、対象APIを `docker compose up -d --no-deps --force-recreate api` で再作成すると有効になります。省略または `0` で無効に戻せます。再作成前に未保存操作を保全し、実施中の設定変更は避けてください。
-
-有効化前に、対象DB・バックアップを識別し、既存の `docker compose run --rm api npm run db:migrate -- up` の適用手順を別途確認してください。API起動はmigrationやデータ変換を行いません。既存schema（全migration、最新 `1791160000000_add_experiment_end`）の読取検査が失敗すると `experiment_flow_schema_unavailable` で起動を拒否します。既存DBへ適用する承認を兼ねる手順ではありません。
-
-設定は `0` / `1` のみです。不正値は `experiment_flow_invalid_configuration`、両設定がともに `1` の場合のみ `experiment_flow_conflicting_configuration` で拒否します。`ENABLED=0` と `PREVIEW=1`、または `ENABLED=1` と `PREVIEW=0` は競合しません（ここでの短縮名は上記の環境変数を指します）。`.env` の編集だけや `docker compose restart api` ではコンテナ環境変数は更新されません。必ず前記のAPI再作成を行ってください。通常有効化はDBサービス名 `db` への接続を使用でき、模擬DB名や `STAGE1_MOCK_DATA=ONLY_SYNTHETIC` は不要です。従来の `STAGE1_EXPERIMENT_LEARNER_PREVIEW=1` は引き続き隔離されたdevelopment・loopback模擬DB・markerを要求し、通常Composeの有効化には使用しません。
-
-通常起動は `docker compose up -d --build`、LANは既存の `compose.lan.yaml` とWeb用アドレス設定を使ってください。API・DBのホスト公開はloopback限定です。IPアドレスは本人認証に使用しません。研究者は教材を完成登録し、実施を作成、参加者を1人以上登録して「実施開始」を確定します。開始前・終了後の学習拒否、本人所属・コード世代・画面世代、研究者による利用画面切替は維持されます。終了済みの回は再開せず、新しい実施を作成してください。
-
-無効化は設定を `0` に戻し、対象APIだけを再作成します。研究者による終了・保存済み分析・JSON/CSV出力は維持します。停止は対象プロジェクトの `docker compose stop`。復旧では旧アプリ成果物へ戻し、DBを保持します。`down -v`、DB初期化、破壊的down migrationを復旧操作に使わないでください。
-
-LANで開始可能な設定は、実研究利用の準備完了を意味しません。HTTPの通信保護、アクセス制限、バックアップ・復元、既存DB適用・復旧の確認は別途必要です。
+このREADMEは、機能の紹介、ローカルでの立ち上げ、研究データ保護、再現可能な検証の入口をまとめたものです。より詳細な動作・移行・運用条件はリンク先の仕様を優先してください。
