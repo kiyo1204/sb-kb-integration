@@ -29,7 +29,7 @@ async function fixture(old: boolean | "four"=false) {
   } finally {c.release();}
 }
 const exists=async(id:string)=>(await pool.query("SELECT * FROM sessions WHERE id=$1",[id])).rows[0];
-async function reject(id:string) {const result=await cleanup(id);assert.equal(result.status,409);assert.equal(result.body.error,"confirmed_deletion_required");assert.equal(result.body.managementUrl,"/research/data-management");assert.ok(await exists(id));}
+async function reject(id:string) {const result=await cleanup(id);assert.equal(result.status,409);assert.equal(result.body.error,"confirmed_deletion_required");assert.equal(Object.hasOwn(result.body,"managementUrl"),false);assert.ok(await exists(id));}
 try {
   const kitsBefore=(await pool.query("SELECT id,goal_map_id,name FROM kit_definitions ORDER BY id")).rows;
   const keep=await fixture();const shared=await pool.query("SELECT id,title FROM maps WHERE type='GOAL' ORDER BY id");
