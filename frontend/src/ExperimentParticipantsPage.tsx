@@ -431,6 +431,18 @@ export default function ExperimentParticipantsPage({
                 この一覧は取得時点の参加者Session状態、特定できた進行中Stage、完了Stage数、端末登録候補を表示します。作業時間と最終操作時刻はこの一覧では取得していません。保存済みMap・履歴は各参加者のリンクから確認してください。
               </p>
             </section>
+            <section className="material-panel material-series" aria-labelledby="experiment-session-delete-heading">
+              <h2 id="experiment-session-delete-heading">セッションの削除</h2>
+              <p className="material-muted">
+                この実施の参加者Sessionは、現在この画面から削除できません。
+                新しい実験フローのSessionは、既存の削除APIとデータベースの保護によって削除を拒否します。
+                開始前のSessionも含め、利用コード・操作記録・研究イベントと登録履歴の整合性を守るためです。
+              </p>
+              <p className="material-muted">
+                削除操作を提供するには、対象条件、失効・監査・出力への影響を定め、
+                専用APIと隔離DBでの受け入れ検証が必要です。削除の代わりに実施を終了しても、保存データは消えません。
+              </p>
+            </section>
           </>
         )}
         <p className="material-footer">
