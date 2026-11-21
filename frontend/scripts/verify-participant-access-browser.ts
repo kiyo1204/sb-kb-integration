@@ -111,6 +111,20 @@ try {
     .getByRole("link", { name: "実施詳細", exact: true })
     .click();
   await researcherPage.locator("#participant-label").waitFor();
+  await researcherPage
+    .getByRole("heading", { name: "セッションの削除", exact: true })
+    .waitFor();
+  assert.equal(
+    await researcherPage.getByRole("button", { name: /セッションを削除/ }).count(),
+    0,
+    "new-protocol Session deletion must remain unavailable until a protected API exists",
+  );
+  assert.equal(
+    await researcherPage
+      .getByText("新しい実験フローのSessionは、既存の削除API", { exact: false })
+      .count(),
+    1,
+  );
   assert.equal(
     await researcherPage
       .getByRole("button", { name: "実施開始（未公開）", exact: true })
