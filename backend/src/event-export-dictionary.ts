@@ -68,7 +68,7 @@ function typeOf(key: string) {
   if (key.endsWith("_json")) return "JSON | null";
   return "string | null";
 }
-export function dataDictionary(chronological = false) {
+export function dataDictionary() {
   let text =
     `# 研究イベント出力データ辞書 v${EXPORT_VERSION}\n\nJSON: export_schema_version=${EXPORT_VERSION}。日時は全てUTCのISO 8601（Z）。新形式イベントのschema_version 1〜4は変更せず、5は保存Link位置を含む状態、6はKit確認結果。7は新5活動のアンケートで、before/after={questionId,kind,value}。SURVEY_EDIT/SURVEY_SUBMITは旧評価と混同せずsurvey_events.csvへ分類。群はnull。自由記述・選択肢は文字列、段階評価は整数、未回答はnull。従来の共通CSV列は意味と順序を保ち末尾にfeedback_matchを追加。出力schemaVersion=3は既存列の意味・順序を保ち、共通列末尾にprotocol_keyを追加し、survey_events.csvを別ファイルとして追加。CSVはUTF-8 BOM、CRLF、RFC 4180引用符。nullは空セル。空文字とnullの解釈には品質とJSONを参照する。整数連番/IDは文字列として取り込む。\n\n`;
   text +=
@@ -104,7 +104,6 @@ export function dataDictionary(chronological = false) {
         descriptions[key] +
         "|\n";
   }
-  if (chronological) text = text.replace(/Session UUID昇順[\s\S]*?逆転させない。/, "閲覧検索経由：server_timestamp昇順、同値はevent_id順。この順序は履歴再生順とは異なる。");
   return (
     text +
     "\n## 分類\n\nmap_operations: MAP/CONCEPT/LINK対象。activity_times: 開始・完了・期限・可視性・動画・フィードバックの時間観測。assessment_events: ASSESSMENT対象（v3回答とv4問題設定を区別）。system_events: SYSTEM主体。researcher_events: RESEARCHER主体。JSONは各イベントのbefore/after/detailsと時間由来を保持する。欠損申告は確定イベントとは別なのでこのイベント集合には追加せず、既存delivery出力で確認する。\n"
