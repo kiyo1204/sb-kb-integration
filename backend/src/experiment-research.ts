@@ -141,7 +141,7 @@ export function registerExperimentResearchRoutes(app: Express, pool: Pool) {
           }
           const ids = (
             await client.query(
-              "SELECT session_id FROM experiment_run_sessions WHERE run_id=$1 ORDER BY registered_at,session_id",
+              "SELECT p.session_id FROM experiment_run_sessions p WHERE p.run_id=$1 AND NOT EXISTS(SELECT 1 FROM experiment_session_withdrawals w WHERE w.session_id=p.session_id) ORDER BY p.registered_at,p.session_id",
               [runId],
             )
           ).rows;
