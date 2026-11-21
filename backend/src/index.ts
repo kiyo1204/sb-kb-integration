@@ -8,6 +8,7 @@ import { initializeExperimentPreview, guardExperimentTransaction, guardExperimen
 import { registerMaterialCatalogRoutes } from "./material-catalog-routes.js";
 import { registerExperimentRunRoutes } from "./experiment-run-routes.js";
 import { registerExperimentParticipantRoutes } from "./experiment-participant-routes.js";
+import { registerExperimentSessionWithdrawalRoutes } from "./experiment-session-withdrawal.js";
 import { experimentStorageGuard } from "./experiment-foundation-guard.js";
 import { researchSafetyBudget, respondResearchSafetyError } from "./research-output-safety.js";
 import { registerSurveyRoutes, SeedValidationError, seedLearnerMap, seededConceptGuard } from "./surveys.js";
@@ -1603,6 +1604,7 @@ registerR05Routes(app,pool);
 registerExperimentResearchRoutes(app,pool);
 registerExperimentRunRoutes(app, pool);
 registerExperimentParticipantRoutes(app, pool);
+registerExperimentSessionWithdrawalRoutes(app, pool);
 registerExperimentExecutionRoutes(app,pool);
 registerExperimentEndRoutes(app,pool);
 app.use("/api", async (request, response, next) => {
