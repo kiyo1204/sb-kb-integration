@@ -42,7 +42,7 @@ try {
     .getByText("SB/KB統合（アンケートなし）", { exact: false })
     .waitFor();
   await page
-    .getByRole("heading", { name: "統合開始時・受理済み提出状態", exact: true })
+    .getByRole("heading", { name: "統合開始時・提出状態", exact: true })
     .waitFor();
   assert.equal(
     await page
@@ -64,16 +64,20 @@ try {
     .getByRole("heading", { name: "表示中：Scratch-Build", exact: true })
     .waitFor();
   assert.equal(await prior.getAttribute("aria-pressed"), "true");
-  const savedPreview = page.locator(".analysis-selected-map .map-history-preview");
-  const savedCanvas = savedPreview.locator(".concept-canvas");
-  const savedWidth = await savedCanvas.evaluate((element) => element.getBoundingClientRect().width);
-  await savedPreview.getByRole("button", { name: /を拡大$/ }).click();
-  assert.equal(await savedPreview.locator(".map-study-controls span").innerText(), "110%");
-  const savedZoomWidth = await savedCanvas.evaluate((element) => element.getBoundingClientRect().width);
-  assert.ok(savedZoomWidth > savedWidth * 1.05,
-    `saved Map zoom must change rendered width: ${savedWidth} -> ${savedZoomWidth}`);
-  await savedPreview.getByRole("button", { name: /を縮小$/ }).click();
-  assert.equal(await savedPreview.locator(".map-study-controls span").innerText(), "100%");
+  const preview = page.locator(".analysis-selected-map .map-history-preview");
+  const canvas = preview.locator(".concept-canvas");
+  const initialWidth = await canvas.evaluate(element => element.getBoundingClientRect().width);
+  await preview.getByRole("button", {name: /を拡大$/}).click();
+  assert.equal(await preview.locator(".map-study-controls span").innerText(), "110%");
+  const zoomedWidth = await canvas.evaluate(element => element.getBoundingClientRect().width);
+  assert.ok(zoomedWidth > initialWidth * 1.05,
+    `zoom must change visible canvas width: ${initialWidth} -> ${zoomedWidth}`);
+  await preview.getByRole("button", {name: /を縮小$/}).click();
+  assert.equal(await preview.locator(".map-study-controls span").innerText(), "100%");
+  const zoomRestoredWidth = await canvas.evaluate(element => element.getBoundingClientRect().width);
+  assert.ok(Math.abs(zoomRestoredWidth - initialWidth) <= 2,
+    "zoom out restores the original rendered width");
+  assert.equal(await page.getByRole("list", {name:"操作記録の流れ"}).locator("li").count(),3);
   await page.locator(".analysis-map-provenance summary").click();
   await page
     .locator(".analysis-map-provenance")
@@ -81,30 +85,28 @@ try {
     .first()
     .waitFor();
   if(process.env.EXPERIMENT_MISSING_SNAPSHOT==="1") {
-    const section=page.locator("section.session-card").filter({has:page.getByRole("heading",{name:"統合開始時・受理済み提出状態",exact:true})});
+    const section=page.locator("section.session-card").filter({has:page.getByRole("heading",{name:"統合開始時・提出状態",exact:true})});
     await section.getByText("状態記録なし／算出不可：INITIAL_SNAPSHOT_MISSING_OR_INVALID",{exact:true}).first().waitFor();
     assert.equal(await section.locator(".map-history-preview").count(),0,"no fabricated start/submission map");
     const raw=await (await fetch(base+`/api/research/sessions/${session}/export`,{headers:{Authorization:"Bearer "+token}})).json();
     assert.equal(raw.integrationStates.start.state,null);assert.equal(raw.integrationStates.submission.state,null);
   } else {
-  // Both snapshots use the same read-only component with independent zoom state.
-  const stateSection = page.locator("section.session-card").filter({
-    has: page.getByRole("heading", {
-      name: "統合開始時・受理済み提出状態", exact: true,
-    }),
+  // Both recorded integration snapshots use the same zoomable read-only canvas.
+  const integrationStates = page.locator("section.session-card").filter({
+    has: page.getByRole("heading", {name:"統合開始時・提出状態",exact:true}),
   });
-  const statePreviews = stateSection.locator(".map-history-preview");
-  assert.equal(await statePreviews.count(), 2,
-    "the complete synthetic research fixture has both recorded states");
-  for (let index = 0; index < 2; index++) {
-    const preview = statePreviews.nth(index);
-    const canvas = preview.locator(".concept-canvas");
-    const before = await canvas.evaluate((element) => element.getBoundingClientRect().width);
-    await preview.getByRole("button", { name: /を拡大$/ }).click();
-    assert.equal(await preview.locator(".map-study-controls span").innerText(), "110%");
-    const after = await canvas.evaluate((element) => element.getBoundingClientRect().width);
-    assert.ok(after > before * 1.05,
-      `recorded Map state ${index} zoom must change rendered width: ${before} -> ${after}`);
+  const recordedPreviews = integrationStates.locator(".map-history-preview");
+  assert.equal(await recordedPreviews.count(), 2,
+    "both start and accepted submission snapshots are available in the complete fixture");
+  for (let index=0;index<2;index++) {
+    const statePreview = recordedPreviews.nth(index);
+    const stateCanvas = statePreview.locator(".concept-canvas");
+    const widthBefore = await stateCanvas.evaluate(element => element.getBoundingClientRect().width);
+    await statePreview.getByRole("button", {name:/を拡大$/}).click();
+    assert.equal(await statePreview.locator(".map-study-controls span").innerText(), "110%");
+    const widthAfter = await stateCanvas.evaluate(element => element.getBoundingClientRect().width);
+    assert.ok(widthAfter > widthBefore * 1.05,
+      `recorded snapshot ${index} zoom changes visual canvas width: ${widthBefore} -> ${widthAfter}`);
   }
   const select = page.locator(".map-history-section select");
   const analysis = await (
@@ -127,6 +129,14 @@ try {
     await page.locator(".map-history-section details summary").first().click();
   }
   await page.getByRole("heading", { name: "変更点", exact: true }).waitFor();
+  const section=page.locator(".map-history-section");
+  const controlAfterMaps=await section.evaluate(element => {
+    const compare=element.querySelector(".map-history-compare");
+    const controls=element.querySelector(".map-history-controls");
+    return !!compare && !!controls && !!(compare.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  assert.equal(controlAfterMaps,true,"replay buttons appear below before/after map previews");
+  await section.getByRole("button",{name:"次の操作"}).waitFor();
   }
   const response = page.waitForResponse((r) =>
     r.url().endsWith("/map-states.csv"),

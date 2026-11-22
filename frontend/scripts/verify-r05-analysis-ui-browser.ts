@@ -601,7 +601,7 @@ try {
       if (scenario.name === "analysis-mixed") {
         await page
           .getByRole("heading", {
-            name: "統合開始時・受理済み提出状態",
+            name: "統合開始時・提出状態",
             exact: true,
           })
           .waitFor();

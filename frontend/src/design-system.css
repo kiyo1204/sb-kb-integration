@@ -1324,6 +1324,57 @@ textarea:focus {
   width: 100%;
 }
 
+/* Researcher-only delivery status path, without implying that missing reports mean zero loss. */
+.research-delivery-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  padding: 0;
+  margin: 14px 0;
+  list-style: none;
+  counter-reset: delivery-step;
+}
+.research-delivery-flow li {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  counter-increment: delivery-step;
+}
+.research-delivery-flow li strong::before {
+  content: counter(delivery-step) ". ";
+  color: var(--accent);
+}
+.research-delivery-flow li span { color: var(--ink-soft); font-size: 0.86rem; }
+.research-delivery-flow li:not(:last-child)::after {
+  content: "→";
+  position: absolute;
+  right: -17px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-weight: 700;
+  color: var(--accent);
+}
+.research-delivery-caution {
+  color: var(--ink-soft);
+  padding-left: 10px;
+  border-left: 3px solid var(--line-strong);
+}
+@media (max-width: 650px) {
+  .research-delivery-flow { grid-template-columns: 1fr; gap: 18px; }
+  .research-delivery-flow li:not(:last-child)::after {
+    content: "↓";
+    right: 50%;
+    top: auto;
+    bottom: -20px;
+    transform: translateX(50%);
+  }
+}
+
 .map-study-controls {
   display: flex;
   align-items: center;
