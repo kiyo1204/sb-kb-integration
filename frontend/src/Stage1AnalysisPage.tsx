@@ -342,6 +342,9 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
                   <span>{savedMapStatus(map.status)}</span>
                 </div>
                 <p>表示倍率の変更やスクロールは閲覧専用です。ここでの操作によって保存内容は変わりません。</p>
+                {map.type==="INTEGRATION"&&data.operations.some(op=>op.mapId===map.id&&op.operationType==="MERGE_CONCEPT")&&(
+                  <p className="analysis-reading-note">Mergeを実行した後に解除した場合、現在の保存Mapには統合結果が残りません。<a href="#analysis-map-history">操作履歴</a>からMerge前後の記録を確認してください。</p>
+                )}
                 <ReadOnlyMapSnapshot key={map.id}
                   snapshot={{snapshotVersion:1,mapId:map.id,mapType:map.type,basedOnMapId:map.basedOnMapId??null,kitDefinitionId:map.kitDefinitionId??null,concepts:map.concepts,links:map.links} as HistoricalMapSnapshot}
                   title={`${mapName(map.type)}：保存時点（${savedMapStatus(map.status)}）`} allowZoom/>
@@ -361,16 +364,16 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
               </div>)}
             </div>}
           </section>
-          {data.integrationStates && <section className="session-card"><h2>統合開始時・受理済み提出状態</h2>
+          {data.integrationStates && <section className="session-card"><h2>統合開始時・提出状態</h2>
             <div className="map-history-compare">{(["start","submission"] as const).map(point=>{const record=data.integrationStates![point];return <div key={point}>
-              <h3>{point==="start"?"統合開始時":"受理済み提出時"}</h3>
+              <h3>{point==="start"?"統合開始時":"提出時"}</h3>
               <p>記録時刻：{timestamp(record.capturedAt??record.submittedAt)}{record.eventId?` · 提出イベント：${record.eventId}`:""}</p>
-              {record.state?<ReadOnlyMapSnapshot snapshot={record.state} title={point==="start"?"保存された初期snapshot":"受理された提出snapshot"} allowZoom/>:<p>状態記録なし／算出不可：{record.reason==="NOT_SUBMITTED"?"未提出":record.reason}</p>}
+              {record.state?<ReadOnlyMapSnapshot snapshot={record.state} title={point==="start"?"保存された初期snapshot":"提出時の保存snapshot"} allowZoom/>:<p>状態記録なし／算出不可：{record.reason==="NOT_SUBMITTED"?"未提出":record.reason}</p>}
               {record.state&&<details><summary>この時点の出所情報</summary><pre>{JSON.stringify(record.state,null,2)}</pre></details>}
             </div>;})}</div></section>}
           <section className="session-card map-history-section" id="analysis-map-history">
             <h2>マップ操作履歴</h2>
-            <p>活動概要とは別に、記録されたマップ操作を時系列で確認できます。行を展開すると記録済みの詳細を表示します。</p>
+            <p>「次へ」「前へ」で操作の前後を1件ずつ比較できます。ボタンはマップの下にあります。記録一覧から特定の操作を選ぶこともできます。</p>
             <label>対象マップ
               <select value={selectedMapId} onChange={e=>{
                 setHistoryLoading(true);setSelectedMapId(e.target.value);setHistorySequence(0);setSelectedOperationId("");
@@ -403,18 +406,17 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
                 </div>
               </>
             )}
-            <div className="map-history-controls">
-              <button type="button" disabled={historySequence===0||historyLoading}
-                onClick={()=>selectReplaySequence(historySequence-1)}>前へ</button>
-              <label>操作番号
-                <input type="range" min={0} max={replayOperations.length} step={1}
-                  value={Math.min(historySequence,replayOperations.length)} disabled={historyLoading||map?.historyReplayStatus!=="AVAILABLE"}
-                  onChange={e=>selectReplaySequence(Number(e.target.value))}/>
-                <span>{historySequence} / {replayOperations.length}</span>
-              </label>
-              <button type="button" disabled={historySequence>=replayOperations.length||historyLoading}
-                onClick={()=>selectReplaySequence(historySequence+1)}>次へ</button>
-            </div>
+
+            {historySequence===0&&replayOperations.length>0&&map?.historyReplayStatus==="AVAILABLE"&&(
+              <p className="map-history-step-caption" role="status">開始状態を選択中。「次の操作」で最初の変更を確認できます。</p>
+            )}
+            {historySequence>0&&displayedReplay?.operation&&(
+              <p className="map-history-step-caption" role="status">
+                #{historySequence}　{operationName(displayedReplay.operation.operationType)}
+                {" · "}{timestamp(displayedReplay.operation.serverTimestamp)}
+                {" · "}{displayedReplay.operation.outcome ? outcomeNames[displayedReplay.operation.outcome]??displayedReplay.operation.outcome : "結果記録なし"}
+              </p>
+            )}
             {displayedReplay?.status==="REPLAYABLE"&&displayedReplay.beforeState&&displayedReplay.afterState&&changes&&(
               <><p>＋追加・−削除・↔変更を、色と記号で表示します。概念：追加 {changes.concepts.added}・削除 {changes.concepts.removed}・変更 {changes.concepts.changed}、関係：追加 {changes.links.added}・削除 {changes.links.removed}・変更 {changes.links.changed}</p>
               <div className="map-diff-list"><h3>変更点</h3>{conceptDiffs.map(item=><p key={`concept-${item.id}`}><b>{changeMark(item.kind)} 概念</b>：{item.before&&item.after&&item.before.label!==item.after.label?`${item.before.label} → ${item.after.label}`:item.label}{item.before&&item.after&&<span> · 位置 ({item.before.positionX}, {item.before.positionY}) → ({item.after.positionX}, {item.after.positionY})</span>}</p>)}{linkDiffs.map(item=><p key={`link-${item.id}`}><b>{changeMark(item.kind)} 関係</b>：{item.before&&linkDescription(item.before,displayedReplay.beforeState!)} {item.before&&item.after&&" → "}{item.after&&linkDescription(item.after,displayedReplay.afterState!)}</p>)}{conceptDiffs.length+linkDiffs.length===0&&<p>比較可能な変更はありません。</p>}</div>
@@ -424,6 +426,18 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
               </div></>
             )}
             {operation&&displayedReplay&&(operationHasNoState||displayedReplay.status!=="REPLAYABLE")&&<p className="snapshot-unavailable" role="status">状態記録なし：選択した操作の変更前後を復元できません。</p>}
+            <nav className="map-history-controls" aria-label="マップ操作を時系列で再生">
+              <button type="button" disabled={historySequence===0||historyLoading||map?.historyReplayStatus!=="AVAILABLE"}
+                onClick={()=>selectReplaySequence(historySequence-1)}>前の操作</button>
+              <label>操作番号
+                <input type="range" min={0} max={replayOperations.length} step={1}
+                  value={Math.min(historySequence,replayOperations.length)} disabled={historyLoading||map?.historyReplayStatus!=="AVAILABLE"}
+                  onChange={e=>selectReplaySequence(Number(e.target.value))}/>
+                <span>{historySequence} / {replayOperations.length}</span>
+              </label>
+              <button type="button" disabled={historySequence>=replayOperations.length||historyLoading||map?.historyReplayStatus!=="AVAILABLE"}
+                onClick={()=>selectReplaySequence(historySequence+1)}>次の操作</button>
+            </nav>
           </section>
           {data.session.protocolKey==="STAGE1_5"&&<section className="session-card survey-analysis"><h2>アンケート回答</h2>
             {!data.survey||data.survey.questions.length===0?<p>アンケートの設問・回答記録はありません。</p>:<div className="survey-answer-list">{[...data.survey.questions].sort((a,b)=>a.displayOrder-b.displayOrder).map((question,index)=>{
