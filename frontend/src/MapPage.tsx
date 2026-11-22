@@ -6880,11 +6880,16 @@ export function ReadOnlyMapSnapshot({
   historyLinkChangeKinds?: ReadonlyMap<string, "ADDED" | "REMOVED" | "CHANGED">;
 }) {
   const [zoom, setZoom] = useState(1);
-  const concepts: Concept[] = snapshot.concepts.map((item) => ({
-    ...item,
-    createdAt: "",
-    updatedAt: "",
-  }));
+  // Research exports retain Merge ancestry as tombstoned concepts.
+  // They remain in the raw snapshot/provenance, but the visual Map should show
+  // only the active concepts, just like the learner editor after a Merge.
+  const concepts: Concept[] = snapshot.concepts
+    .filter((item) => item.mergedIntoConceptId == null)
+    .map((item) => ({
+      ...item,
+      createdAt: "",
+      updatedAt: "",
+    }));
   const links: MapLink[] = snapshot.links;
   return (
     <section
