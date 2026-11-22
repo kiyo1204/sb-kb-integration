@@ -91,6 +91,23 @@ try {
     const raw=await (await fetch(base+`/api/research/sessions/${session}/export`,{headers:{Authorization:"Bearer "+token}})).json();
     assert.equal(raw.integrationStates.start.state,null);assert.equal(raw.integrationStates.submission.state,null);
   } else {
+  // Both recorded integration snapshots use the same zoomable read-only canvas.
+  const integrationStates = page.locator("section.session-card").filter({
+    has: page.getByRole("heading", {name:"統合開始時・提出状態",exact:true}),
+  });
+  const recordedPreviews = integrationStates.locator(".map-history-preview");
+  assert.equal(await recordedPreviews.count(), 2,
+    "both start and accepted submission snapshots are available in the complete fixture");
+  for (let index=0;index<2;index++) {
+    const statePreview = recordedPreviews.nth(index);
+    const stateCanvas = statePreview.locator(".concept-canvas");
+    const widthBefore = await stateCanvas.evaluate(element => element.getBoundingClientRect().width);
+    await statePreview.getByRole("button", {name:/を拡大$/}).click();
+    assert.equal(await statePreview.locator(".map-study-controls span").innerText(), "110%");
+    const widthAfter = await stateCanvas.evaluate(element => element.getBoundingClientRect().width);
+    assert.ok(widthAfter > widthBefore * 1.05,
+      `recorded snapshot ${index} zoom changes visual canvas width: ${widthBefore} -> ${widthAfter}`);
+  }
   const select = page.locator(".map-history-section select");
   const analysis = await (
     await fetch(base + `/api/research/stage1/sessions/${session}/analysis`, {
