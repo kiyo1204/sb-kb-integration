@@ -1,6 +1,6 @@
 // TEST ONLY: deterministic API races in a freshly guarded, disposable synthetic DB.
-// A held run-row lock queues both requests; pg_stat_activity verifies their order
-// before release. No production data, mock resets or source migrations are touched.
+// A held run or access row coordinates requests; pg_stat_activity proves they
+// reach the critical lock before release. No production data or resets are touched.
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
@@ -15,6 +15,7 @@ const runLock = "SELECT r.state FROM experiment_runs r JOIN experiment_run_catal
 const startLock = "SELECT r.* FROM experiment_runs r JOIN experiment_run_catalog";
 const accessLock = "SELECT 1 FROM experiment_runs r JOIN experiment_run_catalog";
 const clientLock = "SELECT a.*,p.run_id,r.state FROM experiment_participant_access";
+const withdrawalAccessLock = "SELECT credential_generation,active_client_id FROM experiment_participant_access";
 const root = "/research/experiment-runs";
 
 export async function checkExperimentWithdrawalRaces(input: {
@@ -105,19 +106,31 @@ export async function checkExperimentWithdrawalRaces(input: {
       if (waiting.rowCount) return;
       await new Promise<void>((resolve) => setTimeout(resolve, 25));
     }
-    assert.fail("API request did not block on expected run row: " + prefix);
+    assert.fail("API request did not block on expected DB row: " + prefix);
   }
 
-  async function ordered(f: Fixture, first: Operation, second: Operation): Promise<[Reply, Reply]> {
+  async function ordered(
+    f: Fixture, first: Operation, second: Operation, lockTarget: "run" | "access" = "run",
+  ): Promise<[Reply, Reply]> {
     const lock = await pool.connect();
     let open = false;
     try {
       await lock.query("BEGIN");
       open = true;
-      await lock.query("SELECT 1 FROM experiment_runs WHERE id=$1 FOR UPDATE", [f.runId]);
+      if (lockTarget === "run") {
+        await lock.query("SELECT 1 FROM experiment_runs WHERE id=$1 FOR UPDATE", [f.runId]);
+      } else {
+        // Claim checks access and run locks in a join, whereas withdrawal locks
+        // run first, then access. Hold access so withdrawal acquires the run
+        // lock and queues at access before the client begins its claim.
+        await lock.query(
+          "SELECT 1 FROM experiment_participant_access WHERE session_id=$1 FOR UPDATE",
+          [f.sessionId],
+        );
+      }
       const a = first.send();
       void a.catch(() => undefined);
-      await waitUntilBlocked(first.queryPrefix);
+      await waitUntilBlocked(lockTarget === "access" ? withdrawalAccessLock : first.queryPrefix);
       const b = second.send();
       void b.catch(() => undefined);
       await waitUntilBlocked(second.queryPrefix);
@@ -195,7 +208,7 @@ export async function checkExperimentWithdrawalRaces(input: {
   {
     // Withdrawal queues first: even an authenticated but blocked client cannot claim.
     const f = await fixture("withdraw before client claim");
-    const [w, c] = await ordered(f, withdraw(f), claim(f));
+    const [w, c] = await ordered(f, withdraw(f), claim(f), "access");
     expect(w, 200);
     expect(c, 401, "experiment_code_invalidated");
     const row = await inspect(f);
