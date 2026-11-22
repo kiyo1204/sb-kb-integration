@@ -234,10 +234,6 @@ export default function IntegrationPractice({
   return (
     <>
       <h2 id="tutorial-practice-heading">統合マップの練習</h2>
-      <p className="tutorial-practice-description">
-        練習用SBの「点A・点B」とリンクは、統合マップ開始時の引き継ぎを再現しています。
-        本番ではSBの内容が自動的に引き継がれます。練習用Kit部品を追加し、Merge・解除・再接続を試してください。
-      </p>
       <section className="tutorial-task-progress" aria-label="操作練習の課題">
         <h3>練習する操作</h3>
         <p role="status">{currentTasks} / {tasks.length} 件達成</p>
@@ -338,7 +334,8 @@ export default function IntegrationPractice({
         allowMergeRelease
         concepts={graph.concepts}
         links={graph.links}
-        kitDefinitionName="練習専用Kit"
+        kitDefinitionName="練習用のキット"
+        kitPaletteCopy="kits"
         kitConcepts={kitConcepts.map((part) => ({ ...part, imported: graph.importedKitConceptIds.includes(part.kitConceptItemId) }))}
         kitLinks={kitLinks.map((part) => ({ ...part, used: graph.importedKitLinkIds.includes(part.kitLinkItemId) }))}
         readOnly={false}
