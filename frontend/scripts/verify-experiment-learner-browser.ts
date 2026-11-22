@@ -544,6 +544,11 @@ try {
     .getByRole("button", { name: "セッションを開始", exact: true })
     .click();
   await page.getByRole("button", { name: "開始する", exact: true }).click();
+  const checkbox = page.getByRole("checkbox", { name: "動画を視聴しました" });
+  // Completing the start request may precede the lesson UI rendering.
+  // Wait for the real confirmation control before asserting its presence
+  // and checking that the surrounding explanatory text is hidden.
+  await checkbox.waitFor({ state: "visible" });
   const lessonPanel = page.locator(".session-current-panel");
   for (const hiddenGuidance of [
     "動画参照は教材版に固定されていますが、URL先の内容が変わらないことを保証するものではありません。視聴確認は自己申告です。",
@@ -553,7 +558,6 @@ try {
     assert.equal(await lessonPanel.getByText(hiddenGuidance, { exact: true }).count(), 0,
       "learner lesson hides explanatory paragraphs without changing the confirmation control");
   }
-  const checkbox = page.getByRole("checkbox", { name: "動画を視聴しました" });
   assert.equal(await checkbox.count(), 1, "the video confirmation checkbox remains available");
   await checkbox.check();
   await page
