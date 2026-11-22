@@ -36,7 +36,7 @@ async function request(
 }
 async function json(path: string, method = "GET", body?: unknown,
   status = 200, key = randomUUID(), token = researcher) {
-  return (await (await request(path, method, body, status, key, token)).json()) as Record<string, any>;
+  return (await request(path, method, body, status, key, token)).json();
 }
 async function output(runId: string) {
   const prefix = `${root}/${runId}/research.`;
