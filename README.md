@@ -10,6 +10,7 @@
 - [システム概要](#システム概要)
 - [クイックスタート](#クイックスタート)
 - [学習フローと操作練習](#学習フローと操作練習)
+- [参加者Sessionの登録取消](#参加者sessionの登録取消)
 - [研究データと出力](#研究データと出力)
 - [開発・テスト](#開発テスト)
 - [実験用4活動フローの有効化](#実験用4活動フローの有効化)
@@ -111,6 +112,14 @@ docker compose down
 
 **授業・動画 → Scratch-Build → Kit-Build → 統合マップ**の実施フローです。教材の完成登録・実施作成・参加者登録を行い、研究者が実施開始を確定します。通常Composeでは**既定で無効**です。有効化の条件は後述します。
 
+## 参加者Sessionの登録取消
+
+実験用4活動（`SBKB_INTEGRATION_V1`）では、研究者の実施詳細ページ「セッションの削除」から、**準備中・未開始・端末未接続・学習記録なし**の参加者Sessionに限り、確認付きで**登録取消（論理削除）**できます。実施開始後や、端末登録候補・学習記録のあるSessionは取り消せません。サーバーとDBが最終条件を検証します。
+
+取消後のアクセスコードは失効し、当該Sessionは通常の参加者一覧・登録人数・実施単位の `research.json` / `research.csv` / **11シート `research.xlsx`** の対象から外れます。一方、**Session・Stage・登録対応・監査記録は物理削除しません**。「登録取消履歴」から対象ラベル・Session ID・取消日時を確認できます。以前ダウンロードした出力ファイルや端末上の記録は自動消去されません。
+
+操作手順、取消条件、通信断・エラー時の確認方法、履歴・コード・出力の扱いは **[実験用Session登録取消の運用ガイド](docs/experiment-session-withdrawal.md)** を参照してください。これは旧Stage 1のデータ削除とは別機能であり、実研究データの完全消去を保証するものではありません。
+
 ### P02からの操作練習
 
 実験用4活動の参加者は、P02「活動の案内」から、本番の研究用マップとは独立した操作練習を行います。
@@ -139,6 +148,8 @@ docker compose down
 | 共通／用途別CSV、イベントJSON、ZIP | 絞り込み研究イベントや操作履歴の抽出 |
 | 実施単位 `research.json` / `research.csv` | 実施に属するSessionの状態や研究データの照合 |
 | `research.xlsx` | **Overview、Events、Map_Operations、Activity_Times、Map_States、Operations、System_Events、Researcher_Events、SB_Analysis、KB_Analysis、Integration_Analysis** の11シート |
+
+実施単位の3形式（JSON/CSV/11シートExcel）は、登録取消済みSessionを**通常の出力対象から除外**します。ただしDB上の登録・監査履歴および既に取得済みの出力は保持されます。[登録取消の運用ガイド](docs/experiment-session-withdrawal.md)で範囲を確認してください。
 
 Excelは派生出力であり、既存のJSON/CSVを置き換える原本ではありません。Excelの行・セル・展開サイズ等には上限があり、上限超過時は一部切り捨てではなくエラーになります。[Excel仕様](docs/research-workbook-11-sheets.md)・[イベント出力仕様](docs/research-event-export.md)を参照してください。
 
@@ -212,6 +223,8 @@ $env:RESEARCH_SUITE_ONLY = "test:experiment-research"
 npm run db:mock --prefix backend -- suite --name $mockName
 ```
 
+登録取消について、同じ模擬DB環境で `$env:RESEARCH_SUITE_ONLY = "test:experiment-withdrawal-acceptance"` を指定すれば、合成参加者2件の登録→1件取消→コード失効→取消履歴→実施単位JSON/CSV/11シートExcelの整合性を検証できます。専用テストも既存の総合CIに含まれます。
+
 隔離DBテストでは、練習専用ラベルのConcept / Link、保存履歴、研究イベント、JSON/CSV/Excelへの非混入を検証します。研究データの自動削除やリセットは行いません。
 
 ```powershell
@@ -277,7 +290,8 @@ Remove-Item Env:FRONTEND_BIND_ADDRESS -ErrorAction SilentlyContinue
 - [研究イベントの保持・再送・ACK](docs/research-event-delivery.md)
 - [イベント出力仕様](docs/research-event-export.md)
 - [研究イベントの閲覧](docs/research-event-viewer.md)
-- [研究データ管理](docs/research-data-management.md)
+- [研究データ管理（旧フローの履歴仕様）](docs/research-data-management.md)
+- [実験用Sessionの登録取消・履歴・失効の運用ガイド](docs/experiment-session-withdrawal.md)
 - [11シート研究Excelの仕様](docs/research-workbook-11-sheets.md)
 - [隔離DBの作成・リセット防護](docs/development-event-stream-reset.md)
 - [Kit-Build関連の参考資料](docs/kit-build-interaction-references.md)

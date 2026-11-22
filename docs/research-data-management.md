@@ -1,5 +1,7 @@
 # 研究データ管理（Issue #11）
 
+> **履歴仕様の注意：** この文書の一部は旧研究者画面・旧管理APIの実装時点を説明したものです。旧研究者画面は [PR #78](https://github.com/kiyo1204/sb-kb-integration/pull/78)、旧study作成・割当等のAPIは [PR #80](https://github.com/kiyo1204/sb-kb-integration/pull/80) で整理されました。下記の旧画面への遷移や管理操作を現行UIの操作手順として使用しないでください。実験用4活動（`SBKB_INTEGRATION_V1`）の**未開始Session登録取消（論理削除）**については [現行の研究者向け運用ガイド](experiment-session-withdrawal.md) を参照してください。これは旧研究データの物理削除とは異なります。
+
 > 新規作成は群なし5活動（STAGE1_5）です。旧4・6活動の意味は保持します。[追加仕様・v7アンケート・出力schemaVersion 3](session-flow-survey.md)を参照してください。新しい4テーブルも確認付き削除・模擬DBリセットの対象です。
 
 ## 利用範囲
