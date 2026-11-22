@@ -236,7 +236,7 @@ try {
           : `/maps/${mapIds[screen]}`;
       await page.goto(new URL(path, vite.resolvedUrls!.local[0]!).toString());
       const expectedHeading = {
-        lesson: "STEP 1：授業動画",
+        lesson: "授業動画",
         prior: "STEP 2：Scratch-Build",
         kb: "STEP 3：Kit-Build",
         integration: "STEP 4：統合",
@@ -485,6 +485,29 @@ try {
         path: join(directory, `${screen}-${width}-full-${captureSuffix}.png`),
         fullPage: true,
       });
+      // The lesson and Scratch activity dashboard should not show the legacy
+      // page heading or STEP numbers. Preserve the Map page's separate title.
+      if (screen === "lesson" || screen === "prior") {
+        if (screen === "prior") {
+          await page.goto(
+            new URL(`/sessions/${sessionId}`, vite.resolvedUrls!.local[0]!).toString(),
+          );
+          await page.getByText("現在の活動", { exact: true }).waitFor();
+        }
+        const activity = screen === "lesson" ? "授業動画" : "Scratch-Build";
+        assert.equal(
+          await page.locator(".session-current-panel h2").innerText(),
+          activity, "current activity uses a concise label without STEP",
+        );
+        assert.equal(
+          await page.getByRole("heading", { name: "学習・再構成フロー" }).count(),
+          0, "legacy flow heading is absent for the four-activity learner",
+        );
+        assert.equal(
+          await page.locator(".session-card").getAttribute("aria-label"),
+          "学習活動", "the session section retains an accessible name",
+        );
+      }
       await context.close();
       console.log(JSON.stringify({ screen, width, metrics }));
     }
