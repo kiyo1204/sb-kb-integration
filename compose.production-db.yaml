@@ -1,0 +1,41 @@
+# Production-DB scaffold ONLY. Never combine with compose.yaml or compose.lan.yaml.
+# Does not create any DB until an operator explicitly runs Docker Compose up.
+name: sbkb-production-db
+
+services:
+  db:
+    image: postgres:17-alpine@sha256:${SBKB_PROD_POSTGRES_DIGEST:?Set a reviewed PostgreSQL 17 manifest digest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SBKB_PROD_DB_NAME:?Set a dedicated production DB name}
+      POSTGRES_USER: ${SBKB_PROD_DB_ADMIN_USER:?Set a dedicated administrative user}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets:
+      - postgres_admin_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - db_private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"${POSTGRES_USER}\" -d \"${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    shm_size: 256mb
+
+volumes:
+  pgdata:
+
+networks:
+  db_private:
+    internal: true
+
+secrets:
+  postgres_admin_password:
+    file: ${SBKB_PROD_DB_ADMIN_PASSWORD_FILE:?Set an absolute secret-file path outside Git}

@@ -1,0 +1,63 @@
+name: Production DB static Compose preflight (no deployment)
+
+on:
+  pull_request:
+    paths:
+      - compose.production-db.yaml
+      - production-db.env.example
+      - docs/production-db-preparation.md
+      - .github/workflows/production-db-preflight.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-production-db-definition:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate configuration with disposable synthetic inputs (never start DB)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          printf 'synthetic-static-config-only\n' > "$tmp/admin-password"
+          chmod 600 "$tmp/admin-password"
+          {
+            echo "SBKB_PROD_POSTGRES_DIGEST=$(printf 'a%.0s' {1..64})"
+            echo "SBKB_PROD_DB_NAME=sbkb_production"
+            echo "SBKB_PROD_DB_ADMIN_USER=sbkb_prod_admin"
+            echo "SBKB_PROD_DB_ADMIN_PASSWORD_FILE=$tmp/admin-password"
+          } > "$tmp/production-db.env"
+          docker compose --project-name sbkb-production-db \
+            --env-file "$tmp/production-db.env" \
+            -f compose.production-db.yaml config --quiet
+          docker compose --project-name sbkb-production-db \
+            --env-file "$tmp/production-db.env" \
+            -f compose.production-db.yaml config --format json > "$tmp/rendered.json"
+          python3 - "$tmp/rendered.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              c = json.load(f)
+          assert c["name"] == "sbkb-production-db"
+          assert set(c["services"]) == {"db"}
+          d = c["services"]["db"]
+          assert not d.get("ports"), "DB must not publish host ports"
+          assert not d.get("build") and not d.get("privileged")
+          assert d["image"] == "postgres:17-alpine@sha256:" + "a" * 64
+          e = d["environment"]
+          assert e["POSTGRES_PASSWORD_FILE"] == "/run/secrets/postgres_admin_password"
+          assert "POSTGRES_PASSWORD" not in e
+          assert e["POSTGRES_INITDB_ARGS"] == "--auth-host=scram-sha-256"
+          assert set(d["networks"]) == {"db_private"}
+          assert c["networks"]["db_private"]["internal"] is True
+          v = d.get("volumes", [])
+          assert len(v) == 1 and v[0]["type"] == "volume"
+          assert v[0]["target"] == "/var/lib/postgresql/data"
+          assert v[0]["source"] == "pgdata"
+          s = d.get("secrets", [])
+          assert len(s) == 1 and s[0]["source"] == "postgres_admin_password"
+          print("Production DB static config: PASS (no database created)")
+          PY
