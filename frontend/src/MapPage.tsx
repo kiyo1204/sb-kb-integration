@@ -3631,7 +3631,7 @@ function MapEditorShell({
         className={`map-editor-workspace${drawer.kind !== "closed" ? " has-drawer" : ""}${map.sessionProtocolKey === "SBKB_INTEGRATION_V1" && isLearner && map.type === "PRIOR" && drawer.kind === "edit-link" ? " is-sb-link-selection" : ""}${map.sessionProtocolKey === "SBKB_INTEGRATION_V1" && isLearner && map.type === "INTEGRATION" && drawer.kind === "edit-link" ? " is-integration-link-selection" : ""}`}
       >
         <div className="map-editor-canvas-column">
-          {isLearner && !readOnly && (
+          {isLearner && !readOnly && !(experimentLayout && (map.type === "PRIOR" || map.type === "KB")) && (
             <p className="map-editor-operation-hint">
               {map.type === "KB"
                 ? "部品をマップへドラッグし、リンクの両端を概念へ接続します。"
@@ -4123,6 +4123,7 @@ export function ConceptCanvas({
   kitDefinitionName,
   kitConcepts,
   kitLinks,
+  kitPaletteCopy = "parts",
   readOnly,
   canEditConceptStructure,
   canEditLinkLabel,
@@ -4163,6 +4164,8 @@ export function ConceptCanvas({
   kitDefinitionName: string | null;
   kitConcepts: KitConceptItem[];
   kitLinks: KitLinkItem[];
+  /** Tutorial-only wording; keep production and legacy Map terminology unchanged. */
+  kitPaletteCopy?: "parts" | "kits";
   readOnly: boolean;
   highlightedConceptIds?: ReadonlySet<string>;
   highlightedLinkIds?: ReadonlySet<string>;
@@ -5717,22 +5720,22 @@ export function ConceptCanvas({
       aria-label="マップ表示領域"
     >
       {supportsKitPalette && kitDefinitionName && (
-        <section className="kit-palette" aria-label="教材部品パレット">
+        <section className="kit-palette" aria-label={kitPaletteCopy === "kits" ? "キット一覧" : "教材部品パレット"}>
           <div className="kit-palette-heading">
             <div>
-              <p className="eyebrow">Kit Palette</p>
+              <p className="eyebrow">{kitPaletteCopy === "kits" ? "キット一覧" : "Kit Palette"}</p>
               <h2>{kitDefinitionName}</h2>
             </div>
-            <p>概念またはリンク部品をマップへドラッグしてください。</p>
+            <p>{kitPaletteCopy === "kits" ? "キット一覧から概念またはリンクをマップへドラッグしてください。" : "概念またはリンク部品をマップへドラッグしてください。"}</p>
           </div>
           <label className="kit-palette-search">
-            <span>Kit部品を検索</span>
+            <span>{kitPaletteCopy === "kits" ? "キット一覧を検索" : "Kit部品を検索"}</span>
             <input
               type="search"
               value={kitPartQuery}
               onChange={(event) => setKitPartQuery(event.target.value)}
               placeholder="概念名・関係語"
-              aria-label="Kit部品を検索"
+              aria-label={kitPaletteCopy === "kits" ? "キット一覧を検索" : "Kit部品を検索"}
             />
           </label>
           <div className="kit-palette-groups">
@@ -5784,7 +5787,7 @@ export function ConceptCanvas({
                 })}
                 {visibleKitConcepts.length === 0 && (
                   <li className="kit-palette-empty" role="status">
-                    該当するConcept部品はありません。
+                    {kitPaletteCopy === "kits" ? "該当する概念はありません。" : "該当するConcept部品はありません。"}
                   </li>
                 )}
               </ul>
@@ -5837,7 +5840,7 @@ export function ConceptCanvas({
                 })}
                 {visibleKitLinks.length === 0 && (
                   <li className="kit-palette-empty" role="status">
-                    該当するLinking Word部品はありません。
+                    {kitPaletteCopy === "kits" ? "該当するリンクはありません。" : "該当するLinking Word部品はありません。"}
                   </li>
                 )}
               </ul>

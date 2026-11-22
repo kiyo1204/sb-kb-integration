@@ -696,9 +696,10 @@ try {
     const practiceRequestIndex = tutorialApiRequests.length;
     const tutorialClaimsBeforePractice = tutorialClaimSecrets.length;
     const activeTutorialPanel = tutorialPage.locator(".tutorial-practice-panel:not([hidden])");
-    assert.match(
-      await tutorialPage.locator(".tutorial-heading").innerText(),
-      /通常の学習Sessionとは別.*保存しません/s,
+    assert.equal(
+      await tutorialPage.locator(".tutorial-practice-note").innerText(),
+      "Scratch-Build → Kit-Build → 統合マップの順で、各段階のすべての操作を完了すると次へ進めます。完了した段階へはいつでも戻り、練習内容を続けて確認できます。",
+      "practice introduction uses the shorter rehearsal-approved wording",
     );
     if (!inlineP02) assert.deepEqual(tutorialApiRequests, [], "standalone tutorial never calls the API");
     assert.equal(
@@ -768,6 +769,14 @@ try {
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).click();
     await tutorialPage.getByRole("heading", { name: "Kit-Buildの練習" }).waitFor();
+    assert.equal(
+      await activeTutorialPanel.getByRole("searchbox", { name: "キット一覧を検索" }).count(),
+      1, "Kit-Build practice palette uses the new kit wording",
+    );
+    assert.match(
+      await activeTutorialPanel.locator(".tutorial-practice-description").innerText(),
+      /キット一覧から概念とリンクをマップへ追加/,
+    );
     assert.equal(await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).isDisabled(), false);
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     assert.equal(
@@ -945,6 +954,14 @@ try {
     }
     await tutorialPage.getByRole("button", { name: "次へ：統合マップの練習", exact: true }).click();
     await tutorialPage.getByRole("heading", { name: "統合マップの練習" }).waitFor();
+    assert.equal(
+      await activeTutorialPanel.locator(".tutorial-practice-description").count(),
+      0, "the integration practice description below the heading is removed",
+    );
+    assert.equal(
+      await activeTutorialPanel.getByRole("searchbox", { name: "キット一覧を検索" }).count(),
+      1, "integration practice uses the kit-list wording too",
+    );
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),

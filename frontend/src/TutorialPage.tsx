@@ -95,7 +95,7 @@ export default function TutorialPage({ returnHref, onExit, onCancel }: { returnH
           <p className="home-card-kicker">通常の学習Sessionとは別の練習</p>
           <h1>操作の練習</h1>
           <p className="tutorial-practice-note">
-            練習用のMapと達成状況はこの画面内だけで扱い、サーバーや学習Sessionの記録には保存しません。Scratch-Build → Kit-Build → 統合マップの順で、各段階のすべての操作を完了すると次へ進めます。完了した段階へはいつでも戻り、練習内容を続けて確認できます。すべての段階を達成すると「練習を終了」からセッションの案内へ戻れます。
+            Scratch-Build → Kit-Build → 統合マップの順で、各段階のすべての操作を完了すると次へ進めます。完了した段階へはいつでも戻り、練習内容を続けて確認できます。
           </p>
         </header>
 
@@ -257,7 +257,7 @@ function PracticeCanvas({
   const instructions =
     mode === "PRIOR"
       ? "概念名とリンク名を入力して追加します。概念はドラッグで移動でき、作成中のリンクは両端を概念へ接続します。"
-      : "部品パレットから概念とリンクをマップへ追加し、作成中のリンクの両端を概念へ接続します。";
+      : "キット一覧から概念とリンクをマップへ追加し、作成中のリンクの両端を概念へ接続します。";
 
   return (
     <>
@@ -426,7 +426,8 @@ function PracticeCanvas({
         mapType={mode}
         concepts={concepts}
         links={links}
-        kitDefinitionName={mode === "KB" ? "練習用の部品" : null}
+        kitDefinitionName={mode === "KB" ? "練習用のキット" : null}
+        kitPaletteCopy="kits"
         kitConcepts={kitConcepts.map((concept) => ({
           ...concept,
           imported: usedConcepts.includes(concept.kitConceptItemId),
