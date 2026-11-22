@@ -267,8 +267,8 @@ try {
           });
         assert.equal(
           await page.locator(".map-editor-operation-hint").count(),
-          screen === "prior" ? 0 : 1,
-          "Scratch-Build hides the redundant operation paragraph; KB and integration retain their guidance",
+          screen === "prior" || screen === "kb" ? 0 : 1,
+          "Scratch-Build and Kit-Build hide the redundant operation paragraph; integration retains guidance",
         );
       }
       if (screen !== "lesson") {
