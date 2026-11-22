@@ -204,7 +204,20 @@ const analysis = {
       type: "INTEGRATION",
       status: "DRAFT",
       researchRole: "INTEGRATION",
-      concepts: integration.concepts,
+      // Synthetic Merge ancestry: export keeps the hidden original, but the
+      // current Map visualization must not render it as an active Concept.
+      concepts: [
+        ...integration.concepts,
+        {
+          id: "91000000-0000-4000-8000-000000000022",
+          mapId: ids.integrationMap,
+          label: "統合済みの元概念（非表示）",
+          positionX: 320,
+          positionY: 300,
+          mergedIntoConceptId: ids.conceptB,
+          provenance: [],
+        },
+      ],
       links: integration.links,
       historyReplayStatus: "UNAVAILABLE",
       basedOnMapId: ids.priorMap,
@@ -615,6 +628,17 @@ try {
         await page
           .getByText("状態記録なし／算出不可：未提出", { exact: true })
           .waitFor();
+        const integrationChoice = mapPicker.getByRole("button", { name: /統合マップ/ });
+        await integrationChoice.click();
+        const visibleMap = page.locator(".analysis-selected-map");
+        assert.equal(
+          await visibleMap.locator(".concept-node").count(), 2,
+          "saved integration Map draws only active concepts, not merged-away ancestry",
+        );
+        assert.equal(
+          await visibleMap.getByText("統合済みの元概念（非表示）").count(), 0,
+          "research-only lineage stays in raw data without being drawn as a concept",
+        );
         await page
           .locator(".map-history-section select")
           .selectOption(ids.integrationMap);
