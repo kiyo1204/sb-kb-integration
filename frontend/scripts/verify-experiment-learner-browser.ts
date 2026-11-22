@@ -201,7 +201,7 @@ try {
     );
     assert.equal(started.status, 200);
   }
-  await refreshConnection("P02：活動の案内");
+  await refreshConnection("活動の案内");
   const documentBeforePractice = await page.evaluate(
     () => performance.timeOrigin,
   );
@@ -388,7 +388,7 @@ try {
       .getByRole("button", { name: "リンクを追加", exact: true })
       .click();
     await page.getByRole("button", { name: "案内へ戻る（練習未完了）", exact: true }).click();
-    await page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    await page.getByRole("heading", { name: "活動の案内" }).waitFor();
     phase = "returned";
     const afterQueue = await queueSnapshot();
     assert.equal(
