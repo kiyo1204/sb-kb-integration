@@ -564,7 +564,7 @@ function SessionDashboard({
 
         {flow.session.status === "NOT_STARTED" && (
           <div className="session-current-panel">
-            <h2>{flow.session.protocolKey === "SBKB_INTEGRATION_V1" ? "P02：活動の案内" : "セッションを開始してください"}</h2>
+            <h2>{flow.session.protocolKey === "SBKB_INTEGRATION_V1" ? "活動の案内" : "セッションを開始してください"}</h2>
             {flow.session.protocolKey === "SBKB_INTEGRATION_V1" && <p>授業・動画、Scratch-Build、Kit-Build、統合マップの順に操作します。各画面の案内を確認して進んでください。この操作案内は正式な研究説明・同意取得を代替しません。</p>}
             <p>開始後、最初の活動から順番に進みます。</p>
             {isLearner && flow.session.protocolKey === "SBKB_INTEGRATION_V1" ? (
