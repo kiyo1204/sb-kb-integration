@@ -47,6 +47,9 @@ jobs:
           assert not d.get("ports"), "DB must not publish host ports"
           assert not d.get("build") and not d.get("privileged")
           assert d["image"] == "postgres:17-alpine@sha256:" + "a" * 64
+          health = d["healthcheck"]["test"]
+          assert health[0] == "CMD-SHELL"
+          assert "POSTGRES_USER" in health[1] and "POSTGRES_DB" in health[1], "healthcheck must resolve vars inside DB container"
           e = d["environment"]
           assert e["POSTGRES_PASSWORD_FILE"] == "/run/secrets/postgres_admin_password"
           assert "POSTGRES_PASSWORD" not in e
