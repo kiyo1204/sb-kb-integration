@@ -155,6 +155,7 @@ try {
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:run-management-browser", true);
   await run("test:r05-execution");
   await run("test:participant-access");
+  await run("test:experiment-withdrawal-acceptance");
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:participant-access-browser", true);
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:r08-progress-display-browser", true);
   if (process.env.RESEARCH_BROWSER_CHECKS === "1") await run("test:rehearsal-ui-browser", true);
