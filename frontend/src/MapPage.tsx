@@ -3631,7 +3631,7 @@ function MapEditorShell({
         className={`map-editor-workspace${drawer.kind !== "closed" ? " has-drawer" : ""}${map.sessionProtocolKey === "SBKB_INTEGRATION_V1" && isLearner && map.type === "PRIOR" && drawer.kind === "edit-link" ? " is-sb-link-selection" : ""}${map.sessionProtocolKey === "SBKB_INTEGRATION_V1" && isLearner && map.type === "INTEGRATION" && drawer.kind === "edit-link" ? " is-integration-link-selection" : ""}`}
       >
         <div className="map-editor-canvas-column">
-          {isLearner && !readOnly && (
+          {isLearner && !readOnly && !(experimentLayout && map.type === "PRIOR") && (
             <p className="map-editor-operation-hint">
               {map.type === "KB"
                 ? "部品をマップへドラッグし、リンクの両端を概念へ接続します。"
