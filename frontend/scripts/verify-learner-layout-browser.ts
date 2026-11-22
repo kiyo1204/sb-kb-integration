@@ -265,6 +265,11 @@ try {
           .catch(async () => {
             await page.getByText("保存済み", { exact: true }).waitFor();
           });
+        assert.equal(
+          await page.locator(".map-editor-operation-hint").count(),
+          screen === "prior" ? 0 : 1,
+          "Scratch-Build hides the redundant operation paragraph; KB and integration retain their guidance",
+        );
       }
       if (screen !== "lesson") {
         // Synthetic outbox only: control the actual delivery component without
