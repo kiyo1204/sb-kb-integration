@@ -672,7 +672,7 @@ function SessionDashboard({
           </div>
         )}
 
-        {flow.session.protocolKey === "SBKB_INTEGRATION_V1" && flow.session.status === "COMPLETED" && <section aria-label="P08 完了・待機"><h2>活動が完了しました</h2><p>研究者の指示をお待ちください。実施全体の管理終了操作は行っていません。</p></section>}
+        {flow.session.protocolKey === "SBKB_INTEGRATION_V1" && flow.session.status === "COMPLETED" && <section aria-label="P08 完了・待機"><h2>活動が完了しました</h2><p>研究者の指示をお待ちください。</p></section>}
         {flow.session.status === "IN_PROGRESS" && !current && (
           <div className="session-current-panel"><h2>全活動が完了しています</h2></div>
         )}
