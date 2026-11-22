@@ -422,7 +422,7 @@ try {
     await p02Page.goto(vite.resolvedUrls!.local[0]!);
     await p02Page.getByLabel("アクセスコード", { exact: true }).fill(learnerToken);
     await p02Page.getByRole("button", { name: "続行", exact: true }).click();
-    await p02Page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    await p02Page.getByRole("heading", { name: "活動の案内" }).waitFor();
     const practiceCard = p02Page.locator(".session-practice-card");
     assert.equal(await practiceCard.count(), 1);
     const practiceLink = practiceCard.getByRole("button", { name: /練習を開く/ });
@@ -485,7 +485,7 @@ try {
       "inline practice must not send mutations or unexpected API requests",
     );
     await p02Page.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
-    await p02Page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    await p02Page.getByRole("heading", { name: "活動の案内" }).waitFor();
     assert.equal(await p02Page.locator(".session-practice-card").count(), 1);
     assert.equal(
       await p02Page.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(),
@@ -508,7 +508,7 @@ try {
     assert.ok(cachedIdentity, "F5 identity is cached in this tab");
     const claimsBeforeReload = p02ClaimSecrets.length;
     await p02Page.reload();
-    await p02Page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    await p02Page.getByRole("heading", { name: "活動の案内" }).waitFor();
     assert.ok(p02ClaimSecrets.length > claimsBeforeReload, "F5 rechecks the server binding");
     assert.equal(p02ClaimSecrets.at(-1), originalClaimSecret, "F5 reuses the existing client secret");
     assert.equal(await p02Page.evaluate(key => sessionStorage.getItem(key), cacheKey), cachedIdentity);
@@ -529,7 +529,7 @@ try {
     await duplicatePage.getByRole("heading", { name: "この画面は別タブで利用中です" }).waitFor();
     assert.equal(duplicateClaims, 0, "duplicate tab must not claim copied credentials");
     await duplicatePage.close();
-    assert.equal(await p02Page.getByRole("heading", { name: "P02：活動の案内" }).count(), 1);
+    assert.equal(await p02Page.getByRole("heading", { name: "活動の案内" }).count(), 1);
     await p02Context.close();
 
     for (const failure of ["ended", "switched", "expired", "temporary-server", "temporary-network"] as const) {
@@ -592,7 +592,7 @@ try {
     await retryPage.goto(vite.resolvedUrls!.local[0]!);
     await retryPage.getByRole("heading", { name: "接続状態を確認できません", exact: true }).waitFor();
     allowMaterial = true;
-    await retryPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor({ timeout: 25000 });
+    await retryPage.getByRole("heading", { name: "活動の案内" }).waitFor({ timeout: 25000 });
     assert.ok(materialRequests >= 2, "transient material fetch recovers automatically");
     await retryContext.close();
 
@@ -612,14 +612,14 @@ try {
     const startPage = await startContext.newPage();
     await installApiFixture(startPage, "p02");
     await startPage.goto(vite.resolvedUrls!.local[0]!);
-    await startPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    await startPage.getByRole("heading", { name: "活動の案内" }).waitFor();
     assert.equal(
       await startPage.getByRole("button", { name: "セッションを開始", exact: true }).isEnabled(),
       true,
       "previously completed practice unlocks session start",
     );
     await startPage.reload();
-    await startPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    await startPage.getByRole("heading", { name: "活動の案内" }).waitFor();
     assert.equal(
       await startPage.getByRole("button", { name: "セッションを開始", exact: true }).isEnabled(),
       true,
@@ -633,7 +633,7 @@ try {
     await startPage.getByRole("button", { name: "セッションを開始", exact: true }).click();
     await sessionStart;
     await startPage.getByRole("button", { name: "開始する", exact: true }).waitFor();
-    assert.equal(await startPage.getByRole("heading", { name: "P02：活動の案内" }).count(), 0);
+    assert.equal(await startPage.getByRole("heading", { name: "活動の案内" }).count(), 0);
     assert.equal(await startPage.locator(".map-editor-page").count(), 0);
     await startContext.close();
 
@@ -682,7 +682,7 @@ try {
       await tutorialPage.goto(vite.resolvedUrls!.local[0]!);
       await tutorialPage.getByLabel("アクセスコード", { exact: true }).fill(syntheticAccessCode);
       await tutorialPage.getByRole("button", { name: "続行", exact: true }).click();
-      await tutorialPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
       assert.equal(
         await tutorialPage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(),
         true,
@@ -1131,7 +1131,7 @@ try {
     }
     await tutorialPage.getByRole("button", { name: "練習を終了", exact: true }).click();
     if (inlineP02) {
-      await tutorialPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
       const startButton = tutorialPage.getByRole("button", { name: "セッションを開始", exact: true });
       assert.equal(await startButton.isEnabled(), true, "actual completion unlocks P02 start");
       const completionKey = `sbkb-practice-complete-v1:${p02SessionId}:${requestDigest(syntheticAccessCode)}`;
@@ -1152,7 +1152,7 @@ try {
       assert.ok(clientState, "same-tab client ownership is stored before F5");
       const claimsBeforeF5 = tutorialClaimSecrets.length;
       await tutorialPage.reload();
-      await tutorialPage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
       assert.ok(tutorialClaimSecrets.length > claimsBeforeF5, "F5 rechecks client ownership");
       assert.equal(tutorialClaimSecrets.at(-1), claimSecret, "F5 reuses the original client identity");
       assert.equal(await tutorialPage.evaluate((key) => sessionStorage.getItem(key), clientKey), clientState);
@@ -1317,7 +1317,7 @@ try {
   await mobilePage.goto(vite.resolvedUrls!.local[0]!);
   await mobilePage.getByLabel("アクセスコード", { exact: true }).fill(syntheticAccessCode);
   await mobilePage.getByRole("button", { name: "続行", exact: true }).click();
-  await mobilePage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+  await mobilePage.getByRole("heading", { name: "活動の案内" }).waitFor();
   await assertNoHorizontalOverflow(mobilePage, "P02 mobile entry", 390);
   assert.equal(
     await mobilePage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(),
@@ -1353,7 +1353,7 @@ try {
     "mobile practice must not issue API mutations",
   );
   await mobilePage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
-  await mobilePage.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+  await mobilePage.getByRole("heading", { name: "活動の案内" }).waitFor();
   assert.equal(
     await mobilePage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(),
     true,

@@ -564,7 +564,7 @@ function SessionDashboard({
 
         {flow.session.status === "NOT_STARTED" && (
           <div className="session-current-panel">
-            <h2>{flow.session.protocolKey === "SBKB_INTEGRATION_V1" ? "P02：活動の案内" : "セッションを開始してください"}</h2>
+            <h2>{flow.session.protocolKey === "SBKB_INTEGRATION_V1" ? "活動の案内" : "セッションを開始してください"}</h2>
             {flow.session.protocolKey === "SBKB_INTEGRATION_V1" && <p>授業・動画、Scratch-Build、Kit-Build、統合マップの順に操作します。各画面の案内を確認して進んでください。この操作案内は正式な研究説明・同意取得を代替しません。</p>}
             <p>開始後、最初の活動から順番に進みます。</p>
             {isLearner && flow.session.protocolKey === "SBKB_INTEGRATION_V1" ? (
@@ -647,7 +647,7 @@ function SessionDashboard({
             </div>}
             {current.stageType === "LESSON" && current.status === "IN_PROGRESS" && (
               <>
-                {flow.session.protocolKey==="SBKB_INTEGRATION_V1" && <p>動画参照は教材版に固定されていますが、URL先の内容が変わらないことを保証するものではありません。視聴確認は自己申告です。</p>}
+                {!isLearner && flow.session.protocolKey==="SBKB_INTEGRATION_V1" && <p>動画参照は教材版に固定されていますが、URL先の内容が変わらないことを保証するものではありません。視聴確認は自己申告です。</p>}
                 <Stage1Video
                   url={flow.session.lessonVideoUrl}
                   stageId={current.id}
@@ -783,7 +783,7 @@ export function Stage1Video({
   return (
     <div className="stage1-video-section">
       {showHeading && <h3>STEP 1：授業動画</h3>}
-      <p>指定された動画を視聴し、終了後に確認欄を選択してください。</p>
+      {showHeading && <p>指定された動画を視聴し、終了後に確認欄を選択してください。</p>}
       {youtube ? (
         <iframe title="授業動画" className="stage1-video-player" src={`https://www.youtube-nocookie.com/embed/${youtube[1]}`} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
       ) : isMediaFile ? (
@@ -823,7 +823,7 @@ export function Stage1Video({
         <input type="checkbox" checked={confirmed} onChange={(event) => onConfirm(event.target.checked)} />
         動画を視聴しました
       </label>
-      <p className="stage1-verification-note">視聴確認は自己申告です。視聴時間の客観的な計測ではありません。</p>
+      {showHeading && <p className="stage1-verification-note">視聴確認は自己申告です。視聴時間の客観的な計測ではありません。</p>}
     </div>
   );
 }

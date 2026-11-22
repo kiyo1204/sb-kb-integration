@@ -201,7 +201,7 @@ try {
     );
     assert.equal(started.status, 200);
   }
-  await refreshConnection("P02：活動の案内");
+  await refreshConnection("活動の案内");
   const documentBeforePractice = await page.evaluate(
     () => performance.timeOrigin,
   );
@@ -388,7 +388,7 @@ try {
       .getByRole("button", { name: "リンクを追加", exact: true })
       .click();
     await page.getByRole("button", { name: "案内へ戻る（練習未完了）", exact: true }).click();
-    await page.getByRole("heading", { name: "P02：活動の案内" }).waitFor();
+    await page.getByRole("heading", { name: "活動の案内" }).waitFor();
     phase = "returned";
     const afterQueue = await queueSnapshot();
     assert.equal(
@@ -544,7 +544,17 @@ try {
     .getByRole("button", { name: "セッションを開始", exact: true })
     .click();
   await page.getByRole("button", { name: "開始する", exact: true }).click();
-  const checkbox = page.getByRole("checkbox");
+  const lessonPanel = page.locator(".session-current-panel");
+  for (const hiddenGuidance of [
+    "動画参照は教材版に固定されていますが、URL先の内容が変わらないことを保証するものではありません。視聴確認は自己申告です。",
+    "指定された動画を視聴し、終了後に確認欄を選択してください。",
+    "視聴確認は自己申告です。視聴時間の客観的な計測ではありません。",
+  ]) {
+    assert.equal(await lessonPanel.getByText(hiddenGuidance, { exact: true }).count(), 0,
+      "learner lesson hides explanatory paragraphs without changing the confirmation control");
+  }
+  const checkbox = page.getByRole("checkbox", { name: "動画を視聴しました" });
+  assert.equal(await checkbox.count(), 1, "the video confirmation checkbox remains available");
   await checkbox.check();
   await page
     .getByRole("button", { name: "視聴を終えて次へ", exact: true })
