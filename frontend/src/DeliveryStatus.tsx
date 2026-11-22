@@ -123,7 +123,16 @@ export function ResearchDeliveryStatus({ sessionId }: { sessionId: string }) {
     <section className="session-card" aria-label="操作記録の送信状態">
       <h2>操作記録の送信状態</h2>
       <p>
-        ブラウザーの申告とサーバーの保存確認を別々に示します。申告は最終受信時点の値です。未報告・切断中・ブラウザーの記憶領域消去による欠損は把握できません。
+        操作記録がどこまで届いたかを確認する画面です。ブラウザーの申告とサーバーの保存記録は別々に表示します。
+      </p>
+      <ol className="research-delivery-flow" aria-label="操作記録の流れ">
+        <li><strong>ブラウザーで記録</strong><span>操作を記録する</span></li>
+        <li><strong>送信待ち・再送</strong><span>通信状況によって保留される</span></li>
+        <li><strong>サーバーで確認</strong><span>保存件数と欠番を確認する</span></li>
+      </ol>
+      <p className="research-delivery-caution" role="note">
+        注意：報告がない場合や通信が切れた場合、記録の欠損がないとは判断できません。
+        ブラウザーで消えた記録も、この画面だけでは把握できません。
       </p>
       {error && (
         <p role="alert">送信状態を取得できません。欠損の有無は不明です。</p>
@@ -166,8 +175,8 @@ export function ResearchDeliveryStatus({ sessionId }: { sessionId: string }) {
           {r.persisted}件、申告順序の欠番 {r.sequence_gaps}件（欠損疑い）。
         </p>
       ))}
-      <p>
-        操作の成功、イベントの保存、ブラウザーのACKは別の状態です。サーバー処理の履歴は既存の操作詳細・評価履歴・出力で確認してください。
+      <p className="research-delivery-caution">
+        ACK（受信応答）と保存件数は同じ指標ではありません。Mapの保存・操作の成否は「マップ操作履歴」や研究用出力で確認してください。
       </p>
     </section>
   );
