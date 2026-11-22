@@ -14,7 +14,6 @@ import {
   type FormEvent,
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
-  type CSSProperties,
 } from "react";
 import {
   apiFetch,
@@ -4124,6 +4123,7 @@ export function ConceptCanvas({
   kitConcepts,
   kitLinks,
   readOnly,
+  snapshotZoom,
   canEditConceptStructure,
   canEditLinkLabel,
   positionSaving,
@@ -4164,6 +4164,8 @@ export function ConceptCanvas({
   kitConcepts: KitConceptItem[];
   kitLinks: KitLinkItem[];
   readOnly: boolean;
+  /** External zoom is reserved for read-only research snapshots. */
+  snapshotZoom?: number;
   highlightedConceptIds?: ReadonlySet<string>;
   highlightedLinkIds?: ReadonlySet<string>;
   historyConceptChangeKinds?: ReadonlyMap<
@@ -5913,7 +5915,7 @@ export function ConceptCanvas({
           style={{
             width: `${canvasWidth}px`,
             height: `${canvasHeight}px`,
-            zoom: canvasZoom,
+            zoom: readOnly && snapshotZoom !== undefined ? snapshotZoom : canvasZoom,
           }}
           ref={canvasRef}
           onDragOver={handleCanvasDragOver}
@@ -6880,19 +6882,19 @@ export function ReadOnlyMapSnapshot({
   historyLinkChangeKinds?: ReadonlyMap<string, "ADDED" | "REMOVED" | "CHANGED">;
 }) {
   const [zoom, setZoom] = useState(1);
-  const concepts: Concept[] = snapshot.concepts.map((item) => ({
-    ...item,
-    createdAt: "",
-    updatedAt: "",
-  }));
+  // Keep merged-away ancestors in research data, but not in the current visual graph.
+  const concepts: Concept[] = snapshot.concepts
+    .filter((item) => item.mergedIntoConceptId == null)
+    .map((item) => ({
+      ...item,
+      createdAt: "",
+      updatedAt: "",
+    }));
   const links: MapLink[] = snapshot.links;
   return (
     <section
       className={`map-history-preview${allowZoom ? " map-study-preview" : ""}`}
       aria-label={title}
-      style={
-        allowZoom ? ({ "--snapshot-zoom": zoom } as CSSProperties) : undefined
-      }
     >
       <h4>{title}</h4>
       {allowZoom && (
@@ -6944,6 +6946,7 @@ export function ReadOnlyMapSnapshot({
         kitConcepts={[]}
         kitLinks={[]}
         readOnly
+        snapshotZoom={allowZoom ? zoom : undefined}
         canEditConceptStructure={false}
         canEditLinkLabel={false}
         positionSaving={false}
