@@ -1341,10 +1341,6 @@ textarea:focus {
   font-variant-numeric: tabular-nums;
 }
 
-.map-study-preview .concept-canvas {
-  zoom: var(--snapshot-zoom, 1);
-}
-
 .session-study-maps .map-study-instructions {
   color: var(--muted);
   font-size: 0.85rem;
