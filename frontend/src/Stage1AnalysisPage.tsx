@@ -412,7 +412,7 @@ export default function Stage1AnalysisPage({sessionId}:{sessionId:string}) {
             )}
             {historySequence>0&&displayedReplay?.operation&&(
               <p className="map-history-step-caption" role="status">
-                #{historySequence}　{operationName(displayedReplay.operation.operationType)}
+                #{historySequence}{" · "}{operationName(displayedReplay.operation.operationType)}
                 {" · "}{timestamp(displayedReplay.operation.serverTimestamp)}
                 {" · "}{displayedReplay.operation.outcome ? outcomeNames[displayedReplay.operation.outcome]??displayedReplay.operation.outcome : "結果記録なし"}
               </p>
