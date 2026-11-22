@@ -14,7 +14,6 @@ import {
   type FormEvent,
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
-  type CSSProperties,
 } from "react";
 import {
   apiFetch,
@@ -4124,6 +4123,7 @@ export function ConceptCanvas({
   kitConcepts,
   kitLinks,
   readOnly,
+  snapshotZoom,
   canEditConceptStructure,
   canEditLinkLabel,
   positionSaving,
@@ -4164,6 +4164,8 @@ export function ConceptCanvas({
   kitConcepts: KitConceptItem[];
   kitLinks: KitLinkItem[];
   readOnly: boolean;
+  /** External zoom applies only to read-only research snapshots. */
+  snapshotZoom?: number;
   highlightedConceptIds?: ReadonlySet<string>;
   highlightedLinkIds?: ReadonlySet<string>;
   historyConceptChangeKinds?: ReadonlyMap<
@@ -5913,7 +5915,7 @@ export function ConceptCanvas({
           style={{
             width: `${canvasWidth}px`,
             height: `${canvasHeight}px`,
-            zoom: canvasZoom,
+            zoom: readOnly && snapshotZoom !== undefined ? snapshotZoom : canvasZoom,
           }}
           ref={canvasRef}
           onDragOver={handleCanvasDragOver}
@@ -6895,9 +6897,6 @@ export function ReadOnlyMapSnapshot({
     <section
       className={`map-history-preview${allowZoom ? " map-study-preview" : ""}`}
       aria-label={title}
-      style={
-        allowZoom ? ({ "--snapshot-zoom": zoom } as CSSProperties) : undefined
-      }
     >
       <h4>{title}</h4>
       {allowZoom && (
@@ -6949,6 +6948,7 @@ export function ReadOnlyMapSnapshot({
         kitConcepts={[]}
         kitLinks={[]}
         readOnly
+        snapshotZoom={allowZoom ? zoom : undefined}
         canEditConceptStructure={false}
         canEditLinkLabel={false}
         positionSaving={false}
