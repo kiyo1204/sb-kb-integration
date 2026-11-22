@@ -42,7 +42,7 @@ try {
     .getByText("SB/KB統合（アンケートなし）", { exact: false })
     .waitFor();
   await page
-    .getByRole("heading", { name: "統合開始時・受理済み提出状態", exact: true })
+    .getByRole("heading", { name: "統合開始時・提出状態", exact: true })
     .waitFor();
   assert.equal(
     await page
@@ -64,6 +64,20 @@ try {
     .getByRole("heading", { name: "表示中：Scratch-Build", exact: true })
     .waitFor();
   assert.equal(await prior.getAttribute("aria-pressed"), "true");
+  const preview = page.locator(".analysis-selected-map .map-history-preview");
+  const canvas = preview.locator(".concept-canvas");
+  const initialWidth = await canvas.evaluate(element => element.getBoundingClientRect().width);
+  await preview.getByRole("button", {name: /を拡大$/}).click();
+  assert.equal(await preview.locator(".map-study-controls span").innerText(), "110%");
+  const zoomedWidth = await canvas.evaluate(element => element.getBoundingClientRect().width);
+  assert.ok(zoomedWidth > initialWidth * 1.05,
+    `zoom must change visible canvas width: ${initialWidth} -> ${zoomedWidth}`);
+  await preview.getByRole("button", {name: /を縮小$/}).click();
+  assert.equal(await preview.locator(".map-study-controls span").innerText(), "100%");
+  const zoomRestoredWidth = await canvas.evaluate(element => element.getBoundingClientRect().width);
+  assert.ok(Math.abs(zoomRestoredWidth - initialWidth) <= 2,
+    "zoom out restores the original rendered width");
+  assert.equal(await page.getByRole("list", {name:"操作記録の流れ"}).locator("li").count(),3);
   await page.locator(".analysis-map-provenance summary").click();
   await page
     .locator(".analysis-map-provenance")
@@ -98,6 +112,14 @@ try {
     await page.locator(".map-history-section details summary").first().click();
   }
   await page.getByRole("heading", { name: "変更点", exact: true }).waitFor();
+  const section=page.locator(".map-history-section");
+  const controlAfterMaps=await section.evaluate(element => {
+    const compare=element.querySelector(".map-history-compare");
+    const controls=element.querySelector(".map-history-controls");
+    return !!compare && !!controls && !!(compare.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  assert.equal(controlAfterMaps,true,"replay buttons appear below before/after map previews");
+  await section.getByRole("button",{name:"次の操作"}).waitFor();
   }
   const response = page.waitForResponse((r) =>
     r.url().endsWith("/map-states.csv"),
