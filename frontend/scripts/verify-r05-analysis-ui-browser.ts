@@ -204,10 +204,9 @@ const analysis = {
       type: "INTEGRATION",
       status: "DRAFT",
       researchRole: "INTEGRATION",
-      // Synthetic Merge ancestry: export keeps the hidden original, but the
-      // current Map visualization must not render it as an active Concept.
       concepts: [
         ...integration.concepts,
+        // Synthetic Merge ancestry remains in research JSON but is not an active node.
         {
           id: "91000000-0000-4000-8000-000000000022",
           mapId: ids.integrationMap,
@@ -621,6 +620,25 @@ try {
         await page
           .getByRole("heading", { name: "表示中：Scratch-Build", exact: true })
           .waitFor();
+        const savedPreview = page.locator(".analysis-selected-map .map-history-preview");
+        const savedCanvas = savedPreview.locator(".concept-canvas");
+        const widthBefore = await savedCanvas.evaluate((element) => element.getBoundingClientRect().width);
+        await savedPreview.getByRole("button", { name: /を拡大$/ }).click();
+        assert.equal(await savedPreview.locator(".map-study-controls span").innerText(), "110%");
+        const widthAfter = await savedCanvas.evaluate((element) => element.getBoundingClientRect().width);
+        assert.ok(widthAfter > widthBefore * 1.05,
+          `saved map zoom must change rendered width: ${widthBefore} -> ${widthAfter}`);
+        await savedPreview.getByRole("button", { name: /を縮小$/ }).click();
+        assert.equal(await savedPreview.locator(".map-study-controls span").innerText(), "100%");
+        const startPreview = page.locator(".map-history-compare .map-history-preview").first();
+        const startCanvas = startPreview.locator(".concept-canvas");
+        const startBefore = await startCanvas.evaluate((element) => element.getBoundingClientRect().width);
+        await startPreview.getByRole("button", { name: /を拡大$/ }).click();
+        const startAfter = await startCanvas.evaluate((element) => element.getBoundingClientRect().width);
+        assert.ok(startAfter > startBefore * 1.05,
+          `integration start zoom must change rendered width: ${startBefore} -> ${startAfter}`);
+        assert.equal(await savedPreview.locator(".map-study-controls span").innerText(), "100%",
+          "independent previews must not share zoom state");
         const provenance = page.locator(".analysis-map-provenance");
         await provenance.locator("summary").click();
         await provenance.getByText("保存状態：SUBMITTED", { exact: false }).waitFor();
@@ -631,14 +649,11 @@ try {
         const integrationChoice = mapPicker.getByRole("button", { name: /統合マップ/ });
         await integrationChoice.click();
         const visibleMap = page.locator(".analysis-selected-map");
-        assert.equal(
-          await visibleMap.locator(".concept-node").count(), 2,
-          "saved integration Map draws only active concepts, not merged-away ancestry",
-        );
-        assert.equal(
-          await visibleMap.getByText("統合済みの元概念（非表示）").count(), 0,
-          "research-only lineage stays in raw data without being drawn as a concept",
-        );
+        assert.equal(await visibleMap.locator(".concept-node").count(), 2,
+          "merged-away concept remains in raw data but not the active map");
+        assert.equal(await visibleMap.getByText("統合済みの元概念（非表示）").count(), 0);
+        assert.equal(await visibleMap.locator(".map-study-controls span").innerText(), "100%",
+          "switching maps must reset the read-only zoom state");
         await page
           .locator(".map-history-section select")
           .selectOption(ids.integrationMap);

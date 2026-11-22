@@ -532,7 +532,14 @@ function SessionDashboard({
     requestedStage.status !== "COMPLETED" &&
     requestedStage.id !== flow.currentStage?.id;
   const current = flow.currentStage;
+  // Only the four-activity learner flow uses concise, non-numbered activity names.
+  // Keep researcher and older protocols' STEP labels unchanged.
+  const conciseLearnerFlow = isLearner && flow.session.protocolKey === "SBKB_INTEGRATION_V1";
   const label = (stage: SessionStage) => {
+    if (conciseLearnerFlow)
+      return stage.stageType === "INTEGRATION_MAP"
+        ? "統合マップ"
+        : stageLabels[stage.stageType].replace(/^STEP \d+：/, "");
     if (isLearner && (stage.stageType === "PRE_ASSESSMENT" || stage.stageType === "POST_ASSESSMENT")) return "評価問題";
     if(flow.session.protocolKey==="STAGE1_5" && stage.stageType==="PRIOR_MAP")return "STEP 2：学習者マップ（Scratch-Build）";
     return flow.session.protocolKey === "STAGE1_6"
@@ -545,8 +552,12 @@ function SessionDashboard({
 
   return (
     <main className={`page session-page${isLearner ? " is-learner" : ""}${isLearner && timed && current?.stageType === "SELF_STUDY" && current.status === "IN_PROGRESS" && flow.session.studyGroup === "CONTROL" ? " is-study-comparison" : ""}`}>
-      <section className="session-card" aria-labelledby="session-title">
-        <h1 id="session-title">学習・再構成フロー</h1>
+      <section
+        className="session-card"
+        aria-labelledby={conciseLearnerFlow ? undefined : "session-title"}
+        aria-label={conciseLearnerFlow ? "学習活動" : undefined}
+      >
+        {!conciseLearnerFlow && <h1 id="session-title">学習・再構成フロー</h1>}
         {!isLearner && (
           <p className="session-id">セッション ID: {flow.session.id}</p>
         )}

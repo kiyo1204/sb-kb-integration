@@ -85,7 +85,7 @@ try {
     .first()
     .waitFor();
   if(process.env.EXPERIMENT_MISSING_SNAPSHOT==="1") {
-    const section=page.locator("section.session-card").filter({has:page.getByRole("heading",{name:"統合開始時・受理済み提出状態",exact:true})});
+    const section=page.locator("section.session-card").filter({has:page.getByRole("heading",{name:"統合開始時・提出状態",exact:true})});
     await section.getByText("状態記録なし／算出不可：INITIAL_SNAPSHOT_MISSING_OR_INVALID",{exact:true}).first().waitFor();
     assert.equal(await section.locator(".map-history-preview").count(),0,"no fabricated start/submission map");
     const raw=await (await fetch(base+`/api/research/sessions/${session}/export`,{headers:{Authorization:"Bearer "+token}})).json();
