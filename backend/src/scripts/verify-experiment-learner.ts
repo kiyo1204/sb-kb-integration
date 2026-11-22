@@ -5,6 +5,7 @@ import {join,resolve} from "node:path";
 import {pathToFileURL} from "node:url";
 import {checkExperimentEnd,checkBackgroundEndOrder} from "./experiment-end-checks.js";
 import {checkStartPool} from "./experiment-start-pool-checks.js";
+import { checkExperimentWithdrawalRaces } from "./experiment-withdrawal-race-checks.js";
 import {checkExperimentResearch,checkMapStateCsv} from "./experiment-research-checks.js";
 import type { Request, Response } from "express";
 import {
@@ -230,6 +231,10 @@ try {
       expectedRevision: s.editRevision,
     })
   ).data;
+  if (enabledVerification)
+    await checkExperimentWithdrawalRaces({
+      pool, base, token: researcher, materialVersionId: mat.id,
+    });
   await checkMapReadEndOrdering(pool,base,mat.id,readGateDir);
   await checkStartPool(base, mat.id);
   const run = (
