@@ -6,6 +6,7 @@ on:
       - compose.production-db.yaml
       - production-db.env.example
       - docs/production-db-preparation.md
+      - scripts/preflight-production-db-same-pc.ps1
       - .github/workflows/production-db-preflight.yml
   workflow_dispatch:
 
@@ -17,6 +18,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Parse Windows read-only preflight script (do not run Docker inventory)
+        shell: pwsh
+        run: |
+          $file = (Resolve-Path 'scripts/preflight-production-db-same-pc.ps1').Path
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw 'PowerShell preflight script has parse errors'
+          }
+          Write-Host 'Read-only preflight PowerShell syntax: PASS (not executed)'
       - name: Validate configuration with disposable synthetic inputs (never start DB)
         shell: bash
         run: |

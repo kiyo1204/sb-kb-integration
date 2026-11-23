@@ -10,6 +10,25 @@
 - 既存のリハーサルDB/volume/データを本番DBに流用・コピーしません。
 - 管理者パスワードはCompose secretsを用いて外部ファイルから読み込み、Git・チャット・ログに保存しません。PostgreSQL 17イメージは人が承認したSHA-256 digest固定が必須です。
 
+## 同一PCで本番DBを準備する場合（2026-11-22追加）
+
+この方式は**同じPCに別のDockerプロジェクトとDBボリュームを置く**ものです。論理的にデータを分離できますが、**PCの故障・ディスク満杯・Docker Desktop停止は両環境に影響**します。実運用では空き容量とメモリ、電源、別媒体または別PCへのバックアップを必須として計画します。
+
+1. 現在のリハーサルが使用しているソース作業フォルダー・既存Dockerコンテナ・volume・network・.envは**そのまま保護**します。実験中の作業フォルダーへ直接git pullしたり、compose up/down、DB migration、リセット等を実行しません。
+2. 本番準備用のソースは**別ディレクトリ**に固定リビジョンを取り出します。まだアプリやDBは起動せず、研究DBへの接続設定も作りません。
+3. Docker Desktopが利用できる同じWindows PCで、別ディレクトリのソースに含まれる次の**読み取り専用チェック**を実行します。Docker contextとコンテナ・volumes・networksの名前/Composeプロジェクトラベルだけを確認し、データ内容・環境変数・パスワードは取得しません。
+
+~~~powershell
+# 本番準備用の独立フォルダーで実行（既存リハーサルフォルダーは更新しない）
+powershell -NoProfile -File .\scripts\preflight-production-db-same-pc.ps1
+~~~
+
+4. 出力で**予期した本番用の名前に既存リソースが存在しないこと**を確認します。衝突があれば停止・再利用・削除はせず調査します。リハーサル候補が見つからない場合も、Docker contextと実際のリハーサル識別子を管理者が照合するまで、以後の作業を止めます。
+5. 保存先の残容量・RAM・自動起動の影響と、別媒体バックアップを確定します。**同一PC内の別volumeだけではバックアップにはなりません。**
+6. 承認後の別工程で管理者専用の秘密ファイルと .env.production-db を設定して、**docker compose configのみ**で静的検証します。実DBの起動・schema適用・データ投入はさらに後の明示的な承認事項です。
+
+この事前チェックはGitHub上では実行できません。実際のPCのDocker状態を確認したとみなさないでください。リハーサル環境のDockerプロジェクト名が記録上の sbkb-rehearsal-20261122125146 と一致しない可能性があるため、名前の不検出を「環境がない」という証拠にしません。
+
 ## 今回準備したもの
 
 | パス | 内容 |
@@ -18,6 +37,7 @@
 | production-db.env.example | 設定項目の無秘密テンプレート |
 | .github/workflows/production-db-preflight.yml | 合成値でdocker compose configを実行する**静的検証のみ** |
 | docs/production-db-preparation.md | 安全な準備と、起動前の承認条件 |
+| scripts/preflight-production-db-same-pc.ps1 | 同一PCのDocker context・名前衝突を読み取り専用で確認 |
 
 ## 管理者が後から行う準備（**今回未実施**）
 
