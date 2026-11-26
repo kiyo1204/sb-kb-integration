@@ -102,7 +102,16 @@ async function cleanupEligible(c: PoolClient, id: string): Promise<boolean> {
 async function lockDeletionScope(c: PoolClient) {
   await c.query("SET LOCAL lock_timeout='5s'");
   await c.query("SELECT pg_advisory_xact_lock(111011)");
-  await c.query("LOCK TABLE " + Object.keys(scopes).join(",") + ",operation_receipts IN EXCLUSIVE MODE");
+  const tables = [...Object.keys(scopes), "operation_receipts"];
+  const snapshotIndex = tables.indexOf("map_initial_snapshots");
+  // Keep the existing acquisition order. Only this lock is delegated to the table owner.
+  await c.query(
+    "LOCK TABLE " + tables.slice(0, snapshotIndex).join(",") + " IN EXCLUSIVE MODE",
+  );
+  await c.query("SELECT public.lock_map_initial_snapshots_for_deletion()");
+  await c.query(
+    "LOCK TABLE " + tables.slice(snapshotIndex + 1).join(",") + " IN EXCLUSIVE MODE",
+  );
 }
 async function deleteSessionData(c: PoolClient, ids: string[], exports: EventExportService) {
       if ((await c.query("SELECT 1 FROM sessions WHERE id=ANY($1::uuid[]) AND protocol_key=$2 LIMIT 1",[ids,EXPERIMENT_PROTOCOL])).rowCount) throw new FoundationError("experiment_storage_only");

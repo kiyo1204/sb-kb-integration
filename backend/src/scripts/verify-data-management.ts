@@ -116,7 +116,53 @@ async function fixture() {
     c.release();
   }
 }
+async function verifySnapshotLockPrivilege() {
+  const c = await pool.connect();
+  const role = "snapshot_lock_" + randomUUID().replaceAll("-", "");
+  const permissionDenied = (error: unknown) =>
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "42501";
+  try {
+    await c.query("BEGIN");
+    await c.query("CREATE ROLE " + role + " NOLOGIN");
+    await c.query("GRANT USAGE ON SCHEMA public TO " + role);
+    await c.query(
+      "GRANT SELECT, INSERT (map_id, snapshot_version, snapshot) " +
+        "ON public.map_initial_snapshots TO " + role,
+    );
+    await c.query("SET LOCAL ROLE " + role);
+    for (const statement of [
+      "SELECT public.lock_map_initial_snapshots_for_deletion()",
+      "DELETE FROM public.map_initial_snapshots WHERE false",
+      "LOCK TABLE public.map_initial_snapshots IN EXCLUSIVE MODE",
+    ]) {
+      await c.query("SAVEPOINT snapshot_privilege");
+      await assert.rejects(c.query(statement), permissionDenied);
+      await c.query("ROLLBACK TO SAVEPOINT snapshot_privilege");
+      await c.query("RELEASE SAVEPOINT snapshot_privilege");
+    }
+    await c.query("RESET ROLE");
+    await c.query(
+      "GRANT EXECUTE ON FUNCTION public.lock_map_initial_snapshots_for_deletion() TO " +
+        role,
+    );
+    await c.query("SET LOCAL ROLE " + role);
+    await c.query("SELECT public.lock_map_initial_snapshots_for_deletion()");
+    const { rows } = await c.query(
+      "SELECT 1 FROM pg_catalog.pg_locks " +
+        "WHERE pid = pg_backend_pid() AND relation = 'public.map_initial_snapshots'::regclass " +
+        "AND mode = 'ExclusiveLock' AND granted",
+    );
+    assert.equal(rows.length, 1, "snapshot lock must survive the function call");
+  } finally {
+    await c.query("ROLLBACK").finally(() => c.release());
+  }
+}
+
 try {
+  await verifySnapshotLockPrivilege();
   const a = await fixture(),
     b = await fixture();
   const scopes=["LEARNER:"+a.id,"LEARNER:"+a.id+":REJECTED","LEARNER:"+a.id+":FAILURE","LEARNER:"+a.id+":FUTURE:PHASE","LEARNER:"+b.id+":FAILURE","LEARNER:"+a.id+"extra:FAILURE"];
