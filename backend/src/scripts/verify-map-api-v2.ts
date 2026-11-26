@@ -101,7 +101,24 @@ try {
   assert.equal((await historyAction("REDO")).relatedOperationLogId,legacyOperation);
   await historyAction("REDO");
   await call(`/concepts/${added.id}/label`,200,"PATCH",{label:"概念を編集"});
-  await call(`/concepts/${added.id}/position`,200,"PATCH",{positionX:200,positionY:100});
+  const movedConcept=await call<{id:string;mapId:string;positionX:number;positionY:number}>(
+    `/concepts/${added.id}/position`,200,"PATCH",{positionX:200,positionY:140},
+  );
+  assert.deepEqual(
+    {id:movedConcept.id,mapId:movedConcept.mapId,positionX:movedConcept.positionX,positionY:movedConcept.positionY},
+    {id:added.id,mapId:map.id,positionX:200,positionY:140},
+  );
+  const movedReadback=await call<{concepts:Array<{id:string;positionX:number;positionY:number}>}>(
+    `/maps/${map.id}`,200,
+  );
+  const movedReadbackConcept=movedReadback.concepts.find((concept)=>concept.id===added.id);
+  assert.equal(movedReadbackConcept?.positionX,200);
+  assert.equal(movedReadbackConcept?.positionY,140);
+  const storedPosition=await pool.query<{position_x:number;position_y:number}>(
+    "SELECT position_x,position_y FROM concepts WHERE id=$1::uuid AND map_id=$2::uuid",
+    [added.id,map.id],
+  );
+  assert.deepEqual(storedPosition.rows[0],{position_x:200,position_y:140});
   const link=await call<{id:string}>(`/maps/${map.id}/links`,201,"POST",{label:"関係",sourceConceptId:anchor,targetConceptId:added.id});
   await call(`/links/${link.id}/label`,200,"PATCH",{label:"関係を編集"});
   await call(`/links/${link.id}/reconnect`,200,"PATCH",{sourceConceptId:added.id,targetConceptId:anchor});

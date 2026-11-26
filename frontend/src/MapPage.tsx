@@ -1,5 +1,6 @@
 import {LearnerDeliveryStatus} from "./DeliveryStatus";
 import {newClientId} from "./client-identity";
+import { buildDuplicateConceptDisplayLabels } from "./concept-display-labels";
 import {
   useCallback,
   useEffect,
@@ -64,7 +65,7 @@ class LinkReconnectError extends Error {
   constructor(message: string, readonly status: number, readonly code?: string) { super(message); }
 }
 type ExpectedConnection = Pick<MapLink, "sourceConceptId" | "targetConceptId">;
-type ReconnectionDraft = TemporaryConnector & { original: MapLink; mapId: string; context: ObservationContext; conflicted?: boolean };
+type ReconnectionDraft = TemporaryConnector & { original: MapLink; originalPosition: Point; mapId: string; context: ObservationContext; conflicted?: boolean };
 function sameSavedLink(a: MapLink | undefined, b: MapLink) {
   return !!a && a.id === b.id && a.mapId === b.mapId &&
     a.sourceConceptId === b.sourceConceptId && a.targetConceptId === b.targetConceptId &&
@@ -456,11 +457,15 @@ type LoadState =
 
 type SessionFlowResponse = {
   session: {
+    id: string;
     status: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
     protocolKey: string;
     groupActivitySeconds: number | null;
   };
   serverNow: string;
+  currentMapSubmitted: boolean;
+  currentIntegrationMapExists: boolean;
+  currentMapAutoSubmittedAt: string | null;
   currentStage: {
     id: string;
     stageType: string;
@@ -468,6 +473,16 @@ type SessionFlowResponse = {
   } | null;
   stages: { id: string; status: "PENDING" | "IN_PROGRESS" | "COMPLETED" }[];
 };
+
+function formatRemainingTime(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return (
+    String(minutes).padStart(2, "0") +
+    ":" +
+    String(seconds).padStart(2, "0")
+  );
+}
 
 function stageDisplayName(type: string) {
   return (
@@ -539,6 +554,13 @@ export default function MapPage({
   const [integrationDeadline, setIntegrationDeadline] = useState<number | null>(
     null,
   );
+  const [integrationRemainingSeconds, setIntegrationRemainingSeconds] =
+    useState<number | null>(null);
+  const [integrationDeadlineCheck, setIntegrationDeadlineCheck] = useState<
+    "checking" | "waiting" | "error" | null
+  >(null);
+  const [deadlineSubmissionConfirmed, setDeadlineSubmissionConfirmed] =
+    useState(false);
   const [kitBuildFeedback, setKitBuildFeedback] =
     useState<KitBuildFeedbackState | null>(null);
   const [kitFeedbackChecking, setKitFeedbackChecking] = useState(false);
@@ -2011,6 +2033,10 @@ export default function MapPage({
 
     async function loadMap() {
       setState({ status: "loading" });
+      setIntegrationDeadline(null);
+      setIntegrationRemainingSeconds(null);
+      setIntegrationDeadlineCheck(null);
+      setDeadlineSubmissionConfirmed(false);
 
       try {
         const response = await apiFetch(
@@ -2052,6 +2078,7 @@ export default function MapPage({
           if (
             isLearner &&
             map.type === "INTEGRATION" &&
+            map.status === "DRAFT" &&
             ["STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(
               flow.session.protocolKey,
             ) &&
@@ -2064,13 +2091,13 @@ export default function MapPage({
               Date.parse(flow.currentStage.startedAt) +
               flow.session.groupActivitySeconds * 1000 -
               Date.parse(flow.serverNow);
-            if (deadline <= performance.now()) {
-              navigate(
-                `/sessions/${encodeURIComponent(learnerSessionId ?? map.sessionId)}`,
-              );
-              return;
-            }
             setIntegrationDeadline(deadline);
+            setIntegrationRemainingSeconds(
+              Math.max(0, Math.ceil((deadline - performance.now()) / 1000)),
+            );
+            if (deadline <= performance.now()) {
+              setIntegrationDeadlineCheck("checking");
+            }
           }
           const stage = flow.stages.find(
             (item) => item.id === map.sessionStageId,
@@ -2107,27 +2134,146 @@ export default function MapPage({
     return () => controller.abort();
   }, [mapId, reloadUndoRedoState, isLearner, learnerSessionId, navigate]);
 
+  const deadlineMap = state.status === "success" ? state.map : null;
+  const deadlineMapId = deadlineMap?.id ?? null;
+  const deadlineSessionId = deadlineMap?.sessionId ?? null;
+  const deadlineStageId = deadlineMap?.sessionStageId ?? null;
+  const deadlineMapStatus = deadlineMap?.status ?? null;
+  const deadlineMapIsIntegration = deadlineMap?.type === "INTEGRATION";
+
   useEffect(() => {
-    if (!isLearner || !learnerSessionId || integrationDeadline === null) return;
-    const leave = () => {
-      setState({ status: "loading" });
-      navigate(`/sessions/${encodeURIComponent(learnerSessionId)}`);
-    };
-    const timer = window.setTimeout(
-      leave,
-      Math.max(0, integrationDeadline - performance.now()),
-    );
-    const onVisible = () => {
-      if (performance.now() >= integrationDeadline) leave();
-    };
+    if (
+      !isLearner ||
+      !deadlineMapId ||
+      !deadlineSessionId ||
+      !deadlineStageId ||
+      !deadlineMapIsIntegration ||
+      deadlineMapStatus !== "DRAFT" ||
+      integrationDeadline === null
+    ) {
+      return;
+    }
+
+    const activeMapId = deadlineMapId as string;
+    const activeSessionId = deadlineSessionId as string;
+    const activeStageId = deadlineStageId as string;
+    const activeDeadline = integrationDeadline as number;
+    const controller = new AbortController();
+    let checkingSubmission = false;
+    let lastSubmissionCheck = Number.NEGATIVE_INFINITY;
+
+    async function checkServerSubmission() {
+      if (
+        controller.signal.aborted ||
+        document.visibilityState !== "visible" ||
+        checkingSubmission ||
+        performance.now() - lastSubmissionCheck < 1000
+      ) {
+        return;
+      }
+
+      checkingSubmission = true;
+      lastSubmissionCheck = performance.now();
+      setIntegrationDeadlineCheck("checking");
+      try {
+        const response = await apiFetch(
+          "/api/sessions/" +
+            encodeURIComponent(activeSessionId) +
+            "/flow",
+          { signal: controller.signal, cache: "no-store" },
+        );
+        if (controller.signal.aborted) return;
+        if (!response.ok) {
+          if ([401, 403, 404, 409].includes(response.status)) {
+            setState({ status: "loading" });
+            navigate("/sessions/" + encodeURIComponent(activeSessionId));
+          } else {
+            setIntegrationDeadlineCheck("error");
+          }
+          return;
+        }
+
+        const flow = (await response.json()) as SessionFlowResponse;
+        if (controller.signal.aborted) return;
+        if (
+          flow.session.id !== activeSessionId ||
+          flow.session.status !== "IN_PROGRESS" ||
+          flow.currentStage?.id !== activeStageId
+        ) {
+          setState({ status: "loading" });
+          navigate("/sessions/" + encodeURIComponent(activeSessionId));
+          return;
+        }
+        if (
+          flow.currentIntegrationMapExists &&
+          flow.currentMapSubmitted
+        ) {
+          setDeadlineSubmissionConfirmed(true);
+          setIntegrationDeadlineCheck(null);
+          setState((current) =>
+            current.status === "success" &&
+            current.map.id === activeMapId &&
+            current.map.sessionId === activeSessionId &&
+            current.map.sessionStageId === activeStageId
+              ? {
+                  status: "success",
+                  map: {
+                    ...current.map,
+                    status: "SUBMITTED",
+                    submittedAt:
+                      flow.currentMapAutoSubmittedAt ?? current.map.submittedAt,
+                  },
+                }
+              : current,
+          );
+        } else if (flow.currentIntegrationMapExists) {
+          setIntegrationDeadlineCheck("waiting");
+        } else {
+          setIntegrationDeadlineCheck("error");
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setIntegrationDeadlineCheck("error");
+        }
+      } finally {
+        checkingSubmission = false;
+      }
+    }
+
+    function updateCountdown() {
+      if (controller.signal.aborted) return;
+      const seconds = Math.max(
+        0,
+        Math.ceil((activeDeadline - performance.now()) / 1000),
+      );
+      setIntegrationRemainingSeconds((current) =>
+        current === seconds ? current : seconds,
+      );
+      if (seconds === 0) void checkServerSubmission();
+    }
+
+    const timer = window.setInterval(updateCountdown, 250);
+    const onVisible = () => updateCountdown();
     window.addEventListener("focus", onVisible);
     document.addEventListener("visibilitychange", onVisible);
+    updateCountdown();
+
     return () => {
-      window.clearTimeout(timer);
+      controller.abort();
+      window.clearInterval(timer);
       window.removeEventListener("focus", onVisible);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [integrationDeadline, isLearner, learnerSessionId, navigate]);
+  }, [
+    integrationDeadline,
+    isLearner,
+    deadlineMapId,
+    deadlineSessionId,
+    deadlineStageId,
+    deadlineMapStatus,
+    deadlineMapIsIntegration,
+    navigate,
+  ]);
 
   const isSubmittedMap =
     state.status === "success" && state.map.status === "SUBMITTED";
@@ -2308,11 +2454,32 @@ export default function MapPage({
     isRegisteredGoalMap;
   const isKBMap = state.map.type === "KB";
   const isIntegrationMap = state.map.type === "INTEGRATION";
+  const integrationDeadlineReached =
+    isLearner &&
+    isIntegrationMap &&
+    state.map.status === "DRAFT" &&
+    integrationRemainingSeconds === 0;
+  const integrationDeadlineLabel =
+    isLearner && isIntegrationMap
+      ? state.map.status === "SUBMITTED"
+        ? "提出済み"
+        : integrationRemainingSeconds === null
+          ? null
+          : integrationRemainingSeconds > 0
+            ? "残り時間 " + formatRemainingTime(integrationRemainingSeconds)
+            : integrationDeadlineCheck === "error"
+              ? "提出状態を確認できません"
+              : "提出状態を確認中"
+      : null;
   const canEditConceptStructure = !isReadOnlyMap && !isKBMap;
   const canEditLinkLabel = !isReadOnlyMap && !isKBMap;
   const showIntegrationKitAssignment =
     isIntegrationMap && state.map.kitDefinitionId === null;
-  const showIntegrationMerge = isIntegrationMap && state.map.status === "DRAFT";
+  const reserveIntegrationDeadlineLayout =
+    isLearner && isIntegrationMap && integrationDeadlineLabel !== null;
+  const showIntegrationMerge =
+    isIntegrationMap &&
+    (state.map.status === "DRAFT" || reserveIntegrationDeadlineLayout);
   // Render these sibling controls from MapEditorShell's current draft state.
   // No asynchronous parent state is needed to block a Merge or Kit assignment.
   const integrationEditorSupplement = (reconnectionActive: boolean) =>
@@ -2338,7 +2505,8 @@ export default function MapPage({
         {showIntegrationMerge && (
           <IntegrationConceptMergeForm
             concepts={state.map.concepts}
-            disabled={positionSaving || submitting || mergingConcepts || reconnectionActive}
+            displayLabelsByConceptId={buildDuplicateConceptDisplayLabels(state.map.concepts)}
+            disabled={positionSaving || submitting || mergingConcepts || reconnectionActive || integrationDeadlineReached || state.map.status !== "DRAFT"}
             onCancel={() =>
               recordMapOperationCancellation(state.map.id, "MERGE_CONCEPT")
             }
@@ -2359,10 +2527,12 @@ export default function MapPage({
   ) {
     return (
       <MapEditorShell
-        key={state.map.id}
+        key={state.map.id + (deadlineSubmissionConfirmed ? ":deadline-submitted" : "")}
         map={state.map}
         isLearner={isLearner && state.map.sessionId !== null}
         activityLogWarning={activityLogWarning}
+        integrationDeadlineLabel={integrationDeadlineLabel}
+        deadlineReached={integrationDeadlineReached}
         readOnly={
           isReadOnlyMap ||
           submitting ||
@@ -2389,6 +2559,7 @@ export default function MapPage({
         }
         onCloseKitFeedback={() => setKitFeedbackDialog(null)}
         canSubmit={
+          !integrationDeadlineReached &&
           ["STAGE1_4", "STAGE1_6", "STAGE1_5", "SBKB_INTEGRATION_V1"].includes(
             state.map.sessionProtocolKey ?? "",
           ) &&
@@ -2758,6 +2929,8 @@ function MapEditorShell({
   map,
   isLearner,
   activityLogWarning,
+  integrationDeadlineLabel,
+  deadlineReached,
   readOnly,
   canCreateConcept,
   canCreateLink,
@@ -2800,6 +2973,8 @@ function MapEditorShell({
   map: MapResponse;
   isLearner: boolean;
   activityLogWarning: boolean;
+  integrationDeadlineLabel: string | null;
+  deadlineReached: boolean;
   readOnly: boolean;
   canCreateConcept: boolean;
   canCreateLink: boolean;
@@ -2892,9 +3067,17 @@ function MapEditorShell({
     drawer.kind === "edit-link"
       ? map.links.find((link) => link.id === drawer.linkId)
       : undefined;
+  const conceptDisplayLabelsById =
+    map.type === "INTEGRATION"
+      ? buildDuplicateConceptDisplayLabels(map.concepts)
+      : undefined;
   const isSaving =
     saveStatus === "saving" || positionSaving || drawerSaving || additionalBusy;
-  const interactionLocked = readOnly || additionalBusy;
+  const interactionLocked = readOnly || deadlineReached || additionalBusy;
+  const reserveIntegrationDeadlineLayout =
+    isLearner &&
+    map.type === "INTEGRATION" &&
+    integrationDeadlineLabel !== null;
   // KB: avoid shifting the canvas between the two clicks of a double-click.
   const kbLinkEditorTimerRef = useRef<number | null>(null);
 
@@ -2906,11 +3089,11 @@ function MapEditorShell({
   }
 
   useEffect(() => {
-    if (readOnly && kbLinkEditorTimerRef.current !== null) {
+    if ((readOnly || deadlineReached) && kbLinkEditorTimerRef.current !== null) {
       window.clearTimeout(kbLinkEditorTimerRef.current);
       kbLinkEditorTimerRef.current = null;
     }
-  }, [readOnly]);
+  }, [readOnly, deadlineReached]);
 
   useEffect(() => {
     return () => {
@@ -2924,12 +3107,15 @@ function MapEditorShell({
   const reconnectionRef = useRef<ReconnectionDraft | null>(null);
   const [reconnectionBlocked, setReconnectionBlocked] = useState(false);
   const reconnectionAllowed = map.sessionProtocolKey === "SBKB_INTEGRATION_V1" &&
-    (map.type === "PRIOR" || map.type === "KB" || map.type === "INTEGRATION") && isLearner && !readOnly && !reconnectionBlocked && map.status === "DRAFT";
+    (map.type === "PRIOR" || map.type === "KB" || map.type === "INTEGRATION") && isLearner && !readOnly && !deadlineReached && !reconnectionBlocked && map.status === "DRAFT";
   const validReconnection = reconnectionAllowed && reconnectionDraft?.mapId === map.id &&
     isObservationContextCurrent(reconnectionDraft.context) &&
     (sameSavedLink(map.links.find(l => l.id === reconnectionDraft?.id), reconnectionDraft.original) ||
       (reconnectionDraft.saving && sameSavedLink(map.links.find(l => l.id === reconnectionDraft.id), { ...reconnectionDraft.original, sourceConceptId: reconnectionDraft.sourceConceptId ?? "", targetConceptId: reconnectionDraft.targetConceptId ?? "" })))
     ? reconnectionDraft : null;
+  const hasIncompleteSbLink = map.type === "PRIOR" && isLearner &&
+    (linkCreation !== null || (validReconnection !== null &&
+      (!validReconnection.sourceConceptId || !validReconnection.targetConceptId)));
   useLayoutEffect(() => { reconnectionRef.current = validReconnection; }, [validReconnection]);
   if (reconnectionDraft && !validReconnection) {
     setReconnectionDraft(null);
@@ -2943,7 +3129,7 @@ function MapEditorShell({
       return;
     }
     cancelPendingKbLinkEditor();
-    const draft: ReconnectionDraft = { id: link.id, mapId: map.id, original: { ...link }, context: captureObservationContext(map.sessionId ?? "", true),
+    const draft: ReconnectionDraft = { id: link.id, mapId: map.id, original: { ...link }, originalPosition: { ...position }, context: captureObservationContext(map.sessionId ?? "", true),
       kind: "reconnect", kitLinkItemId: link.kitLinkItemId ?? null, label: link.label,
       position, sourceConceptId: null, targetConceptId: null, saving: false, error: null };
     reconnectionRef.current = draft;
@@ -2980,7 +3166,8 @@ function MapEditorShell({
   async function updateReconnection(connector: TemporaryConnector) {
     const before = reconnectionRef.current;
     if (!before || before.id !== connector.id || before.saving || before.conflicted || !isObservationContextCurrent(before.context)) return;
-    const next = { ...before, sourceConceptId: connector.sourceConceptId,
+    const next = { ...before, position: connector.position,
+      sourceConceptId: connector.sourceConceptId,
       targetConceptId: connector.targetConceptId, error: null };
     reconnectionRef.current = next;
     setReconnectionDraft(next);
@@ -3009,7 +3196,19 @@ function MapEditorShell({
       if (reconnectionRef.current !== pending || !isObservationContextCurrent(pending.context)) return;
       reconnectionRef.current = null;
       setReconnectionDraft(null);
-      setReconnectionNotice("接続を保存しました。");
+      if (next.position.x !== next.originalPosition.x || next.position.y !== next.originalPosition.y) {
+        if (!onLinkPositionSave) {
+          setReconnectionNotice("接続は保存しましたが、リンク位置を保存できません。再読み込みして状態を確認してください。");
+          return;
+        }
+        const positionSaved = await onLinkPositionSave(next.id, next.position);
+        if (!isObservationContextCurrent(next.context)) return;
+        setReconnectionNotice(positionSaved
+          ? "接続とリンク位置を保存しました。"
+          : "接続は保存しましたが、リンク位置の保存を確認できません。再読み込みして状態を確認してください。");
+      } else {
+        setReconnectionNotice("接続を保存しました。");
+      }
     } catch (error) {
       if (reconnectionRef.current !== pending || !isObservationContextCurrent(pending.context)) return;
       if (error instanceof LinkReconnectError && error.status === 409 && error.code === "link_connection_conflict") {
@@ -3349,17 +3548,17 @@ function MapEditorShell({
                       (linkCreation !== null || validReconnection !== null)
                     ? "確認結果：一致。編集中の操作を完了し、オンラインで保存状態を確認すると最終提出できます。"
     : "確認結果：一致。「最終提出」でこのマップを提出できます。";
-  const creationTools = !interactionLocked &&
+  const creationTools = (!interactionLocked || reserveIntegrationDeadlineLayout) &&
     (canCreateConcept || canCreateLink) && (
             <div className="map-editor-tools" aria-label="マップ操作">
               <span>追加</span>
               {canCreateConcept && (
-                <button type="button" onClick={openAddConcept}>
+                <button type="button" disabled={interactionLocked} onClick={openAddConcept}>
                   ＋ 概念
                 </button>
               )}
               {canCreateLink && (
-                <button type="button" disabled={validReconnection !== null} onClick={openAddLink}>
+                <button type="button" disabled={interactionLocked || validReconnection !== null} onClick={openAddLink}>
                   ＋ リンク
                 </button>
               )}
@@ -3375,19 +3574,13 @@ function MapEditorShell({
           部品をマップに配置して接続した後、ボタンで一致状況を確認できます。
         </p>
       )}
-          <button
-            type="button"
-            className="kit-feedback-check-button"
-            aria-describedby={experimentKB ? "kb-submission-guidance" : undefined}
+          <KitBuildFeedbackCheckButton
             disabled={isSaving || submitting || kitFeedbackChecking || validReconnection !== null}
+            loading={kitFeedbackChecking}
+            label={map.sessionProtocolKey === "SBKB_INTEGRATION_V1" ? "一時提出" : "一致状況を確認"}
             onClick={() => void onCheckKitFeedback()}
-          >
-        {kitFeedbackChecking
-          ? "確認中…"
-          : map.sessionProtocolKey === "SBKB_INTEGRATION_V1"
-            ? "一時提出"
-            : "一致状況を確認"}
-          </button>
+            ariaDescribedBy={experimentKB ? "kb-submission-guidance" : undefined}
+          />
           {kitBuildFeedback && (
             <>
           <p
@@ -3436,7 +3629,7 @@ function MapEditorShell({
 
   return (
     <main
-      className={`map-editor-page${map.sessionProtocolKey==="SBKB_INTEGRATION_V1" ? " is-experiment" : ""} is-${map.type.toLowerCase()}${isLearner ? " is-learner" : ""}`}
+      className={`map-editor-page${map.sessionProtocolKey==="SBKB_INTEGRATION_V1" ? " is-experiment" : ""} is-${map.type.toLowerCase()}${isLearner ? " is-learner" : ""}${integrationDeadlineLabel ? " has-integration-deadline" : ""}`}
     >
       <header className="map-editor-header">
         <div className="map-editor-title">
@@ -3450,7 +3643,7 @@ function MapEditorShell({
         </div>
         <div className="map-editor-header-actions">
           {experimentLayout && creationTools}
-          {experimentLayout && (
+          {experimentLayout && !isLearner && (
             <button
               type="button"
               className="experiment-fit session-secondary-button"
@@ -3469,6 +3662,23 @@ function MapEditorShell({
             </details>
           )}
           {experimentLayout && feedbackControls}
+          {integrationDeadlineLabel && (
+            <p
+              className="integration-deadline-status"
+              role={
+                integrationDeadlineLabel.startsWith("残り時間")
+                  ? "timer"
+                  : "status"
+              }
+              aria-live={
+                integrationDeadlineLabel.startsWith("残り時間")
+                  ? "off"
+                  : "polite"
+              }
+            >
+              {integrationDeadlineLabel}
+            </p>
+          )}
           {isLearner && map.sessionId && (
             experimentLayout ? (
               <div className="map-editor-delivery-status">
@@ -3545,6 +3755,15 @@ function MapEditorShell({
               )}
             </div>
           )}
+          {hasIncompleteSbLink && (
+            <p
+              className="map-editor-submit-feedback is-error map-editor-unconnected-link-warning"
+              role="status"
+              aria-live="polite"
+            >
+              未接続のリンクがあります。両端を接続してから提出してください。
+            </p>
+          )}
           {map.status === "DRAFT" &&
             !(
               map.type === "INTEGRATION" &&
@@ -3555,6 +3774,7 @@ function MapEditorShell({
               type="button"
               disabled={
                 readOnly ||
+                deadlineReached ||
                 isSaving ||
                 submitting ||
                 drawerSaving ||
@@ -3586,7 +3806,8 @@ function MapEditorShell({
       {validReconnection && (
         <section className="map-editor-link-creation-status" aria-label="保存済みリンクの接続編集">
           <div role="status"><strong>接続編集中・未保存</strong>：{validReconnection.label}。
-            両端を接続すると保存します。接続完成または取消まで提出・元に戻す・やり直すはできません。
+            両端を接続すると接続先を保存します。リンク中央をドラッグして位置を調整した場合、位置は両端の接続を保存した後に保存します。取消・再読込では保存済み状態へ戻ります。
+            接続完成または取消まで提出・元に戻す・やり直すはできません。
             再読込すると保存済みの接続へ戻ります。
             {validReconnection.error && <p role="alert">{validReconnection.error}</p>}
           </div>
@@ -3596,7 +3817,8 @@ function MapEditorShell({
         </section>
       )}
       {reconnectionNotice && <p role="status">{reconnectionNotice}</p>}
-      {readOnly && (
+      {readOnly &&
+        !(reserveIntegrationDeadlineLayout && map.status === "SUBMITTED") && (
         <p className="map-editor-read-only" role="status">
           提出済みの{submittedMapName}です。内容は読み取り専用です。
         </p>
@@ -3630,14 +3852,20 @@ function MapEditorShell({
         className={`map-editor-workspace${drawer.kind !== "closed" ? " has-drawer" : ""}${map.sessionProtocolKey === "SBKB_INTEGRATION_V1" && isLearner && map.type === "PRIOR" && drawer.kind === "edit-link" ? " is-sb-link-selection" : ""}${map.sessionProtocolKey === "SBKB_INTEGRATION_V1" && isLearner && map.type === "INTEGRATION" && drawer.kind === "edit-link" ? " is-integration-link-selection" : ""}`}
       >
         <div className="map-editor-canvas-column">
-          {isLearner && !readOnly && !(experimentLayout && (map.type === "PRIOR" || map.type === "KB")) && (
+          {((isLearner && !readOnly && !deadlineReached && !(experimentLayout && (map.type === "PRIOR" || map.type === "KB"))) || reserveIntegrationDeadlineLayout) && (
             <p className="map-editor-operation-hint">
-              {map.type === "KB"
-                ? "部品をマップへドラッグし、リンクの両端を概念へ接続します。"
-                : "概念とリンクを追加し、リンクの両端を概念へドラッグして接続します。"}{" "}
-              矢印の先が関係先です。リンクをクリックすると編集・削除できます。
-              {reconnectionAllowed && " 線またはラベルのダブルクリック、または選択欄の「接続を編集」で両端を接続し直せます。"}
-              {canEditConceptStructure && " 概念もクリックすると編集・削除できます（初期概念は保護されます）。"}
+              {reserveIntegrationDeadlineLayout && (readOnly || deadlineReached)
+                ? readOnly
+                  ? "提出済みの統合マップです。内容は読み取り専用です。"
+                  : "期限到達後は編集できません。提出状態を確認してください。"
+                : <>
+                    {map.type === "KB"
+                      ? "部品をマップへドラッグし、リンクの両端を概念へ接続します。"
+                      : "概念とリンクを追加し、リンクの両端を概念へドラッグして接続します。"}{" "}
+                    矢印の先が関係先です。リンクをクリックすると編集・削除できます。
+                    {reconnectionAllowed && " 線またはラベルのダブルクリック、または選択欄の「接続を編集」で両端を接続し直せます。"}
+                    {canEditConceptStructure && " 概念もクリックすると編集・削除できます（初期概念は保護されます）。"}
+                  </>}
             </p>
           )}
           {!experimentLayout && creationTools}
@@ -3673,6 +3901,7 @@ function MapEditorShell({
             mapId={map.id}
             mapType={map.type}
             fitRef={canvasFitRef}
+            showZoomControls={isLearner}
             allowMergeRelease={
               map.type === "INTEGRATION" &&
               ["STAGE1_5", "SBKB_INTEGRATION_V1"].includes(
@@ -3680,11 +3909,13 @@ function MapEditorShell({
               )
             }
             concepts={map.concepts}
+            displayLabelsByConceptId={conceptDisplayLabelsById}
             links={map.links}
             kitDefinitionName={map.kitDefinitionName}
             kitConcepts={map.kitConcepts}
             kitLinks={map.kitLinks}
             readOnly={interactionLocked}
+            reserveReadOnlyConnectionArea={reserveIntegrationDeadlineLayout}
             canEditConceptStructure={canEditConceptStructure}
             canEditLinkLabel={canEditLinkLabel}
             positionSaving={positionSaving || linkCreationSaving}
@@ -4011,6 +4242,65 @@ function kitFeedbackFreshnessText(freshness: KitFeedbackFreshness): string {
   }
 }
 
+export type KitBuildFeedbackDisplayResult = {
+  matched: boolean;
+  concepts: { matched: number; total: number };
+  relations: { matched: number; total: number };
+  message?: string;
+};
+
+export function KitBuildFeedbackCheckButton({
+  disabled,
+  loading,
+  label,
+  onClick,
+  ariaDescribedBy,
+}: {
+  disabled: boolean;
+  loading: boolean;
+  label: string;
+  onClick: () => void;
+  ariaDescribedBy?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="kit-feedback-check-button"
+      aria-describedby={ariaDescribedBy}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {loading ? "確認中…" : label}
+    </button>
+  );
+}
+
+export function KitBuildFeedbackResultDisplay({
+  result,
+  freshness,
+}: {
+  result: KitBuildFeedbackDisplayResult;
+  freshness?: KitFeedbackFreshness;
+}) {
+  return (
+    <>
+      <p className="kit-feedback-result-heading">
+        {result.matched ? "一致" : "不一致"}
+      </p>
+      {result.message && <p>{uiText(result.message)}</p>}
+      <p>
+        概念 {result.concepts.matched}/{result.concepts.total}、関係{" "}
+        {result.relations.matched}/{result.relations.total}
+      </p>
+      {freshness && (
+        <p className={`kit-feedback-freshness is-${freshness}`}>
+          {kitFeedbackFreshnessText(freshness)}
+        </p>
+      )}
+    </>
+  );
+}
+
 function KitBuildFeedbackDialog({
   view,
   feedback,
@@ -4057,19 +4347,10 @@ function KitBuildFeedbackDialog({
         {view?.status === "result" && feedback && (
           <>
             {view.fromSubmission && <p>提出できませんでした。</p>}
-            <p className="kit-feedback-result-heading">
-              {feedback.result.matched ? "一致" : "不一致"}
-            </p>
-            <p>{uiText(feedback.result.message)}</p>
-            <p>
-              概念 {feedback.result.concepts.matched}/
-              {feedback.result.concepts.total}、関係{" "}
-              {feedback.result.relations.matched}/
-              {feedback.result.relations.total}
-            </p>
-            <p className={`kit-feedback-freshness is-${freshness}`}>
-              {kitFeedbackFreshnessText(freshness)}
-            </p>
+            <KitBuildFeedbackResultDisplay
+              result={feedback.result}
+              freshness={freshness}
+            />
           </>
         )}
       </div>
@@ -4118,6 +4399,7 @@ export function ConceptCanvas({
   allowMergeRelease = false,
   fitRef,
   concepts,
+  displayLabelsByConceptId,
   links,
   kitDefinitionName,
   kitConcepts,
@@ -4125,6 +4407,8 @@ export function ConceptCanvas({
   kitPaletteCopy = "parts",
   readOnly,
   snapshotZoom,
+  showZoomControls = false,
+  reserveReadOnlyConnectionArea = false,
   canEditConceptStructure,
   canEditLinkLabel,
   positionSaving,
@@ -4160,6 +4444,7 @@ export function ConceptCanvas({
   allowMergeRelease?: boolean;
   fitRef?: Ref<{fit:()=>void; editConnection?: (link: MapLink) => void}>;
   concepts: Concept[];
+  displayLabelsByConceptId?: ReadonlyMap<string, string>;
   links: MapLink[];
   kitDefinitionName: string | null;
   kitConcepts: KitConceptItem[];
@@ -4169,6 +4454,8 @@ export function ConceptCanvas({
   readOnly: boolean;
   /** External zoom is reserved for read-only research snapshots. */
   snapshotZoom?: number;
+  showZoomControls?: boolean;
+  reserveReadOnlyConnectionArea?: boolean;
   highlightedConceptIds?: ReadonlySet<string>;
   highlightedLinkIds?: ReadonlySet<string>;
   historyConceptChangeKinds?: ReadonlyMap<
@@ -4225,6 +4512,10 @@ export function ConceptCanvas({
     targetId?: string,
   ) => void;
 }) {
+  const conceptDisplayLabelsById = displayLabelsByConceptId ??
+    (mapType === "INTEGRATION"
+      ? buildDuplicateConceptDisplayLabels(concepts)
+      : undefined);
   const edges = useMemo(
     () => mapLinksToEdges(links.filter(l => l.id !== reconnectionDraft?.id), concepts, mapId),
     [concepts, links, mapId, reconnectionDraft],
@@ -5532,25 +5823,32 @@ export function ConceptCanvas({
     return getEdgeGeometry(edge, offset, positions, nodeSizes);
   }
 
+  function fitCanvas() {
+    const viewport = canvasViewportRef.current;
+    if (!viewport || !viewport.clientWidth || !viewport.clientHeight) return;
+    setCanvasZoom(
+      Math.min(
+        1,
+        viewport.clientWidth / canvasWidth,
+        viewport.clientHeight / canvasHeight,
+      ),
+    );
+    viewport.scrollTo({ left: 0, top: 0 });
+  }
+
   useImperativeHandle(
     fitRef,
     () => ({
       editConnection: (link: MapLink) => editConnection(link),
-      fit: () => {
-        const viewport = canvasViewportRef.current;
-        if (!viewport) return;
-    if(!viewport.clientWidth||!viewport.clientHeight)return;
-        setCanvasZoom(
-          Math.min(
-            1,
-            viewport.clientWidth / canvasWidth,
-            viewport.clientHeight / canvasHeight,
-          ),
-        );
-    viewport.scrollTo({left:0,top:0});
-      },
+      fit: fitCanvas,
     }),
   );
+
+  function adjustCanvasZoom(delta: number) {
+    setCanvasZoom((current) =>
+      Math.min(1.5, Math.max(0.5, Math.round((current + delta) * 10) / 10)),
+    );
+  }
 
   function updateConnectorPosition(
     kind: "temporary" | "saved",
@@ -5558,6 +5856,12 @@ export function ConceptCanvas({
     position: Point,
   ) {
     if (kind === "temporary") {
+      const connector = temporaryConnectors.find((item) => item.id === id);
+      if (connector?.kind === "reconnect" && mapType === "PRIOR") {
+        onReconnectionUpdate?.({ ...connector, position });
+        return;
+      }
+      if (connector?.kind === "reconnect") return;
       updateTemporaryConnector(id, (connector) => ({
         ...connector,
         position,
@@ -5585,7 +5889,8 @@ export function ConceptCanvas({
       !event.isPrimary ||
       event.button !== 0 ||
       (kind === "temporary" &&
-        (temporaryConnectors.find((connector) => connector.id === id)?.saving || temporaryConnectors.find((connector) => connector.id === id)?.kind === "reconnect"))
+        (temporaryConnectors.find((connector) => connector.id === id)?.saving ||
+          (temporaryConnectors.find((connector) => connector.id === id)?.kind === "reconnect" && mapType !== "PRIOR")))
     ) {
       return;
     }
@@ -5858,9 +6163,9 @@ export function ConceptCanvas({
           )}
         </section>
       )}
-      {!readOnly && (
+      {(!readOnly || reserveReadOnlyConnectionArea) && (
         <div className="canvas-connection-area">
-          {showConnectionGuidance && (
+          {!readOnly && showConnectionGuidance && (
             <p className="canvas-direction-hint">
               関係は「始点のConcept → Link →
               矢印の先のConcept」の向きにつながります。
@@ -5871,7 +6176,9 @@ export function ConceptCanvas({
             role="status"
             aria-live="polite"
           >
-            {connectionPreview ? (
+            {readOnly && reserveReadOnlyConnectionArea ? (
+              <span aria-hidden="true">&nbsp;</span>
+            ) : connectionPreview ? (
               <p>
                 「
                 {connectionPreview.endpoint === "source" ? "始点" : "矢印の先"}
@@ -5902,6 +6209,38 @@ export function ConceptCanvas({
               ))
             )}
           </div>
+        </div>
+      )}
+      {showZoomControls && (
+        <div className="concept-canvas-view-controls" role="group" aria-label="マップの表示倍率">
+          <button
+            type="button"
+            className="session-secondary-button"
+            aria-label="マップを縮小"
+            disabled={canvasZoom <= 0.5}
+            onClick={() => adjustCanvasZoom(-0.1)}
+          >
+            −
+          </button>
+          <span aria-live="polite" aria-label="現在の倍率">
+            {Math.round(canvasZoom * 100)}%
+          </span>
+          <button
+            type="button"
+            className="session-secondary-button"
+            aria-label="マップを拡大"
+            disabled={canvasZoom >= 1.5}
+            onClick={() => adjustCanvasZoom(0.1)}
+          >
+            ＋
+          </button>
+          <button
+            type="button"
+            className="session-secondary-button"
+            onClick={fitCanvas}
+          >
+            全体表示
+          </button>
         </div>
       )}
       <div
@@ -6318,7 +6657,9 @@ export function ConceptCanvas({
               <button
                 type="button"
                 className="link-connector-label"
-                aria-label={connector.kind === "reconnect" ? `${connector.label}の接続編集中` : `${connector.label}の中央をドラッグして移動`}
+                aria-label={connector.kind === "reconnect" && mapType !== "PRIOR"
+                  ? `${connector.label}の接続編集中`
+                  : `${connector.label}の中央をドラッグして移動`}
                 disabled={readOnly || connector.saving}
                 onPointerDown={(event) =>
                   beginConnectorDrag(
@@ -6377,6 +6718,8 @@ export function ConceptCanvas({
             </div>
           ))}
           {concepts.map((concept) => {
+            const displayLabel =
+              conceptDisplayLabelsById?.get(concept.id) ?? concept.label;
             const position = positions.get(concept.id) ?? {
               positionX: concept.positionX,
               positionY: concept.positionY,
@@ -6390,7 +6733,7 @@ export function ConceptCanvas({
                 role="listitem"
                 tabIndex={canOpenConceptDrawer ? 0 : undefined}
                 aria-label={
-                  canOpenConceptDrawer ? `${concept.label} 概念` : undefined
+                  canOpenConceptDrawer ? `${displayLabel} 概念` : undefined
                 }
                 data-concept-id={concept.id}
                 ref={(element) => {
@@ -6436,9 +6779,9 @@ export function ConceptCanvas({
                   </span>
                 )}
                 {usesMapEditorDrawers ? (
-                  <h3>{concept.label}</h3>
+                  <h3>{displayLabel}</h3>
                 ) : readOnly || !canEditConceptStructure || concept.isSeed ? (
-                  <h3>{concept.label}</h3>
+                  <h3>{displayLabel}</h3>
                 ) : editingConceptId === concept.id ? (
                   <form
                     className="concept-label-edit-form"
@@ -6519,7 +6862,7 @@ export function ConceptCanvas({
                   </div>
                 ) : (
                   <>
-                    <h3>{concept.label}</h3>
+                    <h3>{displayLabel}</h3>
                     <div className="concept-node-actions">
                       <button
                         className="concept-edit-button"
@@ -6970,15 +7313,19 @@ export function ReadOnlyMapSnapshot({
 
 export function IntegrationConceptMergeForm({
   concepts,
+  displayLabelsByConceptId,
   disabled,
   onCancel,
   onMerge,
+  onSelectionChange,
   localPractice = false,
 }: {
   concepts: Concept[];
+  displayLabelsByConceptId?: ReadonlyMap<string, string>;
   disabled: boolean;
   onCancel: () => Promise<void>;
   onMerge: (conceptIds: [string, string], label: string) => Promise<void>;
+  onSelectionChange?: (conceptIds: [string, string]) => void;
   localPractice?: boolean;
 }) {
   const [firstConceptId, setFirstConceptId] = useState("");
@@ -7005,6 +7352,7 @@ export function IntegrationConceptMergeForm({
   function updateFirstConcept(conceptId: string) {
     const nextFirst = concepts.find((concept) => concept.id === conceptId);
     setFirstConceptId(conceptId);
+    onSelectionChange?.([conceptId, secondConceptId]);
     setLabel(
       nextFirst && secondConcept && nextFirst.label === secondConcept.label
         ? nextFirst.label
@@ -7016,6 +7364,7 @@ export function IntegrationConceptMergeForm({
   function updateSecondConcept(conceptId: string) {
     const nextSecond = concepts.find((concept) => concept.id === conceptId);
     setSecondConceptId(conceptId);
+    onSelectionChange?.([firstConceptId, conceptId]);
     setLabel(
       firstConcept && nextSecond && firstConcept.label === nextSecond.label
         ? firstConcept.label
@@ -7031,8 +7380,12 @@ export function IntegrationConceptMergeForm({
     }
 
     const finalLabel = label.trim();
+    const firstDisplayLabel =
+      displayLabelsByConceptId?.get(firstConcept.id) ?? firstConcept.label;
+    const secondDisplayLabel =
+      displayLabelsByConceptId?.get(secondConcept.id) ?? secondConcept.label;
     const confirmed = window.confirm(
-      `「${firstConcept.label}」と「${secondConcept.label}」をMergeし、「${finalLabel}」として表示します。
+      `「${firstDisplayLabel}」と「${secondDisplayLabel}」をMergeし、「${finalLabel}」として表示します。
 元のConceptはMerge済み状態で保持されます。確定しますか？`,
     );
     if (!confirmed) {
@@ -7093,7 +7446,7 @@ export function IntegrationConceptMergeForm({
                   value={concept.id}
                   disabled={concept.id === secondConceptId}
                 >
-                  {concept.label}（ID末尾 {concept.id.slice(-8)}）
+                  {displayLabelsByConceptId?.get(concept.id) ?? concept.label}（ID末尾 {concept.id.slice(-8)}）
                 </option>
               ))}
             </select>
@@ -7113,7 +7466,7 @@ export function IntegrationConceptMergeForm({
                   value={concept.id}
                   disabled={concept.id === firstConceptId}
                 >
-                  {concept.label}（ID末尾 {concept.id.slice(-8)}）
+                  {displayLabelsByConceptId?.get(concept.id) ?? concept.label}（ID末尾 {concept.id.slice(-8)}）
                 </option>
               ))}
             </select>
@@ -7134,7 +7487,7 @@ export function IntegrationConceptMergeForm({
           </label>
           {firstConcept && secondConcept && (
             <p className="integration-concept-merge-summary">
-              「{firstConcept.label}」と「{secondConcept.label}
+              「{displayLabelsByConceptId?.get(firstConcept.id) ?? firstConcept.label}」と「{displayLabelsByConceptId?.get(secondConcept.id) ?? secondConcept.label}
               」から新しいConceptを作成します。
               元ConceptとProvenanceは
               {localPractice ? "練習画面内だけに保持されます。" : "DBに保持されます。"}

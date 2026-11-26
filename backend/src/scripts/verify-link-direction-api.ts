@@ -200,16 +200,45 @@ try {
   auth = p.issuedCode;
   const sbLinks = (
     await pool.query(
-      "SELECT source_concept_id AS source,target_concept_id AS target FROM links WHERE map_id=$1",
+      "SELECT id,label,source_concept_id AS source,target_concept_id AS target,label_position_x AS \"labelPositionX\",label_position_y AS \"labelPositionY\" FROM links WHERE map_id=$1",
       [sb.id],
     )
   ).rows;
-  assert.deepEqual(sbLinks, [{ source: sbIds[1], target: sbIds[2] }]);
+  assert.equal(sbLinks.length, 1);
+  const sbApiMap = await call(`/maps/${sb.id}`, undefined, "GET");
+  const sbApiLink = sbApiMap.links.find((row: { id: string }) => row.id === sbLinks[0].id);
+  assert.ok(sbApiLink);
+  assert.equal(sbLinks[0].source, sbIds[0]);
+  assert.equal(sbLinks[0].target, sbIds[2]);
+  assert.equal(sbApiLink.sourceConceptId, sbLinks[0].source);
+  assert.equal(sbApiLink.targetConceptId, sbLinks[0].target);
+  assert.equal(sbApiLink.label, sbLinks[0].label);
+  assert.equal(sbApiLink.labelPositionX, Number(sbLinks[0].labelPositionX));
+  assert.equal(sbApiLink.labelPositionY, Number(sbLinks[0].labelPositionY));
+  const sbProvenanceCount = (
+    await pool.query("SELECT count(*)::int AS count FROM link_provenance WHERE target_link_id=$1", [sbLinks[0].id])
+  ).rows[0].count;
+  assert.equal((sbApiLink.provenance ?? []).length, sbProvenanceCount);
+  const sbPositionHistory = (
+    await pool.query("SELECT count(*)::int AS count FROM research_events WHERE map_id=$1 AND target_id=$2 AND event_type='MOVE_LINK' AND outcome='SUCCESS'", [sb.id, sbLinks[0].id])
+  ).rows[0].count;
+  assert.equal(sbPositionHistory, 2, "initial link position and successful reconnect movement each record MOVE_LINK; the rejected follow-up position does not");
   const sbHistory = (await pool.query("SELECT event_type,target_id FROM research_events WHERE map_id=$1 AND outcome='SUCCESS' AND event_type IN ('ADD_LINK','DELETE_LINK','RECONNECT_LINK') ORDER BY sequence_number",[sb.id])).rows;
   assert.equal(sbHistory.filter(e=>e.event_type==='ADD_LINK').length,1);
   assert.equal(sbHistory.filter(e=>e.event_type==='DELETE_LINK').length,0);
-  assert.equal(sbHistory.filter(e=>e.event_type==='RECONNECT_LINK').length,4);
+  assert.equal(sbHistory.filter(e=>e.event_type==='RECONNECT_LINK').length,5);
   assert.equal(new Set(sbHistory.map(e=>e.target_id)).size,1);
+  console.log(JSON.stringify({
+    result: "PASS",
+    mapType: "PRIOR",
+    linkId: sbLinks[0].id,
+    apiDbReadback: true,
+    endpoints: ["source", "target"],
+    labelPosition: [sbLinks[0].labelPositionX, sbLinks[0].labelPositionY],
+    provenanceRows: sbProvenanceCount,
+    successfulReconnects: sbHistory.filter(e=>e.event_type==='RECONNECT_LINK').length,
+    successfulPositionEvents: sbPositionHistory,
+  }));
   await call(`/maps/${sb.id}/submit`, {});
   await call(`/session-stages/${stage("KB_MAP")}/start`, {});
   const kb = await call(`/kits/${goal.kitDefinitionId}/kb-map`, {

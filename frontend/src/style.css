@@ -1774,6 +1774,25 @@ h1 {
   background-size: 24px 24px;
 }
 
+.concept-canvas-view-controls {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.concept-canvas-view-controls button {
+  min-width: 40px;
+}
+
+.concept-canvas-view-controls span {
+  min-width: 3.5em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .concept-canvas-viewport:focus-visible {
   outline: 3px solid rgb(36 92 120 / 28%);
   outline-offset: 2px;
@@ -2858,6 +2877,36 @@ button.link-connector-label:active {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 14px;
+}
+
+.map-editor-page.has-integration-deadline .map-editor-header-actions {
+  min-height: 92px;
+  align-content: center;
+}
+
+.integration-deadline-status {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 0 14rem;
+  width: 14rem;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid #d4dee4;
+  border-radius: 7px;
+  background: #f4f8fa;
+  color: #29424f;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.map-editor-page.has-integration-deadline .map-editor-operation-hint {
+  box-sizing: border-box;
+  min-height: 48px;
 }
 
 .map-editor-history-actions {

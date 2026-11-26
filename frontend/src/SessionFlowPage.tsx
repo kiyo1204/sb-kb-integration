@@ -1,6 +1,7 @@
 import {Survey,ResearchSurvey} from "./Survey";
 import TutorialPage from "./TutorialPage";
-import { hasCompletedPractice, markPracticeCompleted } from "./practice-completion";
+import { hasCompletedPracticeProgress } from "./practice-completion";
+import { getPracticeOwnerDigest } from "./practice-progress";
 import {LearnerDeliveryStatus,ResearchDeliveryStatus} from "./DeliveryStatus";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, uiText } from "./auth-client";
@@ -143,7 +144,7 @@ function SessionDashboard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [practicing, setPracticing] = useState(false);
-  const [practiceCompleted, setPracticeCompleted] = useState(() => hasCompletedPractice(sessionId));
+  const [practiceCompleted, setPracticeCompleted] = useState(() => hasCompletedPracticeProgress(sessionId));
   const [practiceBlocked, setPracticeBlocked] = useState(false);
   const [practiceConnectionUncertain, setPracticeConnectionUncertain] = useState(false);
   const [practiceRetry, setPracticeRetry] = useState(0);
@@ -476,12 +477,11 @@ function SessionDashboard({
     return (
       <div className="session-practice-wrapper">
         <div inert={practiceConnectionUncertain}>
-          <TutorialPage returnHref={`/sessions/${sessionId}`} onCancel={() => {
+          <TutorialPage key={`${sessionId}:${getPracticeOwnerDigest() ?? "unverified"}`} returnHref={`/sessions/${sessionId}`} practiceSessionId={isLearner ? sessionId : undefined} onProgressReset={() => setPracticeCompleted(false)} onCancel={() => {
             setPracticing(false);
             setPracticeConnectionUncertain(false);
           }} onExit={() => {
-            markPracticeCompleted(sessionId);
-            setPracticeCompleted(true);
+            setPracticeCompleted(hasCompletedPracticeProgress(sessionId));
             setPracticing(false);
             setPracticeConnectionUncertain(false);
           }} />
@@ -575,7 +575,7 @@ function SessionDashboard({
                 <div>
                   <h3 id="session-practice-heading">操作の練習</h3>
                   <p>
-                    Scratch-Build、Kit-Build、統合マップの練習をすべて完了するとセッションを開始できます。練習は通常の学習Sessionとは別で、マップの操作内容は保存されません。
+                    Scratch-Build、Kit-Build、統合マップの練習をすべて完了するとセッションを開始できます。練習内容はこのタブで再開できるよう保存されますが、実験SessionのMapや研究記録には反映されません。
                   </p>
                 </div>
                 <button type="button" className="session-secondary-button" onClick={() => {

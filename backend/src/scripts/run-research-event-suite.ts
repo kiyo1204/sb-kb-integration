@@ -114,6 +114,7 @@ try {
     "test:map-api-v2",
     "test:map-failure-retry",
     "test:parent-followup",
+    "test:tutorial-kit-practice-api",
     "test:map-auto-submit-v2",
     "test:learning-activity-events",
     "test:assessment-events",

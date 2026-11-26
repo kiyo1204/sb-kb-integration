@@ -56,6 +56,7 @@ import { observeExpiredStages } from "./system-submission.js";
 import { MAX_MAP_STATE_BYTES } from "./research-event-map-v2.js";
 import { registerGoalMapTransferRoutes } from "./goal-map-transfer.js";
 import { releaseMerge, MergeReleaseUnavailableError } from "./merge-release.js";
+import { evaluatePhotosynthesisKitPractice } from "./tutorial-kit-practice.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -1593,6 +1594,21 @@ app.use("/api", (request, response, next) => {
   }) as Response["json"];
   next();
 });
+// The public tutorial contains no participant or Session data. This endpoint
+// grades only the fixed Photosynthesis practice fixture and returns counts;
+// all other /api routes continue through the existing access control below.
+app.post("/api/tutorial/kit-practice/check", (request, response) => {
+  response.setHeader("Cache-Control", "no-store");
+  if (!request.is("application/json")) {
+    return response.status(415).json({ error: "invalid_tutorial_kit_practice" });
+  }
+  const result = evaluatePhotosynthesisKitPractice(request.body);
+  if (!result) {
+    return response.status(400).json({ error: "invalid_tutorial_kit_practice" });
+  }
+  return response.status(200).json(result);
+});
+
 app.use("/api", accessControl(pool));
 registerGoalMapTransferRoutes(app, pool);
 registerOperationContext(app);

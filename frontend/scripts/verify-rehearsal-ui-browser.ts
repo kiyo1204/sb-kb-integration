@@ -1,10 +1,10 @@
 // Synthetic display fixtures only. No database, credentials or real participant data.
 import assert from "node:assert/strict";
 import { requestDigest } from "../src/client-identity";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { chromium, type Page, type Route } from "playwright";
+import { chromium, type Locator, type Page, type Route } from "playwright";
 import { createServer } from "vite";
 
 type Scenario =
@@ -18,13 +18,77 @@ type Scenario =
   | "legacy-session"
   | "researcher-populated";
 
+const productionIntegrationMapId = "00000000-0000-4000-8000-000000000099";
+const productionDuplicateConceptIds = {
+  kb: "00000000-0000-4000-8000-000000000092",
+  sb: "00000000-0000-4000-8000-000000000091",
+  plant: "00000000-0000-4000-8000-000000000093",
+  merged: "00000000-0000-4000-8000-000000000094",
+};
+
 const syntheticAccessCode = "SYNTHETIC_UI_ACCESS_CODE_ONLY_0000000000000001";
+const syntheticOtherAccessCode = "SYNTHETIC_UI_ACCESS_CODE_ONLY_0000000000000002";
+const syntheticOtherP02SessionId = "00000000-0000-4000-8000-000000000002";
+const tutorialKitConceptItems = {
+  plant: "77777777-7777-4777-8777-777777777781",
+  photosynthesis: "77777777-7777-4777-8777-777777777782",
+  carbonDioxide: "77777777-7777-4777-8777-777777777783",
+};
+const tutorialKitLinkItems = {
+  perform: "88888888-8888-4888-8888-888888888882",
+  require: "88888888-8888-4888-8888-888888888883",
+};
 
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({
     status,
     contentType: "application/json",
     body: JSON.stringify(body),
+  });
+}
+
+function syntheticKitPracticeResult(body: unknown) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const state = body as { concepts?: unknown; links?: unknown };
+  if (!Array.isArray(state.concepts) || !Array.isArray(state.links)) return null;
+  const concepts = state.concepts as Array<{ kitConceptItemId?: string; id?: string }>;
+  const links = state.links as Array<{
+    kitLinkItemId?: string;
+    id?: string;
+    sourceConceptId?: string;
+    targetConceptId?: string;
+  }>;
+  const conceptCount = concepts.length;
+  if (conceptCount === 2 && links.length === 1) {
+    return {
+      matched: false,
+      concepts: { matched: 2, total: 3 },
+      relations: { matched: 1, total: 2 },
+    };
+  }
+  if (conceptCount !== 3 || links.length !== 2) return null;
+  const idByPart = new Map(
+    concepts.map(({ kitConceptItemId, id }) => [kitConceptItemId, id]),
+  );
+  const requireLink = links.find(
+    (link) => link.kitLinkItemId === tutorialKitLinkItems.require,
+  );
+  const correctDirection =
+    requireLink?.sourceConceptId === idByPart.get(tutorialKitConceptItems.photosynthesis) &&
+    requireLink?.targetConceptId === idByPart.get(tutorialKitConceptItems.carbonDioxide);
+  return {
+    matched: correctDirection,
+    concepts: { matched: 3, total: 3 },
+    relations: { matched: correctDirection ? 2 : 1, total: 2 },
+  };
+}
+
+async function installTutorialKitPracticeFixture(page: Page) {
+  await page.route("**/api/tutorial/kit-practice/check", async (route) => {
+    const result = syntheticKitPracticeResult(route.request().postDataJSON());
+    return result
+      ? json(route, result)
+      : json(route, { error: "invalid_tutorial_kit_practice" }, 400);
   });
 }
 
@@ -70,8 +134,12 @@ async function installApiFixture(
   scenario: Scenario,
   onAccessRequest?: () => Promise<void>,
 ) {
-  let p02Started = false;
-  let p02ActiveClient: string | null = null;
+  const p02StartedSessions = new Set<string>();
+  const p02ActiveClients = new Map<string, string>();
+  const p02SessionIdFor = (route: Route) =>
+    route.request().headers().authorization === `Bearer ${syntheticOtherAccessCode}`
+      ? syntheticOtherP02SessionId
+      : "00000000-0000-4000-8000-000000000001";
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/me") {
@@ -81,7 +149,7 @@ async function installApiFixture(
       if (scenario === "p02")
         return json(route, {
           role: "learner",
-          sessionId: "00000000-0000-4000-8000-000000000001",
+          sessionId: p02SessionIdFor(route),
           protocolKey: "SBKB_INTEGRATION_V1",
           flowAvailable: true,
           runState: "RUNNING",
@@ -110,13 +178,17 @@ async function installApiFixture(
       });
     if (path === "/api/experiment-client/claim") {
       if (scenario === "p02") {
+        const sessionId = p02SessionIdFor(route);
         const candidate = route.request().headers()["x-experiment-client"] ?? "";
-        if (p02ActiveClient === null) p02ActiveClient = candidate;
-        const ownsClient = candidate === p02ActiveClient;
+        const activeClient = p02ActiveClients.get(sessionId);
+        if (activeClient === undefined) p02ActiveClients.set(sessionId, candidate);
+        const ownsClient = candidate === p02ActiveClients.get(sessionId);
         return json(
           route,
           {
-            clientId: "00000000-0000-4000-8000-000000000002",
+            clientId: sessionId === syntheticOtherP02SessionId
+              ? "00000000-0000-4000-8000-000000000003"
+              : "00000000-0000-4000-8000-000000000002",
             ownership: ownsClient ? "OWNED" : "PENDING",
             deviceGeneration: ownsClient ? 0 : null,
             ...(!ownsClient ? { error: "experiment_client_in_use" } : {}),
@@ -136,21 +208,18 @@ async function installApiFixture(
         kbInstructions: "合成KB案内",
         integrationInstructions: "合成統合案内",
       });
-    if (scenario === "p02" && path === "/api/sessions/00000000-0000-4000-8000-000000000001/flow")
-      return json(
-        route,
-        syntheticSessionFlow(
-          "00000000-0000-4000-8000-000000000001",
-          "SBKB_INTEGRATION_V1",
-          p02Started,
-        ),
-      );
-    if (
-      scenario === "p02" &&
-      path === "/api/sessions/00000000-0000-4000-8000-000000000001/start" &&
-      route.request().method() === "POST"
-    ) {
-      p02Started = true;
+    const p02FlowMatch = path.match(/^\/api\/sessions\/([a-f0-9-]{36})\/flow$/);
+    if (scenario === "p02" && p02FlowMatch) {
+      const sessionId = p02FlowMatch[1];
+      return json(route, syntheticSessionFlow(
+        sessionId,
+        "SBKB_INTEGRATION_V1",
+        p02StartedSessions.has(sessionId),
+      ));
+    }
+    const p02StartMatch = path.match(/^\/api\/sessions\/([a-f0-9-]{36})\/start$/);
+    if (scenario === "p02" && p02StartMatch && route.request().method() === "POST") {
+      p02StartedSessions.add(p02StartMatch[1]);
       return json(route, { logSaved: true });
     }
     if (scenario === "legacy-session" && path === "/api/sessions/00000000-0000-4000-8000-000000000003/flow")
@@ -168,6 +237,237 @@ async function installApiFixture(
       path === "/api/experiment-material" ? 409 : 200,
     );
   });
+}
+
+async function installProductionIntegrationMapFixture(
+  page: Page,
+  learnerSessionId?: string,
+  mapType: "INTEGRATION" | "PRIOR" | "KB" = "INTEGRATION",
+  readOnly = false,
+  sessionStageId: string | null = null,
+) {
+  const { kb, sb, plant, merged } = productionDuplicateConceptIds;
+  const mapId = productionIntegrationMapId;
+  let currentMap = {
+    id: mapId,
+    type: mapType,
+    status: readOnly ? "SUBMITTED" as const : "DRAFT" as const,
+    title: "合成統合Map",
+    createdAt: "2026-11-25T00:00:00.000Z",
+    submittedAt: readOnly ? "2026-11-25T02:30:00.000Z" : null,
+    basedOnMapId: null,
+    kitDefinitionId: "00000000-0000-4000-8000-000000000090",
+    kitDefinitionName: "合成Kit",
+    sessionStageId,
+    sessionId: learnerSessionId ?? null,
+    sessionStageStatus: sessionStageId ? "IN_PROGRESS" : null,
+    sessionProtocolKey: learnerSessionId ? "STAGE1_6" : null,
+    concepts: [
+      { id: kb, label: "光合成", positionX: 430, positionY: 180, createdAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+      { id: plant, label: "植物", positionX: 760, positionY: 260, createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:00:00.000Z" },
+      { id: sb, label: "光合成", positionX: 100, positionY: 100, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+    ],
+    links: [
+      { id: "00000000-0000-4000-8000-000000000095", mapId, sourceConceptId: sb, targetConceptId: plant, label: "SB由来" },
+      { id: "00000000-0000-4000-8000-000000000096", mapId, sourceConceptId: plant, targetConceptId: kb, label: "KB由来" },
+    ],
+    kitLinks: [],
+    kitConcepts: [],
+    availableKitDefinitions: [],
+  };
+  const mergeRequests: unknown[] = [];
+  const positionRequests: Array<{
+    id: string;
+    positionX: number;
+    positionY: number;
+  }> = [];
+  let mapReadCount = 0;
+
+  await page.route(`**/api/maps/${mapId}/concepts/merge`, async (route) => {
+    if (route.request().method() !== "POST")
+      return json(route, { error: "method_not_allowed" }, 405);
+    const body = route.request().postDataJSON() as {
+      conceptIds?: unknown;
+      label?: unknown;
+    };
+    mergeRequests.push(body);
+    if (
+      !Array.isArray(body.conceptIds) ||
+      body.conceptIds.length !== 2 ||
+      !body.conceptIds.includes(sb) ||
+      !body.conceptIds.includes(kb) ||
+      body.label !== "光合成"
+    ) {
+      return json(route, { error: "unexpected_merge_request" }, 400);
+    }
+
+    const mergedConcept = {
+      id: merged,
+      mapId,
+      label: body.label,
+      positionX: 265,
+      positionY: 140,
+      createdAt: "2026-11-25T01:00:00.000Z",
+      updatedAt: "2026-11-25T01:00:00.000Z",
+      isMergeResult: true,
+    };
+    const sourceIds = new Set([sb, kb]);
+    const incidentLinks = currentMap.links
+      .filter((link) => sourceIds.has(link.sourceConceptId) || sourceIds.has(link.targetConceptId))
+      .map((link) => ({
+        ...link,
+        sourceConceptId: sourceIds.has(link.sourceConceptId) ? merged : link.sourceConceptId,
+        targetConceptId: sourceIds.has(link.targetConceptId) ? merged : link.targetConceptId,
+      }));
+    currentMap = {
+      ...currentMap,
+      concepts: [
+        ...currentMap.concepts.filter((concept) => !sourceIds.has(concept.id)),
+        mergedConcept,
+      ],
+      links: currentMap.links.map((link) =>
+        incidentLinks.find((updated) => updated.id === link.id) ?? link,
+      ),
+    };
+    return json(route, {
+      concept: mergedConcept,
+      mergedConceptIds: body.conceptIds,
+      incidentLinks,
+    }, 201);
+  });
+  await page.route(`**/api/maps/${mapId}`, async (route) => {
+    if (route.request().method() === "GET") {
+      const concepts = [...currentMap.concepts];
+      mapReadCount += 1;
+      if (mapReadCount > 1) {
+        concepts.reverse();
+      }
+      return json(route, { ...currentMap, concepts });
+    }
+    return json(route, { error: "method_not_allowed" }, 405);
+  });
+
+  await page.route(`**/api/maps/${mapId}/undo-redo`, async (route) =>
+    json(route, {
+      status: "READY",
+      sequenceNumber: 0,
+      canUndo: false,
+      canRedo: false,
+      undoOperation: null,
+      redoOperation: null,
+    }),
+  );
+  await page.route("**/api/concepts/*/position", async (route) => {
+    if (route.request().method() !== "PATCH")
+      return json(route, { error: "method_not_allowed" }, 405);
+    const pathParts = new URL(route.request().url()).pathname.split("/");
+    const conceptId = pathParts.at(-2);
+    const body = route.request().postDataJSON() as {
+      positionX?: unknown;
+      positionY?: unknown;
+    };
+    if (
+      !conceptId ||
+      typeof body.positionX !== "number" ||
+      !Number.isFinite(body.positionX) ||
+      typeof body.positionY !== "number" ||
+      !Number.isFinite(body.positionY)
+    ) return json(route, { error: "invalid_position" }, 400);
+    const existing = currentMap.concepts.find((concept) => concept.id === conceptId);
+    if (!existing) return json(route, { error: "concept_not_found" }, 404);
+    const updated = {
+      ...existing,
+      positionX: body.positionX as number,
+      positionY: body.positionY as number,
+      updatedAt: "2026-11-25T02:00:00.000Z",
+    };
+    positionRequests.push({
+      id: conceptId,
+      positionX: updated.positionX,
+      positionY: updated.positionY,
+    });
+    currentMap = {
+      ...currentMap,
+      concepts: currentMap.concepts.map((concept) =>
+        concept.id === conceptId ? updated : concept,
+      ),
+    };
+    return json(route, updated);
+  });
+
+  return {
+    mergeRequests,
+    positionRequests,
+    snapshot: () => currentMap,
+    markSubmitted: (submittedAt: string) => {
+      currentMap = { ...currentMap, status: "SUBMITTED", submittedAt };
+    },
+  };
+}
+
+async function installIntegrationDeadlineFlowFixture(
+  page: Page,
+  sessionId: string,
+  stageId: string,
+  startedAt: string,
+  durationSeconds: number,
+  shouldSubmit: () => boolean,
+  onSubmitted: (submittedAt: string) => void,
+) {
+  let requestCount = 0;
+  let autoSubmittedAt: string | null = null;
+  const deadlineAt =
+    Date.parse(startedAt) + durationSeconds * 1000;
+  await page.route(
+    "**/api/sessions/" + sessionId + "/flow",
+    async (route) => {
+      requestCount += 1;
+      const now = new Date();
+      if (now.getTime() >= deadlineAt && shouldSubmit()) {
+        autoSubmittedAt ??= now.toISOString();
+        onSubmitted(autoSubmittedAt);
+      }
+      return json(route, {
+        session: {
+          id: sessionId,
+          status: "IN_PROGRESS",
+          protocolKey: "STAGE1_6",
+          groupActivitySeconds: durationSeconds,
+        },
+        serverNow: now.toISOString(),
+        currentMapSubmitted: autoSubmittedAt !== null,
+        currentIntegrationMapExists: true,
+        currentMapAutoSubmittedAt: autoSubmittedAt,
+        stages: [
+          {
+            id: stageId,
+            stageType: "INTEGRATION_MAP",
+            status: "IN_PROGRESS",
+            startedAt,
+            mapId: productionIntegrationMapId,
+          },
+        ],
+        currentStage: {
+          id: stageId,
+          stageType: "INTEGRATION_MAP",
+          startedAt,
+          mapId: productionIntegrationMapId,
+        },
+        nextStage: null,
+      });
+    },
+  );
+  return {
+    requestCount: () => requestCount,
+    deadlineAt,
+  };
+}
+
+async function readDisplayedRemainingSeconds(page: Page) {
+  const label = await page.locator(".integration-deadline-status").innerText();
+  const match = label.match(/(\d+):(\d{2})$/);
+  assert.ok(match, "active deadline displays a numeric minutes:seconds value");
+  return Number(match[1]) * 60 + Number(match[2]);
 }
 
 async function captureBeforeAfter(
@@ -250,23 +550,54 @@ async function assertNoHorizontalOverflow(page: Page, name: string, width: numbe
   );
 }
 
-// This event-level check intentionally uses synthetic HTML5 drag events.
-// It exercises palette dragstart and Canvas dragover/drop handlers, not the native
-// pointer-driven drag-and-drop path. Keep that limitation explicit in the test.
-async function dispatchSyntheticKitLinkDrop(page: Page) {
-  const { types, accepted } = await page.evaluate(() => {
-    const linkPart = document.querySelector<HTMLButtonElement>(
-      '.tutorial-practice-panel:not([hidden]) .kit-palette-part.is-link:not(:disabled)',
-    );
+async function exerciseCanvasZoomControls(scope: Page | Locator) {
+  const controls = scope.locator(".concept-canvas-view-controls");
+  assert.equal(await controls.count(), 1, "learner Canvas exposes one zoom control group");
+  const percentage = controls.locator("span[aria-label='現在の倍率']");
+  assert.equal(await percentage.innerText(), "100%", "initial Canvas zoom remains 100%");
+  await controls.getByRole("button", { name: "マップを縮小" }).click();
+  assert.equal(await percentage.innerText(), "90%");
+  await controls.getByRole("button", { name: "マップを拡大" }).click();
+  assert.equal(await percentage.innerText(), "100%");
+  await controls.getByRole("button", { name: "全体表示", exact: true }).click();
+  const fitPercentage = Number((await percentage.innerText()).replace("%", ""));
+  assert.ok(fitPercentage >= 50 && fitPercentage <= 100, "Fit keeps the existing fit range");
+  while (Number((await percentage.innerText()).replace("%", "")) < 150)
+    await controls.getByRole("button", { name: "マップを拡大" }).click();
+  assert.equal(await percentage.innerText(), "150%");
+  const scroll = await scope.locator(".concept-canvas-viewport").evaluate((element) => {
+    const viewport = element as HTMLElement;
+    viewport.scrollLeft = Math.min(160, viewport.scrollWidth - viewport.clientWidth);
+    viewport.scrollTop = Math.min(100, viewport.scrollHeight - viewport.clientHeight);
+    return { left: viewport.scrollLeft, top: viewport.scrollTop };
+  });
+  assert.ok(scroll.left > 0 || scroll.top > 0, "zoomed Canvas can scroll");
+  return { controls, percentage };
+}
+
+// Edge headless's Playwright dragTo emitted no HTML drag events for these
+// draggable Kit buttons. Dispatch the real DOM events to exercise the shared
+// palette and Canvas handlers, while keeping native pointer dragging as an
+// explicitly unverified interaction.
+async function dispatchSyntheticKitPartDrop(
+  page: Page,
+  kind: "concept" | "link",
+  label: string,
+  position: { x: number; y: number },
+) {
+  const { types, accepted, dropped, dropPrevented } = await page.evaluate(({ kind, label, position }) => {
+    const part = Array.from(document.querySelectorAll<HTMLButtonElement>(
+      `.tutorial-practice-panel:not([hidden]) .kit-palette-part.is-${kind}:not(:disabled)`,
+    )).find((candidate) => candidate.textContent?.includes(label));
     const canvas = document.querySelector<HTMLElement>(
       '.tutorial-practice-panel:not([hidden]) .concept-canvas',
     );
-    if (!linkPart || !canvas) {
-      throw new Error("Kitリンク部品またはCanvasが見つかりません");
+    if (!part || !canvas) {
+      throw new Error(`Kit ${kind}部品またはCanvasが見つかりません`);
     }
 
     const dataTransfer = new DataTransfer();
-    linkPart.dispatchEvent(
+    part.dispatchEvent(
       new DragEvent("dragstart", {
         bubbles: true,
         cancelable: true,
@@ -282,8 +613,8 @@ async function dispatchSyntheticKitLinkDrop(page: Page) {
     }
 
     const rect = canvas.getBoundingClientRect();
-    const x = rect.left + Math.min(90, rect.width / 2);
-    const y = rect.top + Math.min(300, rect.height / 2);
+    const x = rect.left + position.x * (rect.width / canvas.offsetWidth);
+    const y = rect.top + position.y * (rect.height / canvas.offsetHeight);
     const dragOver = new DragEvent("dragover", {
       bubbles: true,
       cancelable: true,
@@ -294,37 +625,44 @@ async function dispatchSyntheticKitLinkDrop(page: Page) {
     canvas.dispatchEvent(dragOver);
     const accepted = dragOver.defaultPrevented;
 
+    let dropped = false;
+    let dropPrevented = false;
     if (accepted) {
-      canvas.dispatchEvent(
-        new DragEvent("drop", {
-          bubbles: true,
-          cancelable: true,
-          dataTransfer,
-          clientX: x,
-          clientY: y,
-        }),
-      );
+      const drop = new DragEvent("drop", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+        clientX: x,
+        clientY: y,
+      });
+      canvas.dispatchEvent(drop);
+      dropped = true;
+      dropPrevented = drop.defaultPrevented;
     }
-    linkPart.dispatchEvent(
+    part.dispatchEvent(
       new DragEvent("dragend", {
         bubbles: true,
         dataTransfer,
       }),
     );
-    return { types, accepted };
-  });
+    return { types, accepted, dropped, dropPrevented };
+  }, { kind, label, position });
 
   assert.ok(
     types.includes("application/x-kbcm-kit-part"),
-    "Kit link dragstart provides its expected MIME type",
+    "Kit palette dragstart provides its expected MIME type",
   );
-  assert.equal(accepted, true, "Canvas accepts the synthetic Kit link drop");
+  assert.equal(accepted, true, "Canvas accepts the synthetic Kit palette drop");
+  assert.equal(dropped, true, "synthetic Kit drop is dispatched to Canvas");
+  assert.equal(dropPrevented, true, "Canvas prevents the browser's default drop behavior");
 }
 
-const directory = join(tmpdir(), "sbkb-ui-copy-common-terms-20261116");
+const directory = join(tmpdir(), `sbkb-kb-practice-${Date.now()}-${process.pid}`);
+const viteCacheDir = join(process.cwd(), `.kb-practice-vite-cache-${Date.now()}-${process.pid}`);
 await mkdir(directory, { recursive: true });
 const vite = await createServer({
-  cacheDir: join(directory, "vite-cache"),
+  configLoader: "runner",
+  cacheDir: viteCacheDir,
   server: { host: "127.0.0.1", port: 0 },
 });
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -464,7 +802,8 @@ try {
       learnerToken,
       "learner authentication survives entry to tutorial",
     );
-    await p02Page.getByLabel("概念の名前").fill("合成練習概念");
+    await p02Page.getByRole("button", { name: "＋ 概念", exact: true }).click();
+    await p02Page.getByLabel("概念名").fill("合成練習概念");
     await p02Page.getByRole("button", { name: "概念を追加" }).click();
     assert.equal(await p02Page.locator(".concept-node").count(), 1);
     const tutorialRequests = p02ApiObservations.slice(beforeTutorialRequestIndex);
@@ -541,11 +880,13 @@ try {
       await guardPage.getByRole("button", { name: /練習を開く/ }).click();
       await guardPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
       const temporary = failure === "temporary-server" || failure === "temporary-network";
-      if (temporary) {
-        await guardPage.getByLabel("概念の名前").fill("通信復帰前の練習概念");
-        await guardPage.getByRole("button", { name: "概念を追加" }).click();
-        assert.equal(await guardPage.locator(".concept-node").count(), 1);
-      }
+      await guardPage.getByRole("button", { name: "＋ 概念", exact: true }).click();
+      await guardPage.getByLabel("概念名").fill(`停止前の練習概念-${failure}`);
+      await guardPage.getByRole("button", { name: "概念を追加" }).click();
+      assert.equal(await guardPage.locator(".concept-node").count(), 1);
+      const guardProgressKey = `sbkb-practice-progress-v1:00000000-0000-4000-8000-000000000001:${requestDigest(learnerToken)}:PRIOR`;
+      const guardSavedProgress = await guardPage.evaluate((key) => sessionStorage.getItem(key), guardProgressKey);
+      assert.ok(guardSavedProgress, `${failure} retains the last locally saved practice record`);
       let canRecover = false;
       await guardPage.route("**/api/sessions/*/flow", route => {
         if (temporary) {
@@ -572,9 +913,60 @@ try {
       } else {
         await guardPage.getByRole("heading", { name: failure === "ended" ? "実施は終了しました" : "利用状態を確認できません", exact: true }).waitFor();
         assert.equal(await guardPage.getByRole("heading", { name: "操作の練習", exact: true }).count(), 0);
+        assert.equal(await guardPage.evaluate((key) => sessionStorage.getItem(key), guardProgressKey), guardSavedProgress, `${failure} stops practice without deleting its saved record`);
       }
       await guardContext.close();
     }
+
+    const corruptPracticeContext = await browser.newContext({ viewport: { width, height } });
+    const corruptPriorKey = `sbkb-practice-progress-v1:00000000-0000-4000-8000-000000000001:${requestDigest(learnerToken)}:PRIOR`;
+    const legacyCompletionKey = `sbkb-practice-complete-v1:00000000-0000-4000-8000-000000000001:${requestDigest(learnerToken)}`;
+    await corruptPracticeContext.addInitScript(({ token, progressKey, completionKey }) => {
+      sessionStorage.setItem("stage1-access-token", token);
+      sessionStorage.setItem(progressKey, "{broken-json");
+      sessionStorage.setItem(completionKey, "1");
+    }, { token: learnerToken, progressKey: corruptPriorKey, completionKey: legacyCompletionKey });
+    const corruptPracticePage = await corruptPracticeContext.newPage();
+    await installApiFixture(corruptPracticePage, "p02");
+    await corruptPracticePage.goto(vite.resolvedUrls!.local[0]!);
+    await corruptPracticePage.getByRole("heading", { name: "活動の案内" }).waitFor();
+    assert.equal(await corruptPracticePage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(), true, "corrupt practice progress cannot use a stale completion marker to unlock start");
+    await corruptPracticePage.getByRole("button", { name: /練習を開く/ }).click();
+    await corruptPracticePage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+    assert.ok(await corruptPracticePage.getByRole("alert").count() > 0, "corrupt practice data is explained instead of silently reset");
+    corruptPracticePage.once("dialog", dialog => dialog.accept());
+    await corruptPracticePage.getByRole("button", { name: "この練習をやり直す", exact: true }).click();
+    await corruptPracticePage.getByRole("button", { name: "＋ 概念", exact: true }).click();
+    await corruptPracticePage.getByLabel("概念名").fill("初期化後の練習概念");
+    await corruptPracticePage.getByRole("button", { name: "概念を追加" }).click();
+    assert.equal(await corruptPracticePage.locator(".concept-node").count(), 1, "confirmed reset clears only this invalid practice record");
+    assert.equal(await corruptPracticePage.evaluate(key => sessionStorage.getItem(key), legacyCompletionKey), null, "reset also clears the completion marker");
+    await corruptPracticeContext.close();
+
+    const failedWriteContext = await browser.newContext({ viewport: { width, height } });
+    await failedWriteContext.addInitScript(token => {
+      sessionStorage.setItem("stage1-access-token", token);
+      const originalSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key: string, value: string) {
+        if (key.startsWith("sbkb-practice-progress-v1:")) throw new DOMException("Synthetic quota failure", "QuotaExceededError");
+        originalSetItem.call(this, key, value);
+      };
+    }, learnerToken);
+    const failedWritePage = await failedWriteContext.newPage();
+    await installApiFixture(failedWritePage, "p02");
+    await failedWritePage.goto(vite.resolvedUrls!.local[0]!);
+    await failedWritePage.getByRole("button", { name: /練習を開く/ }).click();
+    await failedWritePage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+    await failedWritePage.getByRole("button", { name: "＋ 概念", exact: true }).click();
+    await failedWritePage.getByLabel("概念名").fill("保存失敗してはいけない概念");
+    await failedWritePage.getByRole("button", { name: "概念を追加" }).click();
+    assert.equal(await failedWritePage.locator(".concept-node").count(), 0, "a failed local write does not commit the map change in React state");
+    assert.equal(await failedWritePage.locator('.tutorial-task-progress [role="status"]').innerText(), "0 / 3 件達成", "a failed write cannot award the add task");
+    assert.match(await failedWritePage.getByRole("alert").innerText(), /保存できませんでした/);
+    await failedWritePage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
+    await failedWritePage.getByRole("heading", { name: "活動の案内" }).waitFor();
+    assert.equal(await failedWritePage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(), true, "a failed practice write cannot unlock P02");
+    await failedWriteContext.close();
 
     // Initial material fetch 503 is retryable; no new client owner is claimed.
     const retryContext = await browser.newContext({ viewport: { width, height } });
@@ -663,17 +1055,21 @@ try {
     });
     const tutorialPage = await tutorialContext.newPage();
     // The 1440px run completes every practice task *inside* the P02 session,
-    // then verifies the same-tab F5/start handoff. The 1366px run still tests
-    // the standalone tutorial and performs the 390px native Kit gestures.
+    // then verifies the same-tab F5/start handoff. The 1366px run also checks
+    // the Kit layout at 390px before/after the browser event-path gestures.
     const inlineP02 = width === 1440;
     const p02SessionId = "00000000-0000-4000-8000-000000000001";
     const p02FlowPath = `/api/sessions/${p02SessionId}/flow`;
     const tutorialApiRequests: Array<{ path: string; method: string }> = [];
+    const tutorialPracticeBodies: unknown[] = [];
     const tutorialClaimSecrets: string[] = [];
     tutorialPage.on("request", (request) => {
       const path = new URL(request.url()).pathname;
       if (path.startsWith("/api/"))
         tutorialApiRequests.push({ path, method: request.method() });
+      if (path === "/api/tutorial/kit-practice/check" && request.method() === "POST") {
+        tutorialPracticeBodies.push(request.postDataJSON());
+      }
       if (path === "/api/experiment-client/claim")
         tutorialClaimSecrets.push(request.headers()["x-experiment-client"] ?? "");
     });
@@ -692,24 +1088,25 @@ try {
     } else {
       await tutorialPage.goto(`${vite.resolvedUrls!.local[0]}tutorial`);
     }
+    await installTutorialKitPracticeFixture(tutorialPage);
     await tutorialPage.getByRole("heading", { name: "操作の練習" }).waitFor();
-    const practiceRequestIndex = tutorialApiRequests.length;
-    const tutorialClaimsBeforePractice = tutorialClaimSecrets.length;
+    let practiceRequestIndex = tutorialApiRequests.length;
+    let tutorialClaimsBeforePractice = tutorialClaimSecrets.length;
     const activeTutorialPanel = tutorialPage.locator(".tutorial-practice-panel:not([hidden])");
     assert.equal(
       await tutorialPage.locator(".tutorial-practice-note").innerText(),
       "Scratch-Build → Kit-Build → 統合マップの順で、各段階のすべての操作を完了すると次へ進めます。完了した段階へはいつでも戻り、練習内容を続けて確認できます。",
       "practice introduction uses the shorter rehearsal-approved wording",
     );
-    if (!inlineP02) assert.deepEqual(tutorialApiRequests, [], "standalone tutorial never calls the API");
+    if (!inlineP02) assert.deepEqual(tutorialApiRequests, [], "standalone tutorial makes no request before KB assessment");
     assert.equal(
       await tutorialPage.getByRole("button", { name: "練習を終了" }).isDisabled(),
       true,
       "practice cannot end before all three modes are complete",
     );
     assert.equal(
-      await tutorialPage.getByRole("button", { name: "最初からやり直す" }).count(),
-      0,
+      await tutorialPage.getByRole("button", { name: "この練習をやり直す", exact: true }).count(),
+      1,
     );
     await captureBeforeAfter(tutorialPage, "tutorial-prior", width, directory);
     assert.equal(
@@ -722,31 +1119,113 @@ try {
     assert.equal(await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).isDisabled(), true);
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     assert.equal(await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).isDisabled(), true);
-    await tutorialPage.getByLabel("概念の名前").fill("合成A");
+    assert.deepEqual(
+      await activeTutorialPanel.locator(".tutorial-task-progress ol").innerText(),
+      "○ 概念を追加する未完了\n○ 概念を移動する未完了\n○ リンクを接続する未完了",
+      "SB practice lists only the three required real actions",
+    );
+    let sbZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
+    let sbWritesBeforeActions = tutorialApiRequests.filter((request) => request.method !== "GET").length;
+    await tutorialPage.getByRole("button", { name: "＋ 概念", exact: true }).click();
+    await tutorialPage.getByLabel("概念名").fill("合成A");
     await tutorialPage.getByRole("button", { name: "概念を追加" }).click();
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1);
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "1 / 6 件達成",
-      "creating a saved local concept completes only the add task",
+      "1 / 3 件達成",
+      "adding a local SB concept completes only the add task",
     );
-    // Keep the first concept and finish SB without resetting the practice map.
+    if (inlineP02) {
+      const priorKey = `sbkb-practice-progress-v1:${p02SessionId}:${requestDigest(syntheticAccessCode)}:PRIOR`;
+      const initialStoredProgress = await tutorialPage.evaluate((key) => sessionStorage.getItem(key), priorKey);
+      assert.ok(initialStoredProgress, "the active Session's SB practice map and task progress are saved in this tab");
+      await tutorialPage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      assert.equal(await tutorialPage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(), true);
+      await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+      await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1, "reopening from P02 restores the unfinished SB map");
+      assert.equal(await activeTutorialPanel.locator(".concept-node h3").innerText(), "合成A");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "1 / 3 件達成");
+
+      await tutorialPage.reload();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+      await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1, "same-tab reload restores the SB map");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "1 / 3 件達成");
+
+      await tutorialPage.evaluate((token) => sessionStorage.setItem("stage1-access-token", token), syntheticOtherAccessCode);
+      await tutorialPage.reload();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      assert.equal(await tutorialPage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(), true);
+      await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+      await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 0, "another authorized Session does not inherit the first Session's map");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "0 / 3 件達成");
+      await tutorialPage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+
+      await tutorialPage.evaluate((token) => sessionStorage.setItem("stage1-access-token", token), syntheticAccessCode);
+      await tutorialPage.reload();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+      await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1, "switching back restores only the original Session's saved map");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "1 / 3 件達成");
+      const practiceStorage = await tutorialPage.evaluate(() => Object.entries(sessionStorage)
+        .filter(([key]) => key.startsWith("sbkb-practice-progress-v1:")));
+      assert.equal(practiceStorage.length, 1, "only the SB progress touched in this scenario has been saved");
+      assert.ok(practiceStorage[0]?.[0].includes(p02SessionId), "the saved record is scoped to the original Session");
+      assert.ok(practiceStorage.every(([key, value]) => !key.includes(syntheticAccessCode) && !key.includes(syntheticOtherAccessCode) && !value.includes(syntheticAccessCode) && !value.includes(syntheticOtherAccessCode)), "practice progress never stores an access code");
+      practiceRequestIndex = tutorialApiRequests.length;
+      tutorialClaimsBeforePractice = tutorialClaimSecrets.length;
+      sbWritesBeforeActions = tutorialApiRequests.filter((request) => request.method !== "GET").length;
+      sbZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
+    }
+    // Keep the first concept and add two more without resetting the local map.
     for (const label of ["合成B", "合成C"]) {
-      await tutorialPage.getByLabel("概念の名前").fill(label);
+      await tutorialPage.getByRole("button", { name: "＋ 概念", exact: true }).click();
+      await tutorialPage.getByLabel("概念名").fill(label);
       await tutorialPage.getByRole("button", { name: "概念を追加" }).click();
     }
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 3);
     await activeTutorialPanel.locator(".concept-node").first().click();
-    await tutorialPage.getByLabel("選択した名前を編集").fill("合成A変更");
-    await activeTutorialPanel.locator(".tutorial-edit").getByRole("button", { name: "変更" }).click();
-    const moving = await activeTutorialPanel.locator(".concept-node").first().boundingBox();
+    assert.equal(
+      tutorialApiRequests.filter((request) => request.method !== "GET").length,
+      sbWritesBeforeActions,
+      "zooming and selecting an SB practice concept issue no write request",
+    );
+    await tutorialPage.getByLabel("概念名").fill("合成A変更");
+    await activeTutorialPanel.locator(".map-editor-drawer").getByRole("button", { name: "保存" }).click();
+    assert.equal(
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "1 / 3 件達成",
+      "renaming a concept is available but is not an SB practice task",
+    );
+    const movingNode = activeTutorialPanel.locator(".concept-node").first();
+    await movingNode.scrollIntoViewIfNeeded();
+    const moving = await movingNode.boundingBox();
     assert.ok(moving, "first SB concept has a bounding box");
     await tutorialPage.mouse.move(moving.x + 30, moving.y + 30);
     await tutorialPage.mouse.down();
     await tutorialPage.mouse.move(moving.x + 100, moving.y + 75, { steps: 6 });
     await tutorialPage.mouse.up();
-    await tutorialPage.getByLabel("リンクの名前").fill("合成リンク");
-    await tutorialPage.getByRole("button", { name: "リンクを追加" }).click();
+    assert.equal(
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "2 / 3 件達成",
+      "moving a concept completes the second task",
+    );
+    await activeTutorialPanel.locator(".concept-node").nth(2).click();
+    await activeTutorialPanel.locator(".map-editor-drawer").getByRole("button", { name: "削除" }).click();
+    assert.equal(
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "2 / 3 件達成",
+      "deleting a concept is not an SB practice task",
+    );
+    await tutorialPage.getByRole("button", { name: "＋ リンク", exact: true }).click();
+    await tutorialPage.getByLabel("リンクラベル").fill("合成リンク");
+    await tutorialPage.getByRole("button", { name: "接続を開始" }).click();
 
     const connectTemporary = async (source: number, target: number) => {
       await activeTutorialPanel.locator(".link-connector.is-temporary .link-connector-handle.is-source")
@@ -757,198 +1236,190 @@ try {
         .waitFor({ state: "detached" });
     };
     await connectTemporary(0, 1);
-    await activeTutorialPanel.locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
-      .first().dragTo(activeTutorialPanel.locator(".concept-node").nth(2));
-    await activeTutorialPanel.locator(".concept-node").nth(2).click();
-    await tutorialPage.getByRole("button", { name: "選択した要素を削除" }).click();
+    assert.equal(await sbZoom.percentage.innerText(), "150%", "SB link handles work after zoom and scroll");
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "6 / 6 件達成",
-      "all six SB tasks are completed by actual interactions",
+      "3 / 3 件達成",
+      "connecting both endpoints completes the final SB task",
     );
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).click();
     await tutorialPage.getByRole("heading", { name: "Kit-Buildの練習" }).waitFor();
     assert.equal(
       await activeTutorialPanel.getByRole("searchbox", { name: "キット一覧を検索" }).count(),
-      1, "Kit-Build practice palette uses the new kit wording",
+      1,
+      "KB practice reuses the production Kit palette",
     );
     assert.match(
       await activeTutorialPanel.locator(".tutorial-practice-description").innerText(),
-      /キット一覧から概念とリンクをマップへ追加/,
+      /光合成Kitの部品を配置し、一致状況を確認/,
     );
     assert.equal(await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).isDisabled(), false);
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
     assert.equal(
-      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "0 / 3 件達成",
+      await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(),
+      "0 / 4 件達成",
     );
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
+    assert.equal(await activeTutorialPanel.locator(".link-connector:not(.is-temporary)").count(), 1);
     await captureBeforeAfter(tutorialPage, "tutorial-kit-build", width, directory);
-    // At one desktop iteration, run the *real* Kit pointer drag/connect sequence
-    // at mobile width. The other iteration retains its desktop coverage.
-    // Keep the entire 960px Map canvas scrollable within the narrow viewport.
+    let kbZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
+
     if (width === 1366) {
       await tutorialPage.setViewportSize({ width: 390, height: 844 });
       await assertNoHorizontalOverflow(tutorialPage, "mobile kit before gestures", 390);
+      await tutorialPage.setViewportSize({ width, height });
     }
     assert.equal(await activeTutorialPanel.locator(".tutorial-tools form").count(), 0);
-    const canvas = activeTutorialPanel.locator(".concept-canvas");
-
-    // Native mobile-width mouse drag: put the palette item and drop point in
-    // the visible browser viewport before starting. Locator.dragTo() may
-    // re-scroll the tall page to center the 960px Canvas, hiding the palette.
-    const dragVisibleMobileKitPart = async (
-      part: ReturnType<typeof activeTutorialPanel.locator>,
-      dropX: number,
-      dropY: number,
-    ) => {
-      const mapViewport = activeTutorialPanel.locator(".concept-canvas-viewport");
-      // Center the desired Canvas coordinate in its *internal* horizontal scroll.
-      await mapViewport.evaluate((element, x) => {
-        element.scrollLeft = Math.max(0, x - element.clientWidth / 2);
-      }, dropX);
-      const before = await part.boundingBox();
-      assert.ok(before, "mobile Kit palette item exists");
-      // Place the source near the top; the Canvas then remains lower in view.
-      await tutorialPage.evaluate((sourceY) => {
-        window.scrollBy(0, sourceY - 100);
-      }, before.y);
-      const source = await part.boundingBox();
-      const target = await canvas.boundingBox();
-      const clip = await mapViewport.boundingBox();
-      assert.ok(source && target && clip, "mobile Kit drag elements have bounds");
-      const fromX = source.x + source.width / 2;
-      const fromY = source.y + source.height / 2;
-      const toX = target.x + dropX;
-      const toY = target.y + dropY;
-      const visible =
-        fromX > 2 && fromX < 388 && fromY > 2 && fromY < 842 &&
-        toX > clip.x + 2 && toX < clip.x + clip.width - 2 &&
-        toY > clip.y + 2 && toY < clip.y + clip.height - 2 &&
-        toY > 2 && toY < 842;
-      assert.ok(visible,
-        `mobile Kit drag source/target must both be visible: ${JSON.stringify({ source, target, clip, fromX, fromY, toX, toY })}`,
-      );
-      // Actual pointer movement: no synthetic DragEvent or direct callback.
-      await tutorialPage.mouse.move(fromX, fromY);
-      await tutorialPage.mouse.down();
-      await tutorialPage.mouse.move(fromX + 8, fromY + 8, { steps: 3 });
-      await tutorialPage.mouse.move(toX, toY, { steps: 20 });
-      await tutorialPage.mouse.up();
-    };
-
-    // Playwright may horizontally center the 960px Canvas while preparing dragTo.
-    // Drop near its center so the native pointer target stays inside the
-    // narrow viewport even after that automatic scrolling.
-    for (const [index, x, y] of (width === 1366 ? [
-      [0, 480, 90],
-      [1, 480, 220],
-      [2, 480, 350],
-    ] : [
-      [0, 150, 130],
-      [1, 440, 170],
-      [2, 720, 130],
-    ])) {
-      const part = activeTutorialPanel
-        .locator(".kit-palette-part.is-concept")
-        .nth(index);
-
-      const expected = index + 1;
-
-      for (let attempt = 0; attempt < 2; attempt++) {
-        if (width === 1366) {
-          await dragVisibleMobileKitPart(part, x, attempt === 0 ? y : Math.min(y + 40, 320));
-        } else {
-          await part.dragTo(canvas, {
-            targetPosition: { x, y: attempt === 0 ? y : 390 },
-            steps: 16,
-          });
-        }
-
-        try {
-          await tutorialPage.waitForFunction(
-            (count) =>
-              document.querySelectorAll(".tutorial-practice-panel:not([hidden]) .concept-node").length >= count,
-            expected,
-            { timeout: 2000 }
-          );
-          break;
-        } catch {
-          // 初回の配置が成立しなかった場合だけ再試行
-        }
-      }
-
-      const actual = await activeTutorialPanel.locator(".concept-node").count();
-
-      if (actual !== expected) {
-        const feedback = await activeTutorialPanel
-          .locator(".kit-palette-feedback")
-          .allInnerTexts();
-        const viewport = await activeTutorialPanel.locator(".concept-canvas-viewport")
-          .evaluate((element) => ({
-            scrollLeft: element.scrollLeft,
-            clientWidth: element.clientWidth,
-            scrollWidth: element.scrollWidth,
-            left: element.getBoundingClientRect().left,
-            right: element.getBoundingClientRect().right,
-          }));
-        const partBox = await part.boundingBox();
-        const canvasBox = await canvas.boundingBox();
-
-        throw new Error(
-          `KB概念 ${expected} 個目の配置に失敗しました。\n` +
-          `実際の概念数: ${actual}\n` +
-          `配置結果: ${JSON.stringify(feedback)}\n` +
-          `viewport: ${JSON.stringify(viewport)}\n` +
-          `part: ${JSON.stringify(partBox)}\n` +
-          `canvas: ${JSON.stringify(canvasBox)}`
-        );
-      }
-    }
-    assert.equal(
-      await activeTutorialPanel.locator(".kit-palette-part.is-link").first().isEnabled(),
-      true,
-      "KBリンク部品が使用可能である",
+    const checkButton = tutorialPage.getByRole("button", { name: "一致状況を確認", exact: true });
+    const practiceCheckPath = "/api/tutorial/kit-practice/check";
+    const checkResponse = () => tutorialPage.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === practiceCheckPath &&
+        response.request().method() === "POST",
     );
 
-    // Keep the link's central handle in the same visible Canvas region on mobile.
-    const kitLinkPart = activeTutorialPanel.locator(".kit-palette-part.is-link").first();
-    if (width === 1366) {
-      await dragVisibleMobileKitPart(kitLinkPart, 480, 30);
-    } else {
-      await kitLinkPart.dragTo(canvas, {
-        targetPosition: { x: 30, y: 30 },
-        steps: 16,
-      });
-    }
+    const initialCheck = checkResponse();
+    await checkButton.click();
+    assert.equal((await initialCheck).status(), 200, "partial Kit check uses its synthetic fixture");
+    assert.equal(
+      await activeTutorialPanel.locator(".kit-feedback-result-heading").innerText(),
+      "不一致",
+    );
+    assert.match(
+      await activeTutorialPanel.locator(".kit-feedback-dialog-content").innerText(),
+      /概念 2\/3、関係 1\/2/,
+      "initial partial build reports 2/3 concepts and 1/2 relations",
+    );
 
+    const carbonDioxidePart = activeTutorialPanel
+      .locator(".kit-palette-part.is-concept")
+      .filter({ hasText: "二酸化炭素" });
+    assert.equal(await carbonDioxidePart.isEnabled(), true);
+    await dispatchSyntheticKitPartDrop(
+      tutorialPage,
+      "concept",
+      "二酸化炭素",
+      { x: 760, y: 350 },
+    );
+    await tutorialPage.waitForFunction(
+      () => document.querySelectorAll(".tutorial-practice-panel:not([hidden]) .concept-node").length === 3,
+    );
+    assert.equal(
+      await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(),
+      "0 / 4 件達成",
+      "placement alone does not mark assessment or correction complete",
+    );
+
+    const neededLinkPart = activeTutorialPanel
+      .locator(".kit-palette-part.is-link")
+      .filter({ hasText: "必要とする" });
+    assert.equal(await neededLinkPart.isEnabled(), true, "the relation palette item is available");
+    await dispatchSyntheticKitPartDrop(
+      tutorialPage,
+      "link",
+      "必要とする",
+      { x: 760, y: 250 },
+    );
     const temporaryLink = activeTutorialPanel.locator(".link-connector.is-temporary");
+    await temporaryLink.waitFor({ state: "visible" });
+    await connectTemporary(2, 1);
+    await temporaryLink.waitFor({ state: "detached" });
+    assert.equal(await activeTutorialPanel.locator(".link-connector:not(.is-temporary)").count(), 2);
 
-    if (await temporaryLink.count() === 0) {
-      const feedback = await activeTutorialPanel
-        .locator(".kit-palette-feedback")
-        .allInnerTexts();
-
-      const linkParts = await activeTutorialPanel
-        .locator(".kit-palette-part.is-link")
-        .allInnerTexts();
-
-      throw new Error(
-        "KBのリンク部品がCanvasへ配置されていません。\n" +
-        `パレットの状態: ${JSON.stringify(linkParts)}\n` +
-        `配置結果: ${JSON.stringify(feedback)}`
-      );
-    }
-
-    await connectTemporary(0, 1);
-    await activeTutorialPanel.locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
-      .first().dragTo(activeTutorialPanel.locator(".concept-node").nth(2));
+    const wrongDirectionCheck = checkResponse();
+    await checkButton.click();
+    assert.equal((await wrongDirectionCheck).status(), 200, "reversed Kit check uses its synthetic fixture");
     assert.equal(
-      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "3 / 3 件達成",
-      "all three KB tasks are completed by actual interactions",
+      await activeTutorialPanel.locator(".kit-feedback-result-heading").innerText(),
+      "不一致",
     );
+    assert.match(
+      await activeTutorialPanel.locator(".kit-feedback-dialog-content").innerText(),
+      /概念 3\/3、関係 1\/2/,
+      "placed relation with reversed endpoints remains 3/3 concepts and 1/2 relations",
+    );
+    assert.equal(
+      await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(),
+      "2 / 4 件達成",
+      "a mismatched assessment can be retried and does not complete the practice",
+    );
+
+    const retryCheck = checkResponse();
+    await checkButton.click();
+    assert.equal((await retryCheck).status(), 200, "mismatch can be retried against the synthetic fixture");
+    assert.match(
+      await activeTutorialPanel.locator(".kit-feedback-dialog-content").innerText(),
+      /概念 3\/3、関係 1\/2/,
+      "retry keeps the incorrect-direction result",
+    );
+
+    const requiredEdge = activeTutorialPanel
+      .locator(".link-connector:not(.is-temporary)")
+      .filter({ hasText: "必要とする" });
+    const photosynthesisNode = activeTutorialPanel
+      .locator(".concept-node")
+      .filter({ hasText: "光合成" });
+    const carbonDioxideNode = activeTutorialPanel
+      .locator(".concept-node")
+      .filter({ hasText: "二酸化炭素" });
+    await requiredEdge.locator(".link-connector-handle.is-source").scrollIntoViewIfNeeded();
+    await photosynthesisNode.scrollIntoViewIfNeeded();
+    await requiredEdge
+      .locator(".link-connector-handle.is-source")
+      .dragTo(photosynthesisNode);
+    await requiredEdge
+      .locator(".link-connector-handle.is-target")
+      .dragTo(carbonDioxideNode);
+    assert.equal(
+      await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(),
+      "3 / 4 件達成",
+      "changing both endpoints after mismatch completes only the correction task",
+    );
+    assert.equal(await activeTutorialPanel.locator(".kit-feedback-result-heading").count(), 0);
+
+    const correctedCheck = checkResponse();
+    await checkButton.click();
+    assert.equal((await correctedCheck).status(), 200, "corrected Kit check uses its synthetic fixture");
+    assert.equal(
+      await activeTutorialPanel.locator(".kit-feedback-result-heading").innerText(),
+      "一致",
+    );
+    assert.match(
+      await activeTutorialPanel.locator(".kit-feedback-dialog-content").innerText(),
+      /概念 3\/3、関係 2\/2/,
+      "corrected direction matches all fixed Kit parts",
+    );
+    assert.equal(
+      await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(),
+      "4 / 4 件達成",
+    );
+    if (inlineP02) {
+      await tutorialPage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      assert.equal(await tutorialPage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(), true);
+      await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+      await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+      assert.equal(await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).getAttribute("aria-pressed"), "true", "P02 resumes the last saved KB mode");
+      assert.equal(await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(), "4 / 4 件達成", "KB achievements survive returning to P02");
+      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 3, "KB placements survive returning to P02");
+      assert.equal(await activeTutorialPanel.locator(".kit-feedback-result-heading").innerText(), "一致", "the saved KB result is shown only for its unchanged judged map");
+      kbZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
+    }
+    assert.equal(await kbZoom.percentage.innerText(), "150%", "KB correction succeeds after zoom and scroll");
+    assert.equal(tutorialPracticeBodies.length, 4, "KB uses only the fixed practice check endpoint");
+    for (const body of tutorialPracticeBodies) {
+      assert.deepEqual(Object.keys(body as object).sort(), ["concepts", "links"]);
+      const value = body as { concepts: Array<Record<string, unknown>>; links: Array<Record<string, unknown>> };
+      assert.ok(value.concepts.every((item) => Object.keys(item).sort().join(",") === "id,kitConceptItemId"));
+      assert.ok(value.links.every((item) => Object.keys(item).sort().join(",") === "id,kitLinkItemId,sourceConceptId,targetConceptId"));
+      assert.ok(!JSON.stringify(body).includes("55555555-"), "client request contains no goal concept IDs");
+      assert.ok(!JSON.stringify(body).includes("99999999-"), "client request contains no goal link IDs");
+    }
+    await tutorialPage.getByRole("button", { name: "次へ：統合マップの練習", exact: true }).waitFor();
     if (width === 1366) {
+      await tutorialPage.setViewportSize({ width: 390, height: 844 });
       await assertNoHorizontalOverflow(tutorialPage, "mobile kit after gestures", 390);
       await tutorialPage.setViewportSize({ width, height });
     }
@@ -956,167 +1427,208 @@ try {
     await tutorialPage.getByRole("heading", { name: "統合マップの練習" }).waitFor();
     assert.equal(
       await activeTutorialPanel.locator(".tutorial-practice-description").count(),
-      0, "the integration practice description below the heading is removed",
+      2,
+      "integration practice explains display-only numbering and origins",
     );
-    assert.equal(
-      await activeTutorialPanel.getByRole("searchbox", { name: "キット一覧を検索" }).count(),
-      1, "integration practice uses the kit-list wording too",
-    );
+    assert.equal(await activeTutorialPanel.getByRole("searchbox", { name: "キット一覧を検索" }).count(), 0);
+    assert.equal(await activeTutorialPanel.locator(".tutorial-task-progress ol li").count(), 3);
+    const integrationTasks = await activeTutorialPanel.locator(".tutorial-task-progress ol li").allInnerTexts();
+    assert.equal(integrationTasks.length, 3);
+    for (const label of ["同名概念を見分ける", "Mergeする", "練習内で提出する"])
+      assert.ok(integrationTasks.some((task) => task.includes(label)), `integration practice contains only the required task: ${label}`);
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "0 / 7 件達成",
+      "0 / 3 件達成",
     );
-    const mergePanel = tutorialPage.getByRole("region", { name: "Concept Merge" });
-    await mergePanel.getByLabel("Concept A").selectOption("practice-sb-a");
-    await mergePanel.getByLabel("Concept B").selectOption("practice-sb-b");
-    await mergePanel.getByLabel("Merge後のlabel").fill("点AB");
-    tutorialPage.once("dialog", async (dialog) => dialog.accept());
-    await mergePanel.getByRole("button", { name: "Merge", exact: true }).click();
+    const practiceSbNode = activeTutorialPanel.locator(
+      '.concept-node[data-concept-id="practice-sb-photosynthesis"]',
+    );
+    const practiceKbNode = activeTutorialPanel.locator(
+      '.concept-node[data-concept-id="practice-kb-photosynthesis"]',
+    );
+    assert.equal(await practiceSbNode.locator("h3").innerText(), "光合成 (1)");
+    assert.equal(await practiceKbNode.locator("h3").innerText(), "光合成 (2)");
+    assert.match(
+      await activeTutorialPanel.getByRole("note").innerText(),
+      /SB由来：光合成 \(1\).*KB由来：光合成 \(2\)/,
+    );
+
+    const practiceMergePanel = tutorialPage.getByRole("region", { name: "Concept Merge" });
+    const practiceMergeButton = practiceMergePanel.getByRole("button", { name: "Merge", exact: true });
+    const practiceSubmitButton = tutorialPage.getByRole("button", { name: "練習内で提出", exact: true });
+    assert.equal(await practiceMergeButton.isDisabled(), true);
+    assert.equal(await practiceSubmitButton.isDisabled(), true);
+    const displayedOptions = await practiceMergePanel.getByLabel("Concept A").locator("option").allTextContents();
+    assert.ok(displayedOptions.some((option) => option.includes("光合成 (1)")));
+    assert.ok(displayedOptions.some((option) => option.includes("光合成 (2)")));
+
+    const integrationZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
+    await practiceKbNode.scrollIntoViewIfNeeded();
+    const practiceKbBox = await practiceKbNode.boundingBox();
+    assert.ok(practiceKbBox, "KB-origin practice concept is visible");
+    await tutorialPage.mouse.move(
+      practiceKbBox.x + practiceKbBox.width / 2,
+      practiceKbBox.y + practiceKbBox.height / 2,
+    );
+    await tutorialPage.mouse.down();
+    await tutorialPage.mouse.move(
+      practiceKbBox.x + practiceKbBox.width / 2 + 34,
+      practiceKbBox.y + practiceKbBox.height / 2 + 18,
+      { steps: 4 },
+    );
+    await tutorialPage.mouse.up();
+    assert.equal(await practiceSbNode.locator("h3").innerText(), "光合成 (1)");
+    assert.equal(await practiceKbNode.locator("h3").innerText(), "光合成 (2)");
+    assert.equal(
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "0 / 3 件達成",
+      "moving a practice concept does not change its display ordinal or complete a task",
+    );
+    assert.equal(await integrationZoom.percentage.innerText(), "150%", "integration practice drag works after zoom and scroll");
+
+    await practiceMergePanel.getByLabel("Concept A").selectOption("practice-sb-photosynthesis");
+    await practiceMergePanel.getByLabel("Concept B").selectOption("practice-kb-photosynthesis");
+    assert.equal(
+      await practiceMergePanel.getByLabel("Merge後のlabel").inputValue(),
+      "光合成",
+      "the display ordinal is not copied into the merge label",
+    );
+    assert.equal(
+      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
+      "1 / 3 件達成",
+      "selecting the two origins completes the identification task",
+    );
+    assert.equal(await practiceSubmitButton.isDisabled(), true);
+    tutorialPage.once("dialog", async (dialog) => {
+      assert.match(dialog.message(), /「光合成 \(1\)」と「光合成 \(2\)」をMergeし、「光合成」として表示します/);
+      await dialog.accept();
+    });
+    await practiceMergeButton.click();
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1);
     assert.equal(
-      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "1 / 7 件達成",
+      await activeTutorialPanel.locator(".concept-node h3").innerText(),
+      "光合成",
+      "the merged practice concept keeps the unnumbered saved label",
     );
-    await tutorialPage.getByRole("button", { name: "元に戻す（Undo）" }).click();
-    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
-    await tutorialPage.getByRole("button", { name: "やり直す（Redo）" }).click();
-    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1);
+    assert.equal(await activeTutorialPanel.locator('.concept-node[data-concept-id="practice-sb-photosynthesis"]').count(), 0);
+    assert.equal(await activeTutorialPanel.locator('.concept-node[data-concept-id="practice-kb-photosynthesis"]').count(), 0);
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "3 / 7 件達成",
+      "2 / 3 件達成",
+      "only an actual local merge completes the Merge task",
     );
-    const mergedNode = activeTutorialPanel.locator(".concept-node").first();
-    await mergedNode.click();
-    const releaseButton = tutorialPage.getByRole("button", {
-      name: "Merge結果を削除して1段階解除",
-    });
-    await releaseButton.waitFor();
-    tutorialPage.once("dialog", async (dialog) => dialog.accept());
-    await releaseButton.click();
-    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
-    assert.equal(
-      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "4 / 7 件達成",
-    );
-    assert.equal(await tutorialPage.getByText("すべてのマップの操作練習が完了しました。").count(), 0);
-    const integrationCanvas = activeTutorialPanel.locator(".concept-canvas");
-
-    const kitConceptPart = activeTutorialPanel
-      .locator(".kit-palette-part.is-concept")
-      .first();
-
-    assert.equal(
-      await kitConceptPart.getAttribute("draggable"),
-      "true",
-      "統合マップのKit概念がドラッグ可能である",
-    );
-
-    // Canvasの左上寄りにドロップする
-    await kitConceptPart.dragTo(integrationCanvas, {
-      targetPosition: { x: 30, y: 30 },
-      steps: 16,
-    });
-
-    // Kitから取り込んだ「形」の概念を確認
-    const integrationKitConcept = activeTutorialPanel
-      .locator(".concept-node")
-      .filter({ hasText: "形" });
-
-    try {
-      await integrationKitConcept.waitFor({
-        state: "visible",
-        timeout: 5000,
-      });
-    } catch {
-      const feedback = await activeTutorialPanel
-        .locator(".kit-palette-feedback")
-        .allInnerTexts();
-
-      const concepts = await activeTutorialPanel
-        .locator(".concept-node")
-        .allInnerTexts();
-
-      throw new Error(
-        "統合マップでKit概念「形」を取り込めませんでした。\n" +
-        `概念一覧: ${JSON.stringify(concepts)}\n` +
-        `配置結果: ${JSON.stringify(feedback)}`
-      );
+    assert.equal(await practiceSubmitButton.isEnabled(), true);
+    if (inlineP02) {
+      await tutorialPage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      assert.equal(await tutorialPage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(), true);
+      await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+      await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+      assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).getAttribute("aria-pressed"), "true", "P02 resumes the unfinished integration mode");
+      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1, "the merged practice map is restored");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "2 / 3 件達成");
+      assert.equal(await practiceSubmitButton.isEnabled(), true, "the saved merge keeps the practice submission available");
     }
-    const integrationLinkPart = activeTutorialPanel
-      .locator(".kit-palette-part.is-link")
-      .first();
-
-    assert.equal(
-      await integrationLinkPart.isEnabled(),
-      true,
-      "統合マップのKitリンクが使用可能である",
-    );
-
-    // This uses synthetic DOM drag events: it verifies the event handlers,
-    // but does not verify a user's physical drag-and-drop gesture.
-    await dispatchSyntheticKitLinkDrop(tutorialPage);
-
-    // 未接続リンクが生成されたことを確認
-    const integrationTemporarySource = activeTutorialPanel
-      .locator(".link-connector.is-temporary .link-connector-handle.is-source")
-      .first();
-
-    try {
-      await integrationTemporarySource.waitFor({
-        state: "visible",
-        timeout: 5000,
-      });
-    } catch {
-      const feedback = await activeTutorialPanel
-        .locator(".kit-palette-feedback")
-        .allInnerTexts();
-
-      const linkParts = await activeTutorialPanel
-        .locator(".kit-palette-part.is-link")
-        .allInnerTexts();
-
-      throw new Error(
-        "統合マップのKitリンクが配置されませんでした。\n" +
-        `リンク部品: ${JSON.stringify(linkParts)}\n` +
-        `配置結果: ${JSON.stringify(feedback)}`
-      );
-    }
-
-    await connectTemporary(0, 1);
-    await activeTutorialPanel
-      .locator(".link-connector:not(.is-temporary) .link-connector-handle.is-target")
-      .first()
-      .dragTo(integrationKitConcept);
+    await practiceSubmitButton.click();
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "7 / 7 件達成",
+      "3 / 3 件達成",
     );
+    assert.equal(await tutorialPage.getByRole("button", { name: "練習内で提出済み", exact: true }).isDisabled(), true);
+    await activeTutorialPanel.getByText(
+      "練習内で提出しました。実験Sessionの提出・研究記録には反映されません。",
+    ).waitFor();
     await tutorialPage.getByText("すべてのマップの操作練習が完了しました。").waitFor();
     assert.equal(await tutorialPage.getByRole("button", { name: "練習を終了", exact: true }).isEnabled(), true);
+    if (inlineP02) {
+      await tutorialPage.getByRole("button", { name: "練習を終了", exact: true }).click();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      assert.equal(await tutorialPage.getByRole("button", { name: "セッションを開始", exact: true }).isEnabled(), true);
+      await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+      await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+      assert.equal(await tutorialPage.getByRole("button", { name: "練習内で提出済み", exact: true }).isDisabled(), true, "P02 re-entry restores the integration practice submission state");
+      await activeTutorialPanel.getByText("練習内で提出しました。実験Sessionの提出・研究記録には反映されません。").waitFor();
+    }
     await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).click();
     await tutorialPage.getByRole("heading", { name: "Scratch-Buildの練習" }).waitFor();
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "6 / 6 件達成",
+      "3 / 3 件達成",
     );
     assert.ok(await activeTutorialPanel.locator(".concept-node").count() > 0, "SB map is retained");
     await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).click();
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "3 / 3 件達成",
+      "4 / 4 件達成",
     );
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 3, "KB map is retained");
     await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).click();
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "7 / 7 件達成",
+      "3 / 3 件達成",
     );
+    if (inlineP02) {
+      tutorialPage.once("dialog", dialog => dialog.accept());
+      await tutorialPage.getByRole("button", { name: "この練習をやり直す", exact: true }).click();
+      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2, "reset restores only the integration practice's initial map");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "0 / 3 件達成");
+      assert.equal(await tutorialPage.getByRole("button", { name: "練習内で提出", exact: true }).isDisabled(), true, "reset integration practice cannot remain submitted");
+      await tutorialPage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      assert.equal(await tutorialPage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(), true, "resetting one practice clears the P02 completion gate");
+      await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+      await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "0 / 3 件達成", "reopening resumes the reset integration practice");
+      await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).click();
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "3 / 3 件達成", "reset does not erase completed SB progress");
+      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
+      await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).click();
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "4 / 4 件達成", "reset does not erase completed KB progress");
+      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 3);
+      await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).click();
+      await practiceMergePanel.getByLabel("Concept A").selectOption("practice-sb-photosynthesis");
+      await practiceMergePanel.getByLabel("Concept B").selectOption("practice-kb-photosynthesis");
+      tutorialPage.once("dialog", dialog => dialog.accept());
+      await practiceMergeButton.click();
+      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1);
+      await practiceSubmitButton.click();
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "3 / 3 件達成", "integration progress is restored only by completing Merge and practice submission again");
+    }
+    if (inlineP02) {
+      await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).click();
+      const practiceCheckPath = "/api/tutorial/kit-practice/check";
+      let releaseLateCheck!: () => void;
+      let markLateRequest!: () => void;
+      const lateCheckGate = new Promise<void>((resolve) => { releaseLateCheck = resolve; });
+      const lateRequestSeen = new Promise<void>((resolve) => { markLateRequest = resolve; });
+      await tutorialPage.route(`**${practiceCheckPath}`, async (route) => {
+        markLateRequest();
+        await lateCheckGate;
+        await json(route, { error: "synthetic_delayed_failure" }, 503);
+      });
+      await checkButton.click();
+      await lateRequestSeen;
+      await tutorialPage.getByRole("button", { name: "練習を終了", exact: true }).click();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      const lateResponsePromise = tutorialPage.waitForResponse(
+        (response) => new URL(response.url()).pathname === practiceCheckPath && response.status() === 503,
+      );
+      releaseLateCheck();
+      const lateResponse = await lateResponsePromise;
+      assert.equal(lateResponse.ok(), false);
+      assert.equal(await tutorialPage.getByRole("heading", { name: "活動の案内" }).count(), 1);
+      assert.equal(await tutorialPage.getByRole("alert").count(), 0, "late practice failure is not shown on P02");
+      await tutorialPage.unroute(`**${practiceCheckPath}`);
+    }
     if (inlineP02) {
       const allowedPracticeReads = new Set(["/api/experiment-status", p02FlowPath]);
       assert.deepEqual(
         tutorialApiRequests.slice(practiceRequestIndex).filter(
-          (request) => request.method !== "GET" || !allowedPracticeReads.has(request.path),
+          (request) => !(
+            request.method === "GET" && allowedPracticeReads.has(request.path) ||
+            request.method === "POST" && request.path === "/api/tutorial/kit-practice/check"
+          ),
         ),
         [],
         "actual three-mode P02 practice makes no research writes or unexpected API calls",
@@ -1127,9 +1639,13 @@ try {
         "actual practice never registers another experiment client",
       );
     } else {
-      assert.deepEqual(tutorialApiRequests, [], "standalone three-mode practice makes no API requests");
+      assert.deepEqual(
+        tutorialApiRequests.filter((request) => request.path !== "/api/tutorial/kit-practice/check"),
+        [],
+        "standalone practice uses only the fixed Kit check endpoint",
+      );
     }
-    await tutorialPage.getByRole("button", { name: "練習を終了", exact: true }).click();
+    if (!inlineP02) await tutorialPage.getByRole("button", { name: "練習を終了", exact: true }).click();
     if (inlineP02) {
       await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
       const startButton = tutorialPage.getByRole("button", { name: "セッションを開始", exact: true });
@@ -1261,6 +1777,543 @@ try {
       "main researcher navigation has a visible keyboard focus",
     );
     await homeContext.close();
+
+    const integrationMapContext = await browser.newContext({
+      viewport: { width, height },
+      deviceScaleFactor: 1,
+    });
+    await integrationMapContext.addInitScript(() =>
+      sessionStorage.setItem(
+        "stage1-access-token",
+        "SYNTHETIC_RESEARCHER_TOKEN_ONLY",
+      ),
+    );
+    const integrationMapPage = await integrationMapContext.newPage();
+    await installApiFixture(integrationMapPage, "researcher-populated");
+    const productionMapFixture = await installProductionIntegrationMapFixture(integrationMapPage);
+    await integrationMapPage.goto(
+      `${vite.resolvedUrls!.local[0]}maps/${productionIntegrationMapId}`,
+    );
+    await integrationMapPage.getByRole("heading", { name: "Concept マップ", exact: true }).waitFor();
+    const productionSbNode = integrationMapPage.locator(
+      `.concept-node[data-concept-id="${productionDuplicateConceptIds.sb}"]`,
+    );
+    const productionKbNode = integrationMapPage.locator(
+      `.concept-node[data-concept-id="${productionDuplicateConceptIds.kb}"]`,
+    );
+    const assertProductionDuplicateOrdinals = async () => {
+      assert.equal(await productionSbNode.locator("h3").innerText(), "光合成 (1)");
+      assert.equal(await productionKbNode.locator("h3").innerText(), "光合成 (2)");
+      const firstOptions = await integrationMapPage
+        .getByRole("region", { name: "Concept Merge" })
+        .getByLabel("Concept A")
+        .locator("option")
+        .allTextContents();
+      assert.ok(firstOptions.some((option) => option.includes("光合成 (1)")));
+      assert.ok(firstOptions.some((option) => option.includes("光合成 (2)")));
+    };
+    await assertProductionDuplicateOrdinals();
+    assert.equal(
+      await integrationMapPage.locator(".concept-canvas-view-controls").count(),
+      0,
+      "researcher Map keeps the existing canvas controls",
+    );
+    await assertNoHorizontalOverflow(integrationMapPage, "production integration map", width);
+
+    await integrationMapPage.reload();
+    await integrationMapPage.getByRole("heading", { name: "Concept マップ", exact: true }).waitFor();
+    await assertProductionDuplicateOrdinals();
+
+    const productionMergePanel = integrationMapPage.getByRole("region", { name: "Concept Merge" });
+    await productionMergePanel.getByLabel("Concept A").selectOption(productionDuplicateConceptIds.sb);
+    await productionMergePanel.getByLabel("Concept B").selectOption(productionDuplicateConceptIds.kb);
+    assert.equal(await productionMergePanel.getByLabel("Merge後のlabel").inputValue(), "光合成");
+    const productionMergeResponsePromise = integrationMapPage.waitForResponse((response) =>
+      new URL(response.url()).pathname === `/api/maps/${productionIntegrationMapId}/concepts/merge` &&
+      response.request().method() === "POST",
+    );
+    integrationMapPage.once("dialog", async (dialog) => {
+      assert.match(dialog.message(), /「光合成 \(1\)」と「光合成 \(2\)」をMergeし、「光合成」として表示します/);
+      await dialog.accept();
+    });
+    await productionMergePanel.getByRole("button", { name: "Merge", exact: true }).click();
+    assert.equal((await productionMergeResponsePromise).status(), 201);
+    assert.equal(productionMapFixture.mergeRequests.length, 1);
+    const productionMergeBody = productionMapFixture.mergeRequests[0] as {
+      conceptIds: string[];
+      label: string;
+    };
+    assert.deepEqual(productionMergeBody.conceptIds, [
+      productionDuplicateConceptIds.sb,
+      productionDuplicateConceptIds.kb,
+    ]);
+    assert.equal(productionMergeBody.label, "光合成", "display ordinals are not persisted as the concept name");
+    const productionMergedNode = integrationMapPage.locator(
+      `.concept-node[data-concept-id="${productionDuplicateConceptIds.merged}"] h3`,
+    );
+    await productionMergedNode.waitFor();
+    assert.equal(await productionMergedNode.innerText(), "光合成");
+    assert.equal(await integrationMapPage.locator(".concept-node").count(), 2);
+    assert.equal(await productionSbNode.count(), 0);
+    assert.equal(await productionKbNode.count(), 0);
+    assert.deepEqual(
+      productionMapFixture.snapshot().concepts.find((concept) => concept.id === productionDuplicateConceptIds.merged),
+      {
+        id: productionDuplicateConceptIds.merged,
+        mapId: productionIntegrationMapId,
+        label: "光合成",
+        positionX: 265,
+        positionY: 140,
+        createdAt: "2026-11-25T01:00:00.000Z",
+        updatedAt: "2026-11-25T01:00:00.000Z",
+        isMergeResult: true,
+      },
+    );
+    assert.ok(
+      productionMapFixture.snapshot().links.every((link) =>
+        link.sourceConceptId !== productionDuplicateConceptIds.sb &&
+        link.sourceConceptId !== productionDuplicateConceptIds.kb &&
+        link.targetConceptId !== productionDuplicateConceptIds.sb &&
+        link.targetConceptId !== productionDuplicateConceptIds.kb,
+      ),
+      "the synthetic Merge response keeps both existing link endpoints attached to the Merge result",
+    );
+    await assertNoHorizontalOverflow(integrationMapPage, "production integration map after Merge", width);
+    await integrationMapContext.close();
+
+    const learnerMapContext = await browser.newContext({
+      viewport: { width, height },
+      deviceScaleFactor: 1,
+    });
+    await learnerMapContext.addInitScript((token) =>
+      sessionStorage.setItem("stage1-access-token", token),
+      syntheticAccessCode,
+    );
+    const learnerMapPage = await learnerMapContext.newPage();
+    await installApiFixture(learnerMapPage, "legacy-session");
+    const learnerMapFixture = await installProductionIntegrationMapFixture(
+      learnerMapPage,
+      "00000000-0000-4000-8000-000000000003",
+    );
+    await learnerMapPage.goto(
+      `${vite.resolvedUrls!.local[0]}maps/${productionIntegrationMapId}`,
+    );
+    await learnerMapPage.getByRole("heading", { name: "Concept マップ", exact: true }).waitFor();
+    assert.equal(
+      await learnerMapPage.locator(".integration-deadline-status").count(),
+      0,
+      "no countdown is shown when the Session flow does not provide a deadline",
+    );
+    const learnerZoom = await exerciseCanvasZoomControls(learnerMapPage);
+    const learnerKbNode = learnerMapPage.locator(
+      `.concept-node[data-concept-id="${productionDuplicateConceptIds.kb}"]`,
+    );
+    await learnerKbNode.scrollIntoViewIfNeeded();
+    await learnerKbNode.click();
+    assert.equal(
+      learnerMapFixture.positionRequests.length,
+      0,
+      "zoom, Fit, scroll, and selecting a concept do not send position PATCH",
+    );
+    assert.equal(await learnerZoom.percentage.innerText(), "150%");
+    await learnerKbNode.scrollIntoViewIfNeeded();
+    const learnerKbBox = await learnerKbNode.boundingBox();
+    assert.ok(learnerKbBox, "learner Map node remains visible after zoom and scroll");
+    const learnerPositionResponse = learnerMapPage.waitForResponse((response) =>
+      new URL(response.url()).pathname === `/api/concepts/${productionDuplicateConceptIds.kb}/position` &&
+      response.request().method() === "PATCH",
+    );
+    await learnerMapPage.mouse.move(
+      learnerKbBox.x + learnerKbBox.width / 2,
+      learnerKbBox.y + learnerKbBox.height / 2,
+    );
+    await learnerMapPage.mouse.down();
+    await learnerMapPage.mouse.move(
+      learnerKbBox.x + learnerKbBox.width / 2 + 90,
+      learnerKbBox.y + learnerKbBox.height / 2 + 60,
+      { steps: 6 },
+    );
+    await learnerMapPage.mouse.up();
+    assert.equal((await learnerPositionResponse).status(), 200);
+    assert.equal(learnerMapFixture.positionRequests.length, 1);
+    const savedLearnerPosition = learnerMapFixture.positionRequests[0]!;
+    const savedSnapshotPosition = learnerMapFixture.snapshot().concepts.find(
+      (concept) => concept.id === productionDuplicateConceptIds.kb,
+    );
+    assert.deepEqual(
+      savedSnapshotPosition && {
+        positionX: savedSnapshotPosition.positionX,
+        positionY: savedSnapshotPosition.positionY,
+      },
+      { positionX: savedLearnerPosition.positionX, positionY: savedLearnerPosition.positionY },
+      "synthetic map API stores the exact position sent by the pointer drag",
+    );
+    await learnerMapPage.reload();
+    await learnerMapPage.getByRole("heading", { name: "Concept マップ", exact: true }).waitFor();
+    const reloadedLearnerPosition = await learnerMapPage
+      .locator(`.concept-node[data-concept-id="${productionDuplicateConceptIds.kb}"]`)
+      .evaluate((element) => ({
+        left: Number.parseFloat((element as HTMLElement).style.left),
+        top: Number.parseFloat((element as HTMLElement).style.top),
+      }));
+    assert.deepEqual(reloadedLearnerPosition, {
+      left: savedLearnerPosition.positionX,
+      top: savedLearnerPosition.positionY,
+    }, "reload renders the saved API coordinates at the same logical position");
+    await learnerMapContext.close();
+
+    for (const mapType of ["PRIOR", "KB"] as const) {
+      const mapContext = await browser.newContext({
+        viewport: { width, height },
+        deviceScaleFactor: 1,
+      });
+      await mapContext.addInitScript((token) =>
+        sessionStorage.setItem("stage1-access-token", token),
+        syntheticAccessCode,
+      );
+      const mapPage = await mapContext.newPage();
+      await installApiFixture(mapPage, "legacy-session");
+      const mapFixture = await installProductionIntegrationMapFixture(
+        mapPage,
+        "00000000-0000-4000-8000-000000000003",
+        mapType,
+      );
+      await mapPage.goto(`${vite.resolvedUrls!.local[0]}maps/${productionIntegrationMapId}`);
+      await mapPage.locator(".concept-canvas-viewport").waitFor();
+      await exerciseCanvasZoomControls(mapPage);
+      await mapPage.locator(".concept-node").first().click();
+      assert.equal(
+        mapFixture.positionRequests.length,
+        0,
+        `${mapType} zoom, Fit, scroll, and selection do not save a position`,
+      );
+      await mapContext.close();
+    }
+
+    const deadlineSessionId = "00000000-0000-4000-8000-000000000003";
+    const deadlineStageId = "00000000-0000-4000-8000-000000000022";
+    const deadlineMapUrl = new URL(
+      "maps/" + productionIntegrationMapId,
+      vite.resolvedUrls!.local[0],
+    ).toString();
+    const canvasTop = async (page: Page) => {
+      const box = await page.locator(".concept-canvas-viewport").boundingBox();
+      assert.ok(box, "integration canvas is rendered");
+      return box.y;
+    };
+    const assertCanvasTopStable = async (
+      page: Page,
+      expected: number,
+      message: string,
+    ) => {
+      const actual = await canvasTop(page);
+      assert.ok(
+        Math.abs(actual - expected) <= 2,
+        `${message}: expected ${expected}, received ${actual}`,
+      );
+    };
+    const waitForDeadlineLayoutToSettle = async (
+      page: Page,
+      stateLabel: string,
+    ) => {
+      await page.waitForFunction(
+        (label) => {
+          const selectors = [
+            ".map-editor-header",
+            ".map-editor-header-actions",
+            ".integration-deadline-status",
+            'header p[role="status"]:not(.integration-deadline-status)',
+            ".session-error",
+            ".map-editor-operation-hint",
+            ".map-editor-tools",
+            ".map-editor-supplement-grid",
+            ".concept-canvas-viewport",
+            ".map-editor-save-status",
+          ];
+          const parts = [
+            window.innerWidth,
+            window.innerHeight,
+            document.documentElement.clientWidth,
+            window.scrollX.toFixed(2),
+            window.scrollY.toFixed(2),
+          ];
+          for (let index = 0; index < selectors.length; index += 1) {
+            const selector = selectors[index];
+            const element = document.querySelector(selector);
+            if (!element) {
+              parts.push(`${selector}:absent`);
+              continue;
+            }
+            const rect = element.getBoundingClientRect();
+            parts.push(
+              `${selector}:${rect.top.toFixed(2)},${rect.width.toFixed(2)},${rect.height.toFixed(2)},${(element.textContent ?? "").replace(/\s+/g, " ").trim()}`,
+            );
+          }
+          const signature = `${label}:${parts.join("|")}`;
+          const probe = window as unknown as Record<string, string | undefined>;
+          const previous = probe.__deadlineLayoutProbe;
+          if (previous === signature) {
+            delete probe.__deadlineLayoutProbe;
+            return true;
+          }
+          probe.__deadlineLayoutProbe = signature;
+          return false;
+        },
+        stateLabel,
+        { polling: "raf", timeout: 5000 },
+      );
+    };
+    const readDeadlineLayout = async (page: Page) =>
+      page.evaluate(() => {
+        const header = document.querySelector(".map-editor-header")?.getBoundingClientRect();
+        const headerActions = document.querySelector(".map-editor-header-actions")?.getBoundingClientRect();
+        const deadline = document.querySelector(".integration-deadline-status")?.getBoundingClientRect();
+        const operationHint = document.querySelector(".map-editor-operation-hint")?.getBoundingClientRect();
+        const tools = document.querySelector(".map-editor-tools")?.getBoundingClientRect();
+        const supplement = document.querySelector(".map-editor-supplement-grid")?.getBoundingClientRect();
+        const canvas = document.querySelector(".concept-canvas-viewport")?.getBoundingClientRect();
+        return {
+          viewport: {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            clientWidth: document.documentElement.clientWidth,
+            scrollX: window.scrollX,
+            scrollY: window.scrollY,
+          },
+          areas: {
+            header: header ? { top: header.top, width: header.width, height: header.height } : null,
+            headerActions: headerActions ? { top: headerActions.top, width: headerActions.width, height: headerActions.height } : null,
+            deadline: deadline ? { top: deadline.top, width: deadline.width, height: deadline.height } : null,
+            operationHint: operationHint ? { top: operationHint.top, width: operationHint.width, height: operationHint.height } : null,
+            tools: tools ? { top: tools.top, width: tools.width, height: tools.height } : null,
+            supplement: supplement ? { top: supplement.top, width: supplement.width, height: supplement.height } : null,
+            canvas: canvas ? { top: canvas.top, width: canvas.width, height: canvas.height } : null,
+          },
+        };
+      });
+    const assertDeadlineAreasStable = async (
+      page: Page,
+      expected: Awaited<ReturnType<typeof readDeadlineLayout>>,
+      message: string,
+    ) => {
+      const actual = await readDeadlineLayout(page);
+      assert.deepEqual(actual.viewport, expected.viewport, `${message}: viewport and scroll remain stable`);
+      for (const name of ["header", "headerActions", "deadline", "operationHint", "tools", "supplement"] as const) {
+        const expectedArea = expected.areas[name];
+        const actualArea = actual.areas[name];
+        assert.ok(expectedArea && actualArea, `${message}: ${name} remains rendered`);
+        for (const dimension of ["top", "width", "height"] as const) {
+          assert.ok(
+            Math.abs(actualArea[dimension] - expectedArea[dimension]) <= 1,
+            `${message}: ${name} ${dimension} remains stable (expected ${expectedArea[dimension]}, received ${actualArea[dimension]})`,
+          );
+        }
+      }
+      await assertCanvasTopStable(
+        page,
+        expected.areas.canvas?.top ?? Number.NaN,
+        `${message}: canvas remains stable`,
+      );
+    };
+    const countdownContext = await browser.newContext({
+      viewport: { width, height },
+      deviceScaleFactor: 1,
+    });
+    await countdownContext.addInitScript((token) =>
+      sessionStorage.setItem("stage1-access-token", token),
+      syntheticAccessCode,
+    );
+    const countdownPage = await countdownContext.newPage();
+    await installApiFixture(countdownPage, "legacy-session");
+    const countdownStartedAt = new Date(Date.now() - 5000).toISOString();
+    await installProductionIntegrationMapFixture(
+      countdownPage,
+      deadlineSessionId,
+      "INTEGRATION",
+      false,
+      deadlineStageId,
+    );
+    await installIntegrationDeadlineFlowFixture(
+      countdownPage,
+      deadlineSessionId,
+      deadlineStageId,
+      countdownStartedAt,
+      90,
+      () => false,
+      () => undefined,
+    );
+    await countdownPage.goto(deadlineMapUrl);
+    await countdownPage.locator(".concept-canvas-viewport").waitFor();
+    await countdownPage.locator(".integration-deadline-status").waitFor();
+    const initialRemaining = await readDisplayedRemainingSeconds(countdownPage);
+    assert.ok(initialRemaining > 0 && initialRemaining < 90);
+    const initialCanvasTop = await canvasTop(countdownPage);
+    await countdownPage.waitForTimeout(1200);
+    const afterTickRemaining = await readDisplayedRemainingSeconds(countdownPage);
+    assert.ok(afterTickRemaining < initialRemaining);
+    await assertCanvasTopStable(
+      countdownPage,
+      initialCanvasTop,
+      "changing countdown digits does not move the canvas",
+    );
+
+    await countdownPage.reload();
+    await countdownPage.locator(".concept-canvas-viewport").waitFor();
+    await countdownPage.locator(".integration-deadline-status").waitFor();
+    const afterReloadRemaining =
+      await readDisplayedRemainingSeconds(countdownPage);
+    assert.ok(
+      afterReloadRemaining < initialRemaining,
+      "reload recalculates against the same server deadline instead of restarting it",
+    );
+    const reloadedCanvasTop = await canvasTop(countdownPage);
+
+    await countdownPage.evaluate(() => window.dispatchEvent(new Event("blur")));
+    const beforeBackgroundResume =
+      await readDisplayedRemainingSeconds(countdownPage);
+    await countdownPage.waitForTimeout(1200);
+    await countdownPage.evaluate(() => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    const afterBackgroundResume =
+      await readDisplayedRemainingSeconds(countdownPage);
+    assert.ok(afterBackgroundResume < beforeBackgroundResume);
+    await assertCanvasTopStable(
+      countdownPage,
+      reloadedCanvasTop,
+      "returning from the background recalculates time without moving the canvas",
+    );
+    await assertNoHorizontalOverflow(
+      countdownPage,
+      "integration countdown",
+      width,
+    );
+    await countdownContext.close();
+
+    const submissionContext = await browser.newContext({
+      viewport: { width, height },
+      deviceScaleFactor: 1,
+    });
+    await submissionContext.addInitScript((token) =>
+      sessionStorage.setItem("stage1-access-token", token),
+      syntheticAccessCode,
+    );
+    const submissionPage = await submissionContext.newPage();
+    await installApiFixture(submissionPage, "legacy-session");
+    const submissionFixture = await installProductionIntegrationMapFixture(
+      submissionPage,
+      deadlineSessionId,
+      "INTEGRATION",
+      false,
+      deadlineStageId,
+    );
+    let allowAutoSubmission = false;
+    const submissionStartedAt = new Date(Date.now() - 1000).toISOString();
+    const submissionFlow = await installIntegrationDeadlineFlowFixture(
+      submissionPage,
+      deadlineSessionId,
+      deadlineStageId,
+      submissionStartedAt,
+      6,
+      () => allowAutoSubmission,
+      (submittedAt) => submissionFixture.markSubmitted(submittedAt),
+    );
+    await submissionPage.goto(deadlineMapUrl);
+    await submissionPage.locator(".concept-canvas-viewport").waitFor();
+    const submissionLabel = submissionPage.locator(
+      ".integration-deadline-status",
+    );
+    await submissionLabel.waitFor();
+    await waitForDeadlineLayoutToSettle(submissionPage, "before-deadline");
+    const beforeDeadlineRemaining =
+      await readDisplayedRemainingSeconds(submissionPage);
+    assert.ok(beforeDeadlineRemaining > 0);
+    const beforeDeadlineLayout = await readDeadlineLayout(submissionPage);
+    await submissionPage.waitForFunction(
+      () =>
+        document
+          .querySelector(".integration-deadline-status")
+          ?.textContent?.includes("提出状態を確認中") === true,
+      null,
+      { timeout: 10000 },
+    );
+    assert.ok(submissionFlow.requestCount() >= 2);
+    assert.equal(
+      submissionFixture.snapshot().status,
+      "DRAFT",
+      "the UI does not show submission before the server confirms it",
+    );
+    assert.equal(
+      await submissionPage.locator(".map-editor-save-status").innerText(),
+      "保存済み",
+    );
+    await waitForDeadlineLayoutToSettle(submissionPage, "deadline-checking");
+    await assertDeadlineAreasStable(
+      submissionPage,
+      beforeDeadlineLayout,
+      "zero countdown does not move the canvas",
+    );
+
+    allowAutoSubmission = true;
+    await submissionPage.waitForFunction(
+      () =>
+        document.querySelector(".integration-deadline-status")?.textContent ===
+        "提出済み",
+      null,
+      { timeout: 5000 },
+    );
+    assert.equal(
+      submissionFixture.snapshot().status,
+      "SUBMITTED",
+      "the synthetic server state is submitted before the UI label changes",
+    );
+    assert.ok(submissionFixture.snapshot().submittedAt);
+    assert.equal(
+      await submissionPage.locator(".map-editor-save-status").innerText(),
+      "提出済み",
+    );
+    await waitForDeadlineLayoutToSettle(submissionPage, "server-confirmed-submitted");
+    await assertDeadlineAreasStable(
+      submissionPage,
+      beforeDeadlineLayout,
+      "changing to server-confirmed submitted status does not move the canvas",
+    );
+    assert.ok(submissionFlow.requestCount() >= 3);
+    await assertNoHorizontalOverflow(
+      submissionPage,
+      "integration map after deadline submission",
+      width,
+    );
+    await submissionContext.close();
+
+    if (width === 1366) {
+      const readOnlyContext = await browser.newContext({
+        viewport: { width, height },
+        deviceScaleFactor: 1,
+      });
+      await readOnlyContext.addInitScript((token) =>
+        sessionStorage.setItem("stage1-access-token", token),
+        syntheticAccessCode,
+      );
+      const readOnlyPage = await readOnlyContext.newPage();
+      await installApiFixture(readOnlyPage, "legacy-session");
+      const readOnlyFixture = await installProductionIntegrationMapFixture(
+        readOnlyPage,
+        "00000000-0000-4000-8000-000000000003",
+        "INTEGRATION",
+        true,
+      );
+      await readOnlyPage.goto(`${vite.resolvedUrls!.local[0]}maps/${productionIntegrationMapId}`);
+      await readOnlyPage.locator(".concept-canvas-viewport").waitFor();
+      await exerciseCanvasZoomControls(readOnlyPage);
+      assert.equal(
+        readOnlyFixture.positionRequests.length,
+        0,
+        "submitted learner Map zoom is display-only",
+      );
+      await readOnlyContext.close();
+    }
   }
 
   for (const width of [1366, 1440]) {
@@ -1342,7 +2395,8 @@ try {
     await mobilePage.getByRole("button", { name: "練習を終了", exact: true }).isDisabled(),
     true,
   );
-  await mobilePage.getByLabel("概念の名前").fill("390px合成概念");
+  await mobilePage.getByRole("button", { name: "＋ 概念", exact: true }).click();
+  await mobilePage.getByLabel("概念名").fill("390px合成概念");
   await mobilePage.getByRole("button", { name: "概念を追加" }).click();
   assert.equal(await mobilePage.locator(".tutorial-practice-panel:not([hidden]) .concept-node").count(), 1);
   await assertNoHorizontalOverflow(mobilePage, "mobile practice after concept creation", 390);
@@ -1362,9 +2416,10 @@ try {
   await mobileContext.close();
 
   console.log(
-    `Rehearsal UI: PASS (signed-out code entry without practice card; P02 inline practice/return with unchanged client claims and no learning writes; precompleted start gate survives F5; 390px P02/practice smoke; normal start and historical session compatibility preserved; unpublished/waiting/ended; researcher states; Edge synthetic fixtures at 1366x768 and 1440x900; screenshots: ${directory}; no real API or DB persistence verified)`,
+    `Rehearsal UI: PASS (signed-out code entry without practice card; P02 inline practice/return with unchanged client claims and no learning writes; precompleted start gate survives F5; 390px P02/practice smoke; normal start and historical session compatibility preserved; unpublished/waiting/ended; researcher states; synthetic browser fixtures at 1366x768 and 1440x900; screenshots: ${directory}; real API/DB persistence is verified separately)`,
   );
 } finally {
   await browser?.close();
   await vite.close();
+  await rm(viteCacheDir, { recursive: true, force: true });
 }

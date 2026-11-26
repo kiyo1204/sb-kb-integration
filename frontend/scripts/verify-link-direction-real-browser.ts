@@ -23,7 +23,7 @@ const browser = await chromium.launch({
 });
 try {
   const page = await browser.newPage({
-    viewport: { width: 1440, height: 1000 },
+    viewport: { width: 1440, height: 900 },
   });
   page.setDefaultTimeout(15000);
   await page.addInitScript(
@@ -70,6 +70,13 @@ try {
         label: l.label,
       }),
     );
+  };
+  const fullSnapshot = async () => {
+    const r = await page.request.get(base + `/api/maps/${mapId}`, {
+      headers: learnerHeaders,
+    });
+    assert.equal(r.status(), 200);
+    return r.json();
   };
   // A new browser needs one explicit researcher-approved screen transfer.
   // Later full navigations are same-tab reloads and must retain that ownership.
@@ -142,6 +149,8 @@ try {
   }
 
   const mutations: string[] = [];
+  let positionPatches = 0;
+  const positionPatchStatuses: number[] = [];
   page.on("request", (r) => {
     if (
       (r.method() === "POST" &&
@@ -149,6 +158,15 @@ try {
       (r.method() === "PATCH" && r.url().endsWith("/reconnect"))
     )
       mutations.push(r.method());
+    if (
+      r.method() === "PATCH" &&
+      /^\/api\/links\/[^/]+\/position$/.test(new URL(r.url()).pathname)
+    )
+      positionPatches++;
+  });
+  page.on("response", (r) => {
+    if (/^\/api\/links\/[^/]+\/position$/.test(new URL(r.url()).pathname))
+      positionPatchStatuses.push(r.status());
   });
   await enter();
   const initial = await snapshot();
@@ -247,6 +265,39 @@ try {
   );
   await enter();
   const saved = `[data-connector-id="${link.id}"]`;
+  async function moveReconnectLabel(deltaX: number, deltaY: number) {
+    await page.getByRole("button", { name: "全体表示", exact: true }).click();
+    const connector = page.locator(saved + ".is-reconnecting"),
+      label = connector.locator(".link-connector-label");
+    const before = await connector.evaluate((el) => ({
+      left: (el as HTMLElement).style.left,
+      top: (el as HTMLElement).style.top,
+    }));
+    const bounds = await label.boundingBox();
+    assert.ok(bounds);
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      bounds.x + bounds.width / 2 + deltaX,
+      bounds.y + bounds.height / 2 + deltaY,
+      { steps: 8 },
+    );
+    await page.mouse.up();
+    const after = await connector.evaluate((el) => ({
+      left: (el as HTMLElement).style.left,
+      top: (el as HTMLElement).style.top,
+    }));
+    assert.notDeepEqual(after, before, "the reconnect draft link body moves");
+    assert.equal(await label.innerText(), link.label);
+    return {
+      before,
+      after,
+      point: {
+        x: Number.parseFloat(after.left),
+        y: Number.parseFloat(after.top),
+      },
+    };
+  }
   await page.locator(saved).waitFor();
   let row = (await snapshot()).find((l: { id: string }) => l.id === link.id);
   assert.equal(row.source, a);
@@ -370,13 +421,164 @@ try {
     await page.getByRole("button",{name:"接続編集を取消",exact:true}).click();
     await page.locator(".is-reconnecting").waitFor({state:"detached"});
     assert.equal((await snapshot()).find((l:{id:string})=>l.id===link.id).source,a);
-    // Only an explicit fresh edit captures the newly saved connection.
-    await page.locator(saved+" .link-connector-label").dblclick();
-    await pending.waitFor();await drag(saved+" .is-source",b);await page.mouse.up();
-    const fresh=page.waitForResponse(r=>r.request().method()==="PATCH"&&r.url().endsWith("/reconnect"));
-    await drag(saved+" .is-target",c);await page.mouse.up();assert.equal((await fresh).status(),200);
-    await page.locator(".is-reconnecting").waitFor({state:"detached"});
-    await enter();await page.locator(saved).waitFor();assert.equal((await snapshot()).find((l:{id:string})=>l.id===link.id).source,b);
+    // A disconnected or one-sided draft can be moved, then cancelled without writes.
+    if (originalMap.type === "PRIOR") {
+      const beforeCancel = await fullSnapshot(),
+        beforeCancelLink = beforeCancel.links.find((l: { id: string }) => l.id === link.id),
+        positionCountBeforeCancel = positionPatches,
+        mutationCountBeforeCancel = mutations.length;
+      await page.locator(saved + " .link-connector-label").dblclick();
+      await pending.waitFor();
+      assert.equal(await page.locator(saved + " .is-connected").count(), 0);
+      const cancelledMove = await moveReconnectLabel(28, 18);
+      await drag(saved + " .is-source", b);
+      await page.mouse.up();
+      assert.equal(positionPatches, positionCountBeforeCancel);
+      assert.equal(mutations.length, mutationCountBeforeCancel);
+      assert.deepEqual(
+        (await fullSnapshot()).links.find((l: { id: string }) => l.id === link.id),
+        beforeCancelLink,
+        "detached/one-sided movement does not change the saved link",
+      );
+      await page.getByRole("button", { name: "接続編集を取消", exact: true }).click();
+      await page.locator(".is-reconnecting").waitFor({ state: "detached" });
+      assert.equal(positionPatches, positionCountBeforeCancel);
+      assert.deepEqual(
+        (await fullSnapshot()).links.find((l: { id: string }) => l.id === link.id),
+        beforeCancelLink,
+        "cancelling restores the saved connection and position",
+      );
+
+      // Complete both endpoints; only then should the same ID and new position save.
+      const positionCountBeforeSave = positionPatches,
+        mutationCountBeforeSave = mutations.length;
+      await page.locator(saved + " .link-connector-label").dblclick();
+      await pending.waitFor();
+      const savedMove = await moveReconnectLabel(36, 24);
+      await drag(saved + " .is-source", b);
+      await page.mouse.up();
+      assert.equal(positionPatches, positionCountBeforeSave);
+      assert.equal(mutations.length, mutationCountBeforeSave);
+      const reconnectSaved = page.waitForResponse(
+        (r) => r.request().method() === "PATCH" &&
+          new URL(r.url()).pathname === `/api/links/${link.id}/reconnect`,
+      );
+      const positionSaved = page.waitForResponse(
+        (r) => r.request().method() === "PATCH" &&
+          new URL(r.url()).pathname === `/api/links/${link.id}/position`,
+      );
+      await drag(saved + " .is-target", c);
+      await page.mouse.up();
+      const reconnectResponse = await reconnectSaved,
+        positionResponse = await positionSaved;
+      assert.equal(reconnectResponse.status(), 200);
+      assert.equal(positionResponse.status(), 200);
+      await page.locator(".is-reconnecting").waitFor({ state: "detached" });
+      const afterSaveMap = await fullSnapshot(),
+        afterSave = afterSaveMap.links.find((l: { id: string }) => l.id === link.id);
+      for (const key of ["id", "mapId", "label", "kitLinkItemId", "provenance"])
+        assert.deepEqual(afterSave[key], original[key]);
+      assert.equal(afterSave.sourceConceptId, b);
+      assert.equal(afterSave.targetConceptId, c);
+      assert.equal(afterSave.labelPositionX, savedMove.point.x);
+      assert.equal(afterSave.labelPositionY, savedMove.point.y);
+      assert.equal(positionPatches, positionCountBeforeSave + 1);
+      assert.equal(positionPatchStatuses.at(-1), 200);
+      await enter();
+      const afterSuccessfulReload = await fullSnapshot(),
+        reloadedSaved = afterSuccessfulReload.links.find((l: { id: string }) => l.id === link.id),
+        renderedSaved = await page.locator(saved).evaluate((el) => ({
+          left: Number.parseFloat((el as HTMLElement).style.left),
+          top: Number.parseFloat((el as HTMLElement).style.top),
+        }));
+      assert.equal(reloadedSaved.labelPositionX, renderedSaved.left);
+      assert.equal(reloadedSaved.labelPositionY, renderedSaved.top);
+
+      // The next position request fails after a successful real reconnect PATCH.
+      const stablePosition = {
+        x: reloadedSaved.labelPositionX,
+        y: reloadedSaved.labelPositionY,
+      };
+      await page.locator(saved + " .link-connector-label").dblclick();
+      await pending.waitFor();
+      await moveReconnectLabel(22, 15);
+      await drag(saved + " .is-source", a);
+      await page.mouse.up();
+      const positionCountBeforeFailure = positionPatches;
+      await page.route(
+        `**/api/links/${link.id}/position`,
+        (route) => route.fulfill({
+          status: 503,
+          json: { error: "synthetic_position_save_failure" },
+        }),
+        { times: 1 },
+      );
+      const reconnectAfterMove = page.waitForResponse(
+        (r) => r.request().method() === "PATCH" &&
+          new URL(r.url()).pathname === `/api/links/${link.id}/reconnect`,
+      );
+      const failedPosition = page.waitForResponse(
+        (r) => r.request().method() === "PATCH" &&
+          new URL(r.url()).pathname === `/api/links/${link.id}/position`,
+      );
+      await drag(saved + " .is-target", c);
+      await page.mouse.up();
+      assert.equal((await reconnectAfterMove).status(), 200);
+      assert.equal((await failedPosition).status(), 503);
+      assert.equal(positionPatches, positionCountBeforeFailure + 1);
+      assert.equal(positionPatchStatuses.at(-1), 503);
+      await page.locator(".is-reconnecting").waitFor({ state: "detached" });
+      await page.getByText(
+        "接続は保存しましたが、リンク位置の保存を確認できません。再読み込みして状態を確認してください。",
+        { exact: true },
+      ).waitFor();
+      await page.getByText(/^リンク位置の保存を確認できません。/).waitFor();
+      const afterFailureMap = await fullSnapshot(),
+        afterFailure = afterFailureMap.links.find((l: { id: string }) => l.id === link.id);
+      assert.equal(afterFailure.id, link.id);
+      assert.equal(afterFailure.sourceConceptId, a);
+      assert.equal(afterFailure.targetConceptId, c);
+      assert.equal(afterFailure.label, original.label);
+      assert.deepEqual(afterFailure.provenance, original.provenance);
+      assert.equal(afterFailure.labelPositionX, stablePosition.x);
+      assert.equal(afterFailure.labelPositionY, stablePosition.y);
+      await enter();
+      const afterFailureReload = await fullSnapshot(),
+        reloadedFailure = afterFailureReload.links.find((l: { id: string }) => l.id === link.id),
+        renderedFailure = await page.locator(saved).evaluate((el) => ({
+          left: Number.parseFloat((el as HTMLElement).style.left),
+          top: Number.parseFloat((el as HTMLElement).style.top),
+        }));
+      assert.equal(reloadedFailure.sourceConceptId, a);
+      assert.equal(reloadedFailure.targetConceptId, c);
+      assert.equal(reloadedFailure.labelPositionX, stablePosition.x);
+      assert.equal(reloadedFailure.labelPositionY, stablePosition.y);
+      assert.equal(renderedFailure.left, stablePosition.x);
+      assert.equal(renderedFailure.top, stablePosition.y);
+      console.log("PASS real SB reconnect movement", JSON.stringify({
+        linkId: link.id,
+        cancelledDraftPosition: cancelledMove.point,
+        successfulReconnectPosition: savedMove.point,
+        successfulPositionStatus: 200,
+        failedFollowupPositionStatus: 503,
+        savedEndpointsAfterFailure: ["source", "target"],
+        reloadShowsPersistedPosition: true,
+      }));
+      assert.deepEqual(
+        positionPatchStatuses,
+        [200, 200, 503],
+        "initial link position and completed reconnect save; failed follow-up position is rejected",
+      );
+      console.log("REAL_LINK_POSITION_PATCH_STATUSES", JSON.stringify(positionPatchStatuses));
+    } else {
+      // Only an explicit fresh edit captures the newly saved connection.
+      await page.locator(saved+" .link-connector-label").dblclick();
+      await pending.waitFor();await drag(saved+" .is-source",b);await page.mouse.up();
+      const fresh=page.waitForResponse(r=>r.request().method()==="PATCH"&&r.url().endsWith("/reconnect"));
+      await drag(saved+" .is-target",c);await page.mouse.up();assert.equal((await fresh).status(),200);
+      await page.locator(".is-reconnecting").waitFor({state:"detached"});
+      await enter();await page.locator(saved).waitFor();assert.equal((await snapshot()).find((l:{id:string})=>l.id===link.id).source,b);
+    }
     console.log("PASS real API conflict: same-screen concurrent update, conditional 409, retained unsaved draft, no retry, explicit cancel refresh and fresh edit/reload");
     console.log(
       `PASS real ${originalMap.type} saved-link draft: zero writes before completion, same ID and metadata, direction/reload, Undo/Redo`,

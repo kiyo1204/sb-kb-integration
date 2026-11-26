@@ -1,66 +1,106 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { ConceptCanvas } from "./MapPage";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  ConceptCanvas,
+  KitBuildFeedbackCheckButton,
+  KitBuildFeedbackResultDisplay,
+} from "./MapPage";
 import IntegrationPractice from "./IntegrationPractice";
-import { markPracticeCompleted } from "./practice-completion";
-
-type Concept = {
-  id: string;
-  label: string;
-  positionX: number;
-  positionY: number;
-  createdAt: string;
-  updatedAt: string;
-};
-type Link = {
-  id: string;
-  mapId: string;
-  sourceConceptId: string;
-  targetConceptId: string;
-  label: string;
-};
+import { clearPracticeCompleted, markPracticeCompleted } from "./practice-completion";
+import { newClientId } from "./client-identity";
+import {
+  createInitialIntegrationPracticeProgress,
+  createInitialKitPracticeProgress,
+  createInitialSbPracticeProgress,
+  isPracticeStepComplete,
+  isValidIntegrationPracticeProgress,
+  isValidKitPracticeProgress,
+  isValidPracticeNavigation,
+  isValidSbPracticeProgress,
+  getPracticeOwnerDigest,
+  kitPracticeMapSignature,
+  readPracticeRecord,
+  removePracticeRecord,
+  usePracticeProgress,
+  writePracticeRecord,
+  photosynthesisKitConcepts,
+  photosynthesisKitLinks,
+  type KitConceptPlacement,
+  type KitLinkPlacement,
+  type KitPracticeProgress,
+  type KitPracticeResult,
+  type PracticeStep,
+} from "./practice-progress";
 
 const mapId = "practice";
-const kitConcepts = [
-  { kitConceptItemId: "a", label: "丸", imported: false },
-  { kitConceptItemId: "b", label: "四角", imported: false },
-  { kitConceptItemId: "c", label: "色", imported: false },
-];
-const kitLinks = [
-  { kitLinkItemId: "r", label: "関係", used: false },
-  { kitLinkItemId: "s", label: "つながり", used: false },
-];
-let sequence = 0;
-const id = () => `practice-${++sequence}`;
-
-type PracticeMode = "PRIOR" | "KB";
-type PracticeStep = PracticeMode | "INTEGRATION";
+const id = () => `practice-${newClientId()}`;
 const practiceSteps: { mode: PracticeStep; label: string }[] = [
   { mode: "PRIOR", label: "Scratch-Buildの練習" },
   { mode: "KB", label: "Kit-Buildの練習" },
   { mode: "INTEGRATION", label: "統合マップの練習" },
 ];
-type PracticeTask = { key: string; label: string };
-// Guidance only: no research events, network calls, persistence, or grading.
-const practiceTasks: Record<PracticeMode, PracticeTask[]> = {
-  PRIOR: [
-    { key: "concept.add", label: "概念を追加する" },
-    { key: "concept.rename", label: "概念の名前を変更する" },
-    { key: "concept.move", label: "概念をドラッグで移動する" },
-    { key: "link.add", label: "リンクの両端をつないで作成する" },
-    { key: "link.reconnect", label: "リンクの接続先を変更する" },
-    { key: "element.delete", label: "概念またはリンクを削除する" },
-  ],
-  KB: [
-    { key: "kit.concept", label: "Kitの概念を配置する" },
-    { key: "kit.link", label: "Kitのリンクを配置して両端を接続する" },
-    { key: "link.reconnect", label: "リンクの接続先を変更する" },
-  ],
+type SbPracticeTask = { key: "concept.add" | "concept.move" | "link.add"; label: string };
+type KitPracticeTask = { key: "kit.place" | "kit.judge" | "kit.correct" | "kit.rejudge"; label: string };
+const sbPracticeTasks: SbPracticeTask[] = [
+  { key: "concept.add", label: "概念を追加する" },
+  { key: "concept.move", label: "概念を移動する" },
+  { key: "link.add", label: "リンクを接続する" },
+];
+
+// The browser receives palette labels and opaque item IDs only. The fixed goal
+// graph and its correct endpoints remain in backend/src/tutorial-kit-practice.ts.
+const photosynthesisPracticeTasks: KitPracticeTask[] = [
+  { key: "kit.place", label: "部品を配置する" },
+  { key: "kit.judge", label: "配置後に一致状況を確認する" },
+  { key: "kit.correct", label: "不一致を修正する" },
+  { key: "kit.rejudge", label: "再判定で一致する" },
+];
+
+type TutorialPageProps = {
+  returnHref: string;
+  practiceSessionId?: string;
+  onExit?: () => void;
+  onCancel?: () => void;
+  onProgressReset?: () => void;
 };
 
-export default function TutorialPage({ returnHref, onExit, onCancel }: { returnHref: string; onExit?: () => void; onCancel?: () => void }) {
-  const [mode, setMode] = useState<PracticeStep>("PRIOR");
-  const [visitedSteps, setVisitedSteps] = useState<PracticeStep[]>(["PRIOR"]);
-  const [completedSteps, setCompletedSteps] = useState<PracticeStep[]>([]);
+export default function TutorialPage({
+  returnHref,
+  practiceSessionId,
+  onExit,
+  onCancel,
+  onProgressReset,
+}: TutorialPageProps) {
+  const [ownerDigest] = useState(getPracticeOwnerDigest);
+  const [initialProgress] = useState(() => ({
+    sb: readPracticeRecord(practiceSessionId, "PRIOR", createInitialSbPracticeProgress, isValidSbPracticeProgress, ownerDigest),
+    kb: readPracticeRecord(practiceSessionId, "KB", createInitialKitPracticeProgress, isValidKitPracticeProgress, ownerDigest),
+    integration: readPracticeRecord(practiceSessionId, "INTEGRATION", createInitialIntegrationPracticeProgress, isValidIntegrationPracticeProgress, ownerDigest),
+    navigation: readPracticeRecord(practiceSessionId, "navigation", () => ({ mode: "PRIOR" as PracticeStep }), isValidPracticeNavigation, ownerDigest),
+  }));
+  const initialCompleted = practiceSteps
+    .filter((step) => isPracticeStepComplete(step.mode, initialProgress[step.mode === "PRIOR" ? "sb" : step.mode === "KB" ? "kb" : "integration"].value))
+    .map((step) => step.mode);
+  const firstIncomplete = practiceSteps.find((step) => !initialCompleted.includes(step.mode))?.mode ?? "INTEGRATION";
+  const initialMode = initialProgress.navigation.status === "ready" &&
+    practiceSteps.findIndex((step) => step.mode === initialProgress.navigation.value.mode) <=
+      practiceSteps.findIndex((step) => step.mode === firstIncomplete)
+    ? initialProgress.navigation.value.mode
+    : firstIncomplete;
+  const [mode, setMode] = useState<PracticeStep>(initialMode);
+  const [visitedSteps, setVisitedSteps] = useState<PracticeStep[]>(() => {
+    const currentIndex = practiceSteps.findIndex((step) => step.mode === initialMode);
+    return practiceSteps.slice(0, currentIndex + 1).map((step) => step.mode);
+  });
+  const [completedSteps, setCompletedSteps] = useState<PracticeStep[]>(initialCompleted);
+  const [resetVersions, setResetVersions] = useState<Record<PracticeStep, number>>({ PRIOR: 0, KB: 0, INTEGRATION: 0 });
+  const [storageNotice, setStorageNotice] = useState<string | null>(() => {
+    if (practiceSessionId && !ownerDigest) return "本人確認を確認できないため、練習の保存・復元を利用できません。画面を再確認してください。";
+    const statuses = Object.values(initialProgress).map((record) => record.status);
+    if (statuses.includes("corrupt")) return "保存された練習データを読み取れません。正しく復元できないため、対象の練習をやり直してください。";
+    if (statuses.includes("unavailable")) return "練習データを保存領域から読み取れません。保存領域を確認して再試行してください。";
+    return null;
+  });
+  const [finishError, setFinishError] = useState<string | null>(null);
   const completeStep = useCallback((step: PracticeStep) => {
     setCompletedSteps((current) =>
       current.includes(step) ? current : [...current, step],
@@ -76,16 +116,55 @@ export default function TutorialPage({ returnHref, onExit, onCancel }: { returnH
   function advanceTo(step: PracticeStep) {
     const index = practiceSteps.findIndex((candidate) => candidate.mode === step);
     if (index < 0 || !canOpen(index)) return;
+    if (practiceSessionId) {
+      if (getPracticeOwnerDigest() !== ownerDigest ||
+        !writePracticeRecord(practiceSessionId, "navigation", { mode: step }, ownerDigest)) {
+        setStorageNotice("練習の再開位置を保存できませんでした。現在の進捗はこの画面を閉じると復元できない場合があります。");
+      } else {
+        setStorageNotice(null);
+      }
+    }
     setVisitedSteps((current) => current.includes(step) ? current : [...current, step]);
     setMode(step);
   }
 
   function finishPractice() {
     if (!allCompleted) return;
+    if (practiceSessionId && getPracticeOwnerDigest() !== ownerDigest) {
+      setFinishError("認証状態が変わったため、練習を終了できません。利用状態を再確認してください。");
+      return;
+    }
     const match = /^\/sessions\/([a-f0-9-]{36})$/.exec(returnHref);
-    if (match) markPracticeCompleted(match[1]);
+    const completionSessionId = practiceSessionId ?? match?.[1];
+    if (completionSessionId && !markPracticeCompleted(completionSessionId)) {
+      setFinishError("練習完了を保存できませんでした。保存領域を確認してから再度お試しください。");
+      return;
+    }
+    setFinishError(null);
     if (onExit) onExit();
     else window.location.assign(returnHref);
+  }
+
+  function resetCurrentPractice() {
+    if (!window.confirm("この練習のMapと達成状況を初期化しますか？他の練習は保持されます。")) return;
+    if (practiceSessionId && getPracticeOwnerDigest() !== ownerDigest) {
+      setStorageNotice("認証状態が変わったため、練習を初期化できません。利用状態を再確認してください。");
+      return;
+    }
+    const completionSessionId = practiceSessionId ?? /^\/sessions\/([a-f0-9-]{36})$/.exec(returnHref)?.[1];
+    if (completionSessionId && !clearPracticeCompleted(completionSessionId)) {
+      setStorageNotice("練習の開始条件を初期化できませんでした。保存領域を確認してください。");
+      return;
+    }
+    if (!removePracticeRecord(practiceSessionId, mode, ownerDigest)) {
+      setStorageNotice("この練習を初期化できませんでした。保存領域を確認してください。");
+      return;
+    }
+    setCompletedSteps((current) => current.filter((step) => step !== mode));
+    setResetVersions((current) => ({ ...current, [mode]: current[mode] + 1 }));
+    setStorageNotice(null);
+    setFinishError(null);
+    onProgressReset?.();
   }
 
   return (
@@ -97,6 +176,9 @@ export default function TutorialPage({ returnHref, onExit, onCancel }: { returnH
           <p className="tutorial-practice-note">
             Scratch-Build → Kit-Build → 統合マップの順で、各段階のすべての操作を完了すると次へ進めます。完了した段階へはいつでも戻り、練習内容を続けて確認できます。
           </p>
+          {practiceSessionId && <p className="tutorial-practice-description" role="note">練習のMapと達成状況は、このタブ内で本人の利用中Sessionごとに保存します。別の参加者・タブ・端末へは引き継ぎません。</p>}
+          {storageNotice && <p role="alert">{storageNotice}</p>}
+          {finishError && <p role="alert">{finishError}</p>}
         </header>
 
         <nav
@@ -105,7 +187,7 @@ export default function TutorialPage({ returnHref, onExit, onCancel }: { returnH
         >
           {practiceSteps.map((step, index) => (
             <button
-              key={step.mode}
+              key={`${practiceSessionId ?? "standalone"}:${ownerDigest ?? "unverified"}:${step.mode}`}
               type="button"
               className={
                 mode === step.mode
@@ -140,6 +222,9 @@ export default function TutorialPage({ returnHref, onExit, onCancel }: { returnH
             onClick={finishPractice}
           >
             練習を終了
+          </button>
+          <button type="button" className="session-secondary-button" onClick={resetCurrentPractice}>
+            この練習をやり直す
           </button>
         </nav>
 
@@ -178,9 +263,16 @@ export default function TutorialPage({ returnHref, onExit, onCancel }: { returnH
               inert={mode !== step.mode}
             >
               {step.mode === "INTEGRATION" ? (
-                <IntegrationPractice onComplete={completeStep} />
+                <IntegrationPractice key={`${practiceSessionId ?? "standalone"}:${ownerDigest ?? "unverified"}:INTEGRATION:${resetVersions.INTEGRATION}`} sessionId={practiceSessionId} onComplete={completeStep} />
+              ) : step.mode === "PRIOR" ? (
+                <SbPracticeCanvas key={`${practiceSessionId ?? "standalone"}:${ownerDigest ?? "unverified"}:PRIOR:${resetVersions.PRIOR}`} sessionId={practiceSessionId} onComplete={completeStep} />
               ) : (
-                <PracticeCanvas mode={step.mode} onComplete={completeStep} />
+                <KitPracticeCanvas
+                  key={`${practiceSessionId ?? "standalone"}:${ownerDigest ?? "unverified"}:KB:${resetVersions.KB}`}
+                  active={mode === "KB"}
+                  sessionId={practiceSessionId}
+                  onComplete={completeStep}
+                />
               )}
             </div>
           ))}
@@ -190,83 +282,131 @@ export default function TutorialPage({ returnHref, onExit, onCancel }: { returnH
   );
 }
 
-function PracticeCanvas({
-  mode,
+type SbPracticeDrawer =
+  | { kind: "closed" }
+  | { kind: "add-concept" }
+  | { kind: "add-link" }
+  | { kind: "edit-concept"; conceptId: string }
+  | { kind: "edit-link"; linkId: string };
+
+function SbPracticeCanvas({
+  sessionId,
   onComplete,
 }: {
-  mode: PracticeMode;
+  sessionId?: string;
   onComplete: (step: PracticeStep) => void;
 }) {
-  const [concepts, setConcepts] = useState<Concept[]>([]);
-  const [links, setLinks] = useState<Link[]>([]);
-  const [usedConcepts, setUsedConcepts] = useState<string[]>([]);
-  const [usedLinks, setUsedLinks] = useState<string[]>([]);
+  const { value: progress, update, status, storageBlocked, retry } = usePracticeProgress(
+    sessionId,
+    "PRIOR",
+    createInitialSbPracticeProgress,
+    isValidSbPracticeProgress,
+  );
+  const { concepts, links, linkCreation, completedTasks } = progress;
+  const [drawer, setDrawer] = useState<SbPracticeDrawer>({ kind: "closed" });
   const [conceptLabel, setConceptLabel] = useState("");
   const [linkLabel, setLinkLabel] = useState("");
-  const [linkCreation, setLinkCreation] = useState<{
-    id: string;
-    label: string;
-  } | null>(null);
-  const [selectedConcept, setSelectedConcept] = useState<string | null>(null);
-  const [selectedLink, setSelectedLink] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
-  const [completedTasks, setCompletedTasks] = useState<string[]>([]);
-  const tasks = practiceTasks[mode];
+  const tasks = sbPracticeTasks;
   const allTasksComplete = tasks.every((task) => completedTasks.includes(task.key));
   useEffect(() => {
-    if (allTasksComplete) onComplete(mode);
-  }, [allTasksComplete, mode, onComplete]);
-  const complete = (key: string) =>
-    setCompletedTasks((current) =>
-      current.includes(key) ? current : [...current, key],
-    );
+    if (allTasksComplete && (status === "ready" || status === "disabled")) onComplete("PRIOR");
+  }, [allTasksComplete, onComplete, status]);
 
-  function addConcept(label: string, positionX: number, positionY: number) {
-    setConcepts((list) => [
-      ...list,
-      { id: id(), label, positionX, positionY, createdAt: "", updatedAt: "" },
-    ]);
-    if (mode === "PRIOR") complete("concept.add");
+  const activeConcept = drawer.kind === "edit-concept"
+    ? concepts.find((concept) => concept.id === drawer.conceptId)
+    : undefined;
+  const activeLink = drawer.kind === "edit-link"
+    ? links.find((link) => link.id === drawer.linkId)
+    : undefined;
+
+  const storageMessage = status === "corrupt"
+    ? "この練習の保存データが破損しているため、編集を止めています。『この練習をやり直す』で初期化してください。"
+    : status === "unavailable"
+      ? "練習の保存領域を確認できません。再試行するか、この練習だけを初期化してください。"
+      : status === "write-error"
+        ? "練習の変更を保存できませんでした。表示と達成状況は保存前のままです。保存領域を確認してもう一度操作してください。"
+        : null;
+
+  function addConcept(event: FormEvent) {
+    event.preventDefault();
+    const label = conceptLabel.trim();
+    if (!label) return;
+    const saved = update((current) => ({
+      ...current,
+      concepts: [...current.concepts, {
+        id: id(),
+        label,
+        positionX: 80 + (current.concepts.length % 4) * 200,
+        positionY: 80 + Math.floor(current.concepts.length / 4) * 130,
+        createdAt: "",
+        updatedAt: "",
+      }],
+      completedTasks: current.completedTasks.includes("concept.add")
+        ? current.completedTasks
+        : [...current.completedTasks, "concept.add"],
+    }));
+    if (!saved) return;
+    setConceptLabel("");
+    setDrawer({ kind: "closed" });
   }
 
-  function createLink(
-    sourceConceptId: string,
-    targetConceptId: string,
-    label: string,
-  ) {
-    const linkId = id();
-    setLinks((list) => [
-      ...list,
-      { id: linkId, mapId, sourceConceptId, targetConceptId, label },
-    ]);
-    complete(mode === "PRIOR" ? "link.add" : "kit.link");
+  function startLinkCreation(event: FormEvent) {
+    event.preventDefault();
+    const label = linkLabel.trim();
+    if (!label || linkCreation) return;
+    if (!update((current) => ({ ...current, linkCreation: { id: id(), label } }))) return;
+    setLinkLabel("");
+    setDrawer({ kind: "closed" });
+  }
+
+  function createConnectedLink(sourceConceptId: string, targetConceptId: string, label: string) {
+    const linkId = linkCreation?.id ?? id();
+    const saved = update((current) => ({
+      ...current,
+      links: [...current.links, { id: linkId, mapId, sourceConceptId, targetConceptId, label }],
+      linkCreation: null,
+      completedTasks: current.completedTasks.includes("link.add")
+        ? current.completedTasks
+        : [...current.completedTasks, "link.add"],
+    }));
+    if (!saved) return "";
     return linkId;
   }
 
-  function addManualConcept(event: FormEvent) {
+  function saveSelection(event: FormEvent) {
     event.preventDefault();
-    if (!conceptLabel.trim()) return;
-    addConcept(
-      conceptLabel.trim(),
-      80 + (concepts.length % 4) * 200,
-      80 + Math.floor(concepts.length / 4) * 130,
-    );
-    setConceptLabel("");
+    const label = editLabel.trim();
+    if (!label) return;
+    if (!update((current) => ({
+      ...current,
+      concepts: activeConcept ? current.concepts.map((concept) => concept.id === activeConcept.id ? { ...concept, label } : concept) : current.concepts,
+      links: activeLink ? current.links.map((link) => link.id === activeLink.id ? { ...link, label } : link) : current.links,
+    }))) return;
+    setDrawer({ kind: "closed" });
   }
 
-  const instructions =
-    mode === "PRIOR"
-      ? "概念名とリンク名を入力して追加します。概念はドラッグで移動でき、作成中のリンクは両端を概念へ接続します。"
-      : "キット一覧から概念とリンクをマップへ追加し、作成中のリンクの両端を概念へ接続します。";
+  function deleteSelection() {
+    if (activeConcept) {
+      const conceptId = activeConcept.id;
+      update((current) => ({
+        ...current,
+        concepts: current.concepts.filter((concept) => concept.id !== conceptId),
+        links: current.links.filter((link) => link.sourceConceptId !== conceptId && link.targetConceptId !== conceptId),
+      }));
+    } else if (activeLink) {
+      update((current) => ({ ...current, links: current.links.filter((link) => link.id !== activeLink.id) }));
+    }
+    setDrawer({ kind: "closed" });
+  }
 
   return (
     <>
-      <h2 id="tutorial-practice-heading">
-        {mode === "PRIOR" ? "Scratch-Buildの練習" : "Kit-Buildの練習"}
-      </h2>
+      <h2 id="tutorial-practice-heading">Scratch-Buildの練習</h2>
       <p className="tutorial-practice-description">
-        {instructions} 矢印の先が関係先です。
+        概念を追加してドラッグで移動し、リンクの両端を概念へ接続します。矢印の先が関係先です。
       </p>
+      {storageMessage && <p role="alert">{storageMessage}{status === "unavailable" && <button type="button" onClick={retry}>保存を再確認</button>}</p>}
       <section className="tutorial-task-progress" aria-label="操作練習の課題">
         <h3>練習する操作</h3>
         <p role="status">
@@ -274,6 +414,417 @@ function PracticeCanvas({
         </p>
         <ol>
           {tasks.map((task) => (
+            <li key={task.key}>
+              <span aria-hidden="true">{completedTasks.includes(task.key) ? "✓" : "○"}</span>{" "}
+              {task.label}
+              <span className="tutorial-task-result">
+                {completedTasks.includes(task.key) ? "完了" : "未完了"}
+              </span>
+            </li>
+          ))}
+        </ol>
+        <p>課題は練習画面内で実際に操作を完了したときだけ達成扱いです。学習成績ではありません。</p>
+      </section>
+
+      <div className="map-editor-page is-experiment is-prior is-learner tutorial-map-editor">
+        <div className="map-editor-header-actions">
+          <div className="map-editor-tools" aria-label="マップ操作">
+            <span>追加</span>
+            <button
+              type="button"
+              disabled={storageBlocked}
+              onClick={() => {
+                setConceptLabel("");
+                setDrawer({ kind: "add-concept" });
+              }}
+            >
+              ＋ 概念
+            </button>
+            <button
+              type="button"
+              disabled={!!linkCreation || storageBlocked}
+              onClick={() => {
+                setLinkLabel("");
+                setDrawer({ kind: "add-link" });
+              }}
+            >
+              ＋ リンク
+            </button>
+          </div>
+        </div>
+
+        {linkCreation && (
+          <div className="map-editor-link-creation-status" role="status">
+            <span>
+              「{linkCreation.label}」の中央をドラッグして配置し、両端を概念へ接続してください。
+            </span>
+            <button type="button" onClick={() => update((current) => ({ ...current, linkCreation: null }))}>
+              キャンセル
+            </button>
+          </div>
+        )}
+
+        <div
+          className={`map-editor-workspace${drawer.kind !== "closed" ? " has-drawer" : ""}${drawer.kind === "edit-link" ? " is-sb-link-selection" : ""}`}
+        >
+          <div className="map-editor-canvas-column">
+            <ConceptCanvas
+              mapId={mapId}
+              mapType="PRIOR"
+              showZoomControls
+              concepts={concepts}
+              links={links}
+              kitDefinitionName={null}
+              kitPaletteCopy="kits"
+              kitConcepts={[]}
+              kitLinks={[]}
+              readOnly={storageBlocked}
+              canEditConceptStructure
+              canEditLinkLabel
+              positionSaving={false}
+              positionFeedback={null}
+              onLabelSave={async (conceptId, label) => {
+                update((current) => ({ ...current, concepts: current.concepts.map((concept) => concept.id === conceptId ? { ...concept, label } : concept) }));
+              }}
+              onConceptDelete={async (conceptId) => {
+                update((current) => ({ ...current,
+                  concepts: current.concepts.filter((concept) => concept.id !== conceptId),
+                  links: current.links.filter((link) => link.sourceConceptId !== conceptId && link.targetConceptId !== conceptId),
+                }));
+              }}
+              onLinkLabelSave={async (link, label) => {
+                update((current) => ({ ...current, links: current.links.map((candidate) => candidate.id === link.id ? { ...candidate, label } : candidate) }));
+              }}
+              onLinkReconnect={async (link, sourceConceptId, targetConceptId) => {
+                update((current) => ({ ...current, links: current.links.map((candidate) => candidate.id === link.id ? { ...candidate, sourceConceptId, targetConceptId } : candidate) }));
+              }}
+              onLinkDelete={async (linkId) => {
+                update((current) => ({ ...current, links: current.links.filter((link) => link.id !== linkId) }));
+              }}
+              onKitConceptDrop={async () => undefined}
+              onKitLinkCreate={async () => undefined}
+              onDragStart={() => undefined}
+              onPositionSave={async (conceptId, position, originalPosition) => {
+                if (
+                  position.positionX !== originalPosition.positionX ||
+                  position.positionY !== originalPosition.positionY
+                ) {
+                  const saved = update((current) => ({
+                    ...current,
+                    concepts: current.concepts.map((concept) => concept.id === conceptId ? { ...concept, ...position } : concept),
+                    completedTasks: current.completedTasks.includes("concept.move") ? current.completedTasks : [...current.completedTasks, "concept.move"],
+                  }));
+                  return saved ? position : originalPosition;
+                }
+                const saved = update((current) => ({ ...current, concepts: current.concepts.map((concept) => concept.id === conceptId ? { ...concept, ...position } : concept) }));
+                return saved ? position : originalPosition;
+              }}
+              linkCreation={linkCreation}
+              onMapLinkCreate={async (source, target, label) =>
+                createConnectedLink(source, target, label)
+              }
+              onMapLinkCreationCancel={() => update((current) => ({ ...current, linkCreation: null }))}
+              onMapConceptSelect={(concept) => {
+                if (linkCreation) return;
+                setEditLabel(concept.label);
+                setDrawer({ kind: "edit-concept", conceptId: concept.id });
+              }}
+              onMapLinkSelect={(link) => {
+                if (linkCreation) return;
+                setEditLabel(link.label);
+                setDrawer({ kind: "edit-link", linkId: link.id });
+              }}
+            />
+          </div>
+
+          {drawer.kind !== "closed" && (
+            <aside className="map-editor-drawer" aria-label="マップ編集">
+              <div className="map-editor-drawer-heading">
+                <h2>
+                  {drawer.kind === "add-concept"
+                    ? "概念を追加"
+                    : drawer.kind === "add-link"
+                      ? "リンクを追加"
+                      : drawer.kind === "edit-concept"
+                        ? "概念を編集"
+                        : "リンクを編集"}
+                </h2>
+                <button
+                  type="button"
+                  aria-label="編集を閉じる"
+                  onClick={() => setDrawer({ kind: "closed" })}
+                >
+                  ×
+                </button>
+              </div>
+
+              {drawer.kind === "add-concept" && (
+                <form className="map-editor-drawer-form" onSubmit={addConcept}>
+                  <label htmlFor="tutorial-sb-concept-name">概念名</label>
+                  <input
+                    id="tutorial-sb-concept-name"
+                    type="text"
+                    autoComplete="off"
+                    autoFocus
+                    value={conceptLabel}
+                    onChange={(event) => setConceptLabel(event.target.value)}
+                    required
+                  />
+                  <div className="map-editor-drawer-actions">
+                    <button type="button" className="is-secondary" onClick={() => setDrawer({ kind: "closed" })}>
+                      キャンセル
+                    </button>
+                    <button type="submit" disabled={!conceptLabel.trim()}>
+                      概念を追加
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {drawer.kind === "add-link" && (
+                <form className="map-editor-drawer-form" onSubmit={startLinkCreation}>
+                  <label htmlFor="tutorial-sb-link-label">リンクラベル</label>
+                  <input
+                    id="tutorial-sb-link-label"
+                    type="text"
+                    autoComplete="off"
+                    autoFocus
+                    value={linkLabel}
+                    onChange={(event) => setLinkLabel(event.target.value)}
+                    required
+                  />
+                  <p className="map-editor-drawer-hint">
+                    接続を開始した後、リンクの両端を概念へドラッグします。
+                  </p>
+                  <div className="map-editor-drawer-actions">
+                    <button type="button" className="is-secondary" onClick={() => setDrawer({ kind: "closed" })}>
+                      キャンセル
+                    </button>
+                    <button type="submit" disabled={!linkLabel.trim()}>
+                      接続を開始
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {(drawer.kind === "edit-concept" || drawer.kind === "edit-link") && (
+                <form className="map-editor-drawer-form" onSubmit={saveSelection}>
+                  {drawer.kind === "edit-concept" && activeConcept ? (
+                    <>
+                      <p className="map-editor-drawer-hint">
+                        選択中の概念：<strong>{activeConcept.label}</strong>。削除すると、この概念に接続するリンク
+                        {links.filter((link) => link.sourceConceptId === activeConcept.id || link.targetConceptId === activeConcept.id).length}件も削除されます。
+                      </p>
+                      <label htmlFor="tutorial-sb-concept-edit-label">概念名</label>
+                      <input
+                        id="tutorial-sb-concept-edit-label"
+                        type="text"
+                        autoComplete="off"
+                        value={editLabel}
+                        onChange={(event) => setEditLabel(event.target.value)}
+                        required
+                      />
+                    </>
+                  ) : activeLink ? (
+                    <>
+                      <p className="map-editor-drawer-hint">
+                        選択中のリンク：<strong>{activeLink.label}</strong>
+                      </p>
+                      <label htmlFor="tutorial-sb-link-edit-label">リンクラベル</label>
+                      <input
+                        id="tutorial-sb-link-edit-label"
+                        type="text"
+                        autoComplete="off"
+                        value={editLabel}
+                        onChange={(event) => setEditLabel(event.target.value)}
+                        required
+                      />
+                      <p className="map-editor-drawer-hint">
+                        接続元・接続先はCanvas上のLink handleをドラッグして変更できます。
+                      </p>
+                    </>
+                  ) : null}
+                  <div className="map-editor-drawer-actions">
+                    <button type="button" className="is-danger" onClick={deleteSelection}>
+                      {drawer.kind === "edit-concept" ? "削除" : "Linkを削除"}
+                    </button>
+                    <button type="submit" disabled={!editLabel.trim()}>
+                      保存
+                    </button>
+                  </div>
+                </form>
+              )}
+            </aside>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function readKitPracticeResult(value: unknown): KitPracticeResult | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const result = value as Record<string, unknown>;
+  if (
+    Object.keys(result).length !== 3 ||
+    !Object.hasOwn(result, "matched") ||
+    !Object.hasOwn(result, "concepts") ||
+    !Object.hasOwn(result, "relations") ||
+    typeof result.matched !== "boolean"
+  ) return null;
+  const readCount = (candidate: unknown, total: number) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    const count = candidate as Record<string, unknown>;
+    if (
+      Object.keys(count).length !== 2 ||
+      !Object.hasOwn(count, "matched") ||
+      !Object.hasOwn(count, "total") ||
+      count.total !== total ||
+      !Number.isInteger(count.matched) ||
+      (count.matched as number) < 0 ||
+      (count.matched as number) > total
+    ) return null;
+    return { matched: count.matched as number, total };
+  };
+  const concepts = readCount(result.concepts, 3);
+  const relations = readCount(result.relations, 2);
+  if (!concepts || !relations) return null;
+  if (result.matched && (concepts.matched !== 3 || relations.matched !== 2)) return null;
+  return { matched: result.matched, concepts, relations };
+}
+
+function KitPracticeCanvas({
+  active,
+  sessionId,
+  onComplete,
+}: {
+  active: boolean;
+  sessionId?: string;
+  onComplete: (step: PracticeStep) => void;
+}) {
+  const { value: progress, valueRef, update, status, storageBlocked, retry } = usePracticeProgress(
+    sessionId,
+    "KB",
+    createInitialKitPracticeProgress,
+    isValidKitPracticeProgress,
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const requestId = useRef(0);
+  const { placedConcepts, placedLinks, completedTasks, hasFullPlacementMismatch, correctedAfterMismatch } = progress;
+  const concepts = placedConcepts.map(({ concept }) => concept);
+  const links = placedLinks.map(({ link }) => link);
+  const allPartsPlaced = placedConcepts.length === 3 && placedLinks.length === 2;
+  const mapSignature = kitPracticeMapSignature(progress);
+  const result = !checking && progress.lastResult?.mapSignature === mapSignature
+    ? progress.lastResult.result
+    : null;
+  const completedCount = photosynthesisPracticeTasks.filter((task) =>
+    completedTasks.includes(task.key),
+  ).length;
+  useEffect(() => {
+    if (isPracticeStepComplete("KB", progress) && (status === "ready" || status === "disabled")) onComplete("KB");
+  }, [onComplete, progress, status]);
+
+  useEffect(() => {
+    return () => {
+      requestId.current += 1;
+    };
+  }, [active]);
+
+  const storageMessage = status === "corrupt"
+    ? "この練習の保存データが破損しているため、編集を止めています。『この練習をやり直す』で初期化してください。"
+    : status === "unavailable"
+      ? "練習の保存領域を確認できません。再試行するか、この練習だけを初期化してください。"
+      : status === "write-error"
+        ? "練習の変更を保存できませんでした。表示と達成状況は保存前のままです。保存領域を確認してもう一度操作してください。"
+        : null;
+
+  async function checkKit() {
+    if (!active || checking) return;
+    const currentRequest = ++requestId.current;
+    const judgedMapSignature = mapSignature;
+    setChecking(true);
+    setError(null);
+    const body = {
+      concepts: placedConcepts.map(({ kitConceptItemId, concept }) => ({
+        kitConceptItemId,
+        id: concept.id,
+      })),
+      links: placedLinks.map(({ kitLinkItemId, link }) => ({
+        kitLinkItemId,
+        id: link.id,
+        sourceConceptId: link.sourceConceptId,
+        targetConceptId: link.targetConceptId,
+      })),
+    };
+    try {
+      const response = await fetch("/api/tutorial/kit-practice/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error("判定を完了できませんでした。もう一度お試しください。");
+      const next = readKitPracticeResult(payload);
+      if (!next) throw new Error("判定結果を読み取れませんでした。もう一度お試しください。");
+      if (requestId.current !== currentRequest || !active || kitPracticeMapSignature(valueRef.current) !== judgedMapSignature) return;
+      let isCompleted = false;
+      const saved = update((current) => {
+        const isFullMismatch = allPartsPlaced && !next.matched &&
+          next.concepts.matched === 3 && next.relations.matched === 1;
+        const successfulRejudge = next.matched && current.hasFullPlacementMismatch && current.correctedAfterMismatch;
+        const completed = new Set(current.completedTasks);
+        if (isFullMismatch) completed.add("kit.judge");
+        if (successfulRejudge) completed.add("kit.rejudge");
+        const nextProgress: KitPracticeProgress = {
+          ...current,
+          hasFullPlacementMismatch: current.hasFullPlacementMismatch || isFullMismatch,
+          successfulRejudge: current.successfulRejudge || successfulRejudge,
+          completedTasks: [...completed] as KitPracticeProgress["completedTasks"],
+          lastResult: { result: next, mapSignature: judgedMapSignature },
+        };
+        isCompleted = isPracticeStepComplete("KB", nextProgress);
+        return nextProgress;
+      });
+      if (!saved) return;
+      if (isCompleted) onComplete("KB");
+    } catch (requestError) {
+      if (requestId.current !== currentRequest || !active) return;
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "判定を完了できませんでした。もう一度お試しください。",
+      );
+    } finally {
+      if (requestId.current === currentRequest) {
+        setChecking(false);
+      }
+    }
+  }
+
+  function invalidateResult() {
+    setError(null);
+  }
+
+  const resultMessage = result?.matched
+    ? hasFullPlacementMismatch && correctedAfterMismatch
+      ? "練習用Kitと一致しました。"
+      : "一致しています。配置後の不一致を確認し、接続を見直してから再判定してください。"
+    : "配置やリンクの向きを見直して、再度確認できます。";
+
+  return (
+    <>
+      <h2 id="tutorial-practice-heading">Kit-Buildの練習</h2>
+      <p className="tutorial-practice-description">
+        光合成Kitの部品を配置し、一致状況を確認します。不一致の結果を見てリンクの向きを修正し、もう一度判定してください。配置位置は判定に含まれません。
+      </p>
+      {storageMessage && <p role="alert">{storageMessage}{status === "unavailable" && <button type="button" onClick={retry}>保存を再確認</button>}</p>}
+      <section className="tutorial-task-progress" aria-label="操作練習の課題">
+        <h3>練習する操作</h3>
+        <p role="status">{completedCount} / {photosynthesisPracticeTasks.length} 件達成</p>
+        <ol>
+          {photosynthesisPracticeTasks.map((task) => (
             <li key={task.key}>
               <span aria-hidden="true">
                 {completedTasks.includes(task.key) ? "✓" : "○"}
@@ -285,265 +836,173 @@ function PracticeCanvas({
             </li>
           ))}
         </ol>
-        <p>課題は練習画面内で実際に操作を完了したときだけ達成扱いです。学習成績ではありません。</p>
+        <p>課題は練習画面内の操作で達成します。学習成績ではありません。</p>
       </section>
 
-      {mode === "PRIOR" && (
-        <div className="tutorial-tools" aria-label="概念とリンクの追加">
-          <form onSubmit={addManualConcept}>
-            <label>
-              概念の名前
-              <input
-                value={conceptLabel}
-                onChange={(event) => setConceptLabel(event.target.value)}
-              />
-            </label>
-            <button className="session-secondary-button" type="submit">
-              概念を追加
-            </button>
-          </form>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (linkLabel.trim()) {
-                setLinkCreation({ id: id(), label: linkLabel.trim() });
-                setLinkLabel("");
-              }
-            }}
-          >
-            <label>
-              リンクの名前
-              <input
-                value={linkLabel}
-                onChange={(event) => setLinkLabel(event.target.value)}
-              />
-            </label>
-            <button
-              className="session-secondary-button"
-              disabled={!!linkCreation}
-              type="submit"
-            >
-              リンクを追加
-            </button>
-          </form>
-        </div>
-      )}
-
-      {linkCreation && (
-        <p className="tutorial-link-status" role="status">
-          「{linkCreation.label}
-          」の始点と矢印の先を、それぞれ概念へドラッグしてください。{" "}
-          <button type="button" onClick={() => setLinkCreation(null)}>
-            キャンセル
-          </button>
-        </p>
-      )}
-
-      {(selectedConcept || selectedLink) && (
-        <form
-          className="tutorial-edit"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!editLabel.trim()) return;
-            if (selectedConcept) {
-              const previous = concepts.find((c) => c.id === selectedConcept);
-              if (previous && previous.label !== editLabel.trim())
-                complete("concept.rename");
-              setConcepts((list) =>
-                list.map((concept) =>
-                  concept.id === selectedConcept
-                    ? { ...concept, label: editLabel.trim() }
-                    : concept,
-                ),
-              );
-            }
-            if (selectedLink) {
-              setLinks((list) =>
-                list.map((link) =>
-                  link.id === selectedLink
-                    ? { ...link, label: editLabel.trim() }
-                    : link,
-                ),
-              );
-            }
-            setSelectedConcept(null);
-            setSelectedLink(null);
-          }}
-        >
-          <label>
-            選択した名前を編集
-            <input
-              value={editLabel}
-              onChange={(event) => setEditLabel(event.target.value)}
-            />
-          </label>
-          <button className="session-secondary-button" type="submit">
-            変更
-          </button>
-          {mode === "PRIOR" && (
-            <button
-              type="button"
-              className="session-secondary-button"
-              onClick={() => {
-                if (selectedConcept && concepts.some((c) => c.id === selectedConcept)) {
-                  setConcepts((list) => list.filter((c) => c.id !== selectedConcept));
-                  setLinks((list) => list.filter((link) =>
-                    link.sourceConceptId !== selectedConcept &&
-                    link.targetConceptId !== selectedConcept,
-                  ));
-                  complete("element.delete");
-                } else if (selectedLink && links.some((link) => link.id === selectedLink)) {
-                  setLinks((list) => list.filter((link) => link.id !== selectedLink));
-                  complete("element.delete");
-                }
-                setSelectedConcept(null);
-                setSelectedLink(null);
+      <section className="kit-feedback-actions" aria-label="Kitの一致確認">
+        <p>配置した部品の一致状況を確認できます。判定はこの練習用Kitに対して行います。</p>
+        <KitBuildFeedbackCheckButton
+          disabled={checking || storageBlocked}
+          loading={checking}
+          label="一致状況を確認"
+          onClick={() => void checkKit()}
+        />
+        {checking && <p role="status">練習用Kitを確認しています…</p>}
+        {error && <p role="alert">{error}</p>}
+        {result && (
+          <div className="kit-feedback-dialog-content" role="status" aria-live="polite" aria-atomic="true">
+            <KitBuildFeedbackResultDisplay
+              result={{
+                ...result,
+                message: resultMessage,
               }}
-            >
-              選択した要素を削除
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedConcept(null);
-              setSelectedLink(null);
-            }}
-          >
-            閉じる
-          </button>
-        </form>
-      )}
-
-      {mode === "PRIOR" && (
-        <p className="tutorial-practice-footnote">
-          概念はドラッグで移動できます。概念やリンクを選ぶと名前を編集できます。
-        </p>
-      )}
+            />
+          </div>
+        )}
+      </section>
 
       <ConceptCanvas
-        mapId={mapId}
-        mapType={mode}
+        mapId="tutorial-photosynthesis-kb"
+        mapType="KB"
+        showZoomControls
         concepts={concepts}
         links={links}
-        kitDefinitionName={mode === "KB" ? "練習用のキット" : null}
+        kitDefinitionName="Development Kit：光合成"
         kitPaletteCopy="kits"
-        kitConcepts={kitConcepts.map((concept) => ({
-          ...concept,
-          imported: usedConcepts.includes(concept.kitConceptItemId),
+        kitConcepts={photosynthesisKitConcepts.map((item) => ({
+          ...item,
+          imported: placedConcepts.some(
+            (placement) => placement.kitConceptItemId === item.kitConceptItemId,
+          ),
         }))}
-        kitLinks={kitLinks.map((link) => ({
-          ...link,
-          used: usedLinks.includes(link.kitLinkItemId),
+        kitLinks={photosynthesisKitLinks.map((item) => ({
+          ...item,
+          used: placedLinks.some(
+            (placement) => placement.kitLinkItemId === item.kitLinkItemId,
+          ),
         }))}
-        readOnly={false}
-        canEditConceptStructure={mode === "PRIOR"}
-        canEditLinkLabel={mode === "PRIOR"}
+        readOnly={storageBlocked}
+        canEditConceptStructure={false}
+        canEditLinkLabel={false}
         positionSaving={false}
         positionFeedback={null}
-        onLabelSave={async (conceptId, label) => {
-          const previous = concepts.find((concept) => concept.id === conceptId);
-          if (mode === "PRIOR" && previous && previous.label !== label)
-            complete("concept.rename");
-          setConcepts((list) =>
-            list.map((concept) =>
-              concept.id === conceptId ? { ...concept, label } : concept,
-            ),
-          );
-        }}
+        onLabelSave={async () => undefined}
         onConceptDelete={async (conceptId) => {
-          if (mode === "PRIOR" && concepts.some((c) => c.id === conceptId))
-            complete("element.delete");
-          setConcepts((list) =>
-            list.filter((concept) => concept.id !== conceptId),
-          );
-          setLinks((list) =>
-            list.filter(
-              (link) =>
-                link.sourceConceptId !== conceptId &&
-                link.targetConceptId !== conceptId,
-            ),
-          );
+          invalidateResult();
+          update((current) => ({
+            ...current,
+            placedConcepts: current.placedConcepts.filter(({ concept }) => concept.id !== conceptId),
+            placedLinks: current.placedLinks.filter(({ link }) => link.sourceConceptId !== conceptId && link.targetConceptId !== conceptId),
+          }));
         }}
-        onLinkLabelSave={async (link, label) =>
-          setLinks((list) =>
-            list.map((candidate) =>
-              candidate.id === link.id ? { ...candidate, label } : candidate,
-            ),
-          )
-        }
+        onLinkLabelSave={async (link, label) => {
+          update((current) => ({
+            ...current,
+            placedLinks: current.placedLinks.map((placement) => placement.link.id === link.id
+              ? { ...placement, link: { ...placement.link, label } }
+              : placement),
+          }));
+          invalidateResult();
+        }}
         onLinkReconnect={async (link, sourceConceptId, targetConceptId) => {
           if (
-            links.some((candidate) => candidate.id === link.id) &&
-            (link.sourceConceptId !== sourceConceptId ||
-              link.targetConceptId !== targetConceptId)
+            link.sourceConceptId !== sourceConceptId ||
+            link.targetConceptId !== targetConceptId
           ) {
-            complete("link.reconnect");
+            update((current) => {
+              const completed = new Set(current.completedTasks);
+              if (current.hasFullPlacementMismatch) completed.add("kit.correct");
+              return {
+                ...current,
+                correctedAfterMismatch: current.correctedAfterMismatch || current.hasFullPlacementMismatch,
+                completedTasks: [...completed] as KitPracticeProgress["completedTasks"],
+                placedLinks: current.placedLinks.map((placement) => placement.link.id === link.id
+                  ? { ...placement, link: { ...placement.link, sourceConceptId, targetConceptId } }
+                  : placement),
+              };
+            });
+            invalidateResult();
           }
-          setLinks((list) =>
-            list.map((candidate) =>
-              candidate.id === link.id
-                ? { ...candidate, sourceConceptId, targetConceptId }
-                : candidate,
-            ),
-          );
         }}
         onLinkDelete={async (linkId) => {
-          if (mode === "PRIOR" && links.some((link) => link.id === linkId))
-            complete("element.delete");
-          setLinks((list) => list.filter((link) => link.id !== linkId));
+          update((current) => ({ ...current, placedLinks: current.placedLinks.filter(({ link }) => link.id !== linkId) }));
+          invalidateResult();
         }}
         onKitConceptDrop={async (itemId, position) => {
-          const item = kitConcepts.find(
-            (concept) => concept.kitConceptItemId === itemId,
+          const item = photosynthesisKitConcepts.find(
+            (candidate) => candidate.kitConceptItemId === itemId,
           );
-          if (item && !usedConcepts.includes(itemId)) {
-            addConcept(item.label, position.positionX, position.positionY);
-            setUsedConcepts((list) => [...list, itemId]);
-            complete("kit.concept");
-          }
-        }}
-        onKitLinkCreate={async (_mapId, itemId, source, target) => {
-          const item = kitLinks.find((link) => link.kitLinkItemId === itemId);
-          if (!item) return;
-          setUsedLinks((list) => [...list, itemId]);
-          return createLink(source, target, item.label);
-        }}
-        onDragStart={() => undefined}
-        onPositionSave={async (conceptId, position, originalPosition) => {
           if (
-            mode === "PRIOR" &&
-            (position.positionX !== originalPosition.positionX ||
-              position.positionY !== originalPosition.positionY)
-          ) complete("concept.move");
-          setConcepts((list) =>
-            list.map((concept) =>
-              concept.id === conceptId ? { ...concept, ...position } : concept,
-            ),
-          );
-          return position;
+            !item ||
+            placedConcepts.some(
+              (placement) => placement.kitConceptItemId === itemId,
+            )
+          ) return;
+          const saved = update((current) => {
+            const nextConcepts: KitConceptPlacement[] = [...current.placedConcepts, {
+              kitConceptItemId: itemId,
+              concept: {
+                id: id(),
+                label: item.label,
+                positionX: position.positionX,
+                positionY: position.positionY,
+                createdAt: "",
+                updatedAt: "",
+              },
+            }];
+            const completed = new Set(current.completedTasks);
+            if (nextConcepts.length === 3 && current.placedLinks.length === 2) completed.add("kit.place");
+            return { ...current, placedConcepts: nextConcepts, completedTasks: [...completed] as KitPracticeProgress["completedTasks"] };
+          });
+          if (!saved) return;
+          invalidateResult();
         }}
-        linkCreation={linkCreation}
-        onMapLinkCreate={async (source, target, label) => {
-          const linkId = createLink(source, target, label);
-          setLinkCreation(null);
+        onKitLinkCreate={async (_targetMapId, itemId, source, target) => {
+          const item = photosynthesisKitLinks.find(
+            (candidate) => candidate.kitLinkItemId === itemId,
+          );
+          if (
+            !item ||
+            placedLinks.some(
+              (placement) => placement.kitLinkItemId === itemId,
+            )
+          ) return;
+          const linkId = id();
+          const saved = update((current) => {
+            const nextLinks: KitLinkPlacement[] = [...current.placedLinks, {
+              kitLinkItemId: itemId,
+              link: {
+                id: linkId,
+                mapId: "tutorial-photosynthesis-kb",
+                sourceConceptId: source,
+                targetConceptId: target,
+                label: item.label,
+              },
+            }];
+            const completed = new Set(current.completedTasks);
+            if (current.placedConcepts.length === 3 && nextLinks.length === 2) completed.add("kit.place");
+            return { ...current, placedLinks: nextLinks, completedTasks: [...completed] as KitPracticeProgress["completedTasks"] };
+          });
+          if (!saved) return;
+          invalidateResult();
           return linkId;
         }}
-        onMapLinkCreationCancel={() => setLinkCreation(null)}
-        onMapConceptSelect={(concept) => {
-          setSelectedConcept(concept.id);
-          setSelectedLink(null);
-          setEditLabel(concept.label);
+        onDragStart={() => undefined}
+        onPositionSave={async (conceptId, position) => {
+          const original = valueRef.current.placedConcepts.find(({ concept }) => concept.id === conceptId)?.concept;
+          const saved = update((current) => ({
+            ...current,
+            placedConcepts: current.placedConcepts.map((placement) => placement.concept.id === conceptId
+              ? { ...placement, concept: { ...placement.concept, ...position } }
+              : placement),
+          }));
+          if (saved) return position;
+          return original ? { positionX: original.positionX, positionY: original.positionY } : position;
         }}
-        onMapLinkSelect={
-          mode === "PRIOR"
-            ? (link) => {
-                setSelectedLink(link.id);
-                setSelectedConcept(null);
-                setEditLabel(link.label);
-              }
-            : undefined
-        }
+        onLinkPositionSave={async () => true}
+        onMapLinkCreate={async () => undefined}
+        onMapLinkSelect={() => undefined}
+        onMapConceptSelect={() => undefined}
       />
     </>
   );
