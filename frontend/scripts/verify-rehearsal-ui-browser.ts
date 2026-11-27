@@ -1,9 +1,10 @@
 // Synthetic display fixtures only. No database, credentials or real participant data.
 import assert from "node:assert/strict";
 import { requestDigest } from "../src/client-identity";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { chromium, type Locator, type Page, type Route } from "playwright";
 import { createServer } from "vite";
 
@@ -398,6 +399,7 @@ async function installProductionIntegrationMapFixture(
   return {
     mergeRequests,
     positionRequests,
+    get mapReadCount() { return mapReadCount; },
     snapshot: () => currentMap,
     markSubmitted: (submittedAt: string) => {
       currentMap = { ...currentMap, status: "SUBMITTED", submittedAt };
@@ -1905,10 +1907,45 @@ try {
     const integrationMapPage = await integrationMapContext.newPage();
     await installApiFixture(integrationMapPage, "researcher-populated");
     const productionMapFixture = await installProductionIntegrationMapFixture(integrationMapPage);
+    const mapApiResponses: Array<{ path: string; status: number }> = [];
+    const mapApiRequests: string[] = [];
+    integrationMapPage.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith("/api/")) mapApiRequests.push(url.pathname);
+    });
+    integrationMapPage.on("response", (response) => {
+      const url = new URL(response.url());
+      if (url.pathname.startsWith("/api/"))
+        mapApiResponses.push({ path: url.pathname, status: response.status() });
+    });
     await integrationMapPage.goto(
       `${vite.resolvedUrls!.local[0]}maps/${productionIntegrationMapId}`,
     );
-    await integrationMapPage.getByRole("heading", { name: "Concept マップ", exact: true }).waitFor();
+    try {
+      await integrationMapPage.getByRole("heading", { name: "Concept マップ", exact: true }).waitFor();
+    } catch (originalError) {
+      try {
+        const diagnostics = {
+          ciCheckoutSha: process.env.GITHUB_SHA ?? null,
+          sourceSha: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+          node: process.version,
+          browser: await browser.version(),
+          route: new URL(integrationMapPage.url()).pathname,
+          headings: await integrationMapPage.locator("h1,h2,h3").allInnerTexts(),
+          alerts: await integrationMapPage.getByRole("alert").allInnerTexts(),
+          apiRequests: mapApiRequests,
+          apiResponses: mapApiResponses,
+          fixtureMapReads: productionMapFixture.mapReadCount,
+        };
+        const diagnosticPath = join(tmpdir(), `rehearsal-map-heading-${Date.now()}.json`);
+        await writeFile(diagnosticPath, JSON.stringify(diagnostics, null, 2), "utf8");
+        await integrationMapPage.screenshot({ path: diagnosticPath.replace(/\.json$/, ".png") });
+        console.error(`Concept map heading diagnostics saved locally: ${diagnosticPath}`);
+      } catch (diagnosticError) {
+        console.error("Concept map heading diagnostics could not be collected", diagnosticError);
+      }
+      throw originalError;
+    }
     const productionSbNode = integrationMapPage.locator(
       `.concept-node[data-concept-id="${productionDuplicateConceptIds.sb}"]`,
     );
