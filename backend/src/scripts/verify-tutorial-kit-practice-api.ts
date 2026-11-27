@@ -79,6 +79,14 @@ try {
     ],
   };
   assertCounts(await post(partial, 200), false, 2, 1);
+  for (const invalidId of [12, ["practice-id"]]) {
+    for (const body of [
+      { ...partial, concepts: [ ...partial.concepts, { kitConceptItemId: parts.carbonDioxide, id: invalidId } ] },
+      { ...partial, links: [{ ...partial.links[0], id: invalidId }] },
+    ]) {
+      assert.deepEqual(await post(body, 400), { error: "invalid_tutorial_kit_practice" });
+    }
+  }
 
   const reversed = {
     concepts: [

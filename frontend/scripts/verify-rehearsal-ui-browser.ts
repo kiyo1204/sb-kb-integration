@@ -415,6 +415,7 @@ async function installIntegrationDeadlineFlowFixture(
   durationSeconds: number,
   shouldSubmit: () => boolean,
   onSubmitted: (submittedAt: string) => void,
+  serverNow: () => Date = () => new Date(),
 ) {
   let requestCount = 0;
   let autoSubmittedAt: string | null = null;
@@ -424,7 +425,7 @@ async function installIntegrationDeadlineFlowFixture(
     "**/api/sessions/" + sessionId + "/flow",
     async (route) => {
       requestCount += 1;
-      const now = new Date();
+      const now = serverNow();
       if (now.getTime() >= deadlineAt && shouldSubmit()) {
         autoSubmittedAt ??= now.toISOString();
         onSubmitted(autoSubmittedAt);
@@ -1714,6 +1715,47 @@ try {
     if (inlineP02) {
       await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).click();
       const practiceCheckPath = "/api/tutorial/kit-practice/check";
+      const practiceRoute = `**${practiceCheckPath}`;
+      const heldChecks = [0, 1].map(() => {
+        let arrived!: () => void;
+        let release!: () => void;
+        const seen = new Promise<void>((resolve) => { arrived = resolve; });
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        return { arrived, release, seen, gate };
+      });
+      let checkIndex = 0;
+      await tutorialPage.route(practiceRoute, async (route) => {
+        const index = checkIndex++;
+        const check = heldChecks[index];
+        check.arrived();
+        await check.gate;
+        await json(route, index === 0
+          ? { matched: false, concepts: { matched: 3, total: 3 }, relations: { matched: 1, total: 2 } }
+          : { matched: true, concepts: { matched: 3, total: 3 }, relations: { matched: 2, total: 2 } });
+      });
+      try {
+        await checkButton.click();
+        await heldChecks[0].seen;
+        await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).click();
+        await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).click();
+        assert.equal(await activeTutorialPanel.locator(".kit-feedback-check-button").isEnabled(), true, "returning to KB allows another check while the old response is held");
+        await checkButton.click();
+        await heldChecks[1].seen;
+        const oldResponse = checkResponse();
+        heldChecks[0].release();
+        await (await oldResponse).finished();
+        await tutorialPage.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+        assert.equal(await activeTutorialPanel.getByRole("button", { name: "確認中…", exact: true }).isDisabled(), true);
+        assert.equal(await activeTutorialPanel.locator(".kit-feedback-result-heading").count(), 0);
+        const newResponse = checkResponse();
+        heldChecks[1].release();
+        await newResponse;
+        await activeTutorialPanel.locator(".kit-feedback-result-heading").filter({ hasText: /^一致$/ }).waitFor();
+        console.log("KB practice switch: old response ignored and new check completed");
+      } finally {
+        for (const check of heldChecks) check.release();
+        await tutorialPage.unroute(practiceRoute);
+      }
       let releaseLateCheck!: () => void;
       let markLateRequest!: () => void;
       const lateCheckGate = new Promise<void>((resolve) => { releaseLateCheck = resolve; });
@@ -2404,6 +2446,7 @@ try {
       syntheticAccessCode,
     );
     const submissionPage = await submissionContext.newPage();
+    await submissionPage.clock.install();
     await installApiFixture(submissionPage, "legacy-session");
     await submissionPage.route(deadlineEventRoute, acknowledgeDeadlineEvent);
     const submissionFixture = await installProductionIntegrationMapFixture(
@@ -2414,16 +2457,46 @@ try {
       deadlineStageId,
     );
     let allowAutoSubmission = false;
+    let deadlineExpired = false;
     const submissionStartedAt = new Date(Date.now() - 1000).toISOString();
+    const submissionDurationSeconds = 90;
+    const submittedServerTime = Date.parse(submissionStartedAt) + submissionDurationSeconds * 1000;
     const submissionFlow = await installIntegrationDeadlineFlowFixture(
       submissionPage,
       deadlineSessionId,
       deadlineStageId,
       submissionStartedAt,
-      6,
+      submissionDurationSeconds,
       () => allowAutoSubmission,
       (submittedAt) => submissionFixture.markSubmitted(submittedAt),
+      () => deadlineExpired ? new Date(submittedServerTime) : new Date(),
     );
+    const mapAccessPath = `/api/maps/${productionIntegrationMapId}/access`;
+    let denyMapRead = false;
+    let releaseAccessDenial!: () => void;
+    const accessDenialGate = new Promise<void>((resolve) => { releaseAccessDenial = resolve; });
+    submissionPage.once("close", releaseAccessDenial);
+    await submissionPage.route(`**${mapAccessPath}`, async (route) => {
+      if (!deadlineExpired) return route.fulfill({ status: 204 });
+      if (width === 1440) await accessDenialGate;
+      await json(route, { error: "not_found" }, 404);
+    });
+    await submissionPage.route(`**/api/maps/${productionIntegrationMapId}`, (route) =>
+      denyMapRead ? json(route, { error: "not_found" }, 404) : route.fallback(),
+    );
+    let flowAccessLost = false;
+    await submissionPage.route(`**/api/sessions/${deadlineSessionId}/flow`, (route) =>
+      flowAccessLost ? json(route, { error: "experiment_client_stale" }, 409) : route.fallback(),
+    );
+    const observeMapAccessDenial = async () => {
+      const denied = submissionPage.waitForResponse((response) =>
+        new URL(response.url()).pathname === mapAccessPath && response.status() === 404,
+      );
+      releaseAccessDenial();
+      await submissionPage.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await (await denied).finished();
+      await submissionPage.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    };
     await submissionPage.goto(deadlineMapUrl);
     await submissionPage.locator(".concept-canvas-viewport").waitFor();
     const submissionLabel = submissionPage.locator(
@@ -2436,6 +2509,8 @@ try {
       await readDisplayedRemainingSeconds(submissionPage);
     assert.ok(beforeDeadlineRemaining > 0);
     const beforeDeadlineLayout = await readDeadlineLayout(submissionPage);
+    deadlineExpired = true;
+    await submissionPage.clock.fastForward(submissionDurationSeconds * 1000);
     await submissionPage.waitForFunction(
       () =>
         document
@@ -2445,6 +2520,9 @@ try {
       { timeout: 10000 },
     );
     assert.ok(submissionFlow.requestCount() >= 2);
+    if (width === 1366) await observeMapAccessDenial();
+    assert.equal(await submissionLabel.innerText(), "提出状態を確認中", "access denial does not confirm submission");
+    assert.equal(await submissionPage.getByRole("button", { name: "＋ 概念", exact: true }).isDisabled(), true);
     assert.equal(
       submissionFixture.snapshot().status,
       "DRAFT",
@@ -2486,11 +2564,29 @@ try {
       "changing to server-confirmed submitted status does not move the canvas",
     );
     assert.ok(submissionFlow.requestCount() >= 3);
+    if (width === 1440) {
+      await observeMapAccessDenial();
+      assert.equal(await submissionLabel.innerText(), "提出済み", "a late access denial does not discard Flow confirmation");
+    }
     await assertNoHorizontalOverflow(
       submissionPage,
       "integration map after deadline submission",
       width,
     );
+    console.log(`Integration deadline access 404: ${width === 1366 ? "before" : "after"} Flow confirmation PASS (${width}px)`);
+    if (width === 1440) {
+      flowAccessLost = true;
+      await submissionPage.evaluate(() => window.dispatchEvent(new Event("focus")));
+    } else {
+      denyMapRead = true;
+      const deniedReload = submissionPage.waitForResponse((response) =>
+        new URL(response.url()).pathname === `/api/maps/${productionIntegrationMapId}` && response.status() === 404,
+      );
+      await submissionPage.reload();
+      await deniedReload;
+    }
+    await submissionPage.waitForURL(`**/sessions/${deadlineSessionId}`);
+    assert.equal(await submissionPage.locator(".concept-canvas-viewport").count(), 0);
     await submissionContext.close();
 
     if (width === 1366) {

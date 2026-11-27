@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import {
   ConceptCanvas,
   KitBuildFeedbackCheckButton,
@@ -89,6 +89,7 @@ export default function TutorialPage({
     ? initialProgress.navigation.value.mode
     : firstIncomplete;
   const [mode, setMode] = useState<PracticeStep>(initialMode);
+  const [kitVisit, setKitVisit] = useState(0);
   const [visitedSteps, setVisitedSteps] = useState<PracticeStep[]>(() => {
     const currentIndex = practiceSteps.findIndex((step) => step.mode === initialMode);
     return practiceSteps.slice(0, currentIndex + 1).map((step) => step.mode);
@@ -127,6 +128,7 @@ export default function TutorialPage({
       }
     }
     setVisitedSteps((current) => current.includes(step) ? current : [...current, step]);
+    if (mode !== step && step === "KB") setKitVisit((visit) => visit + 1);
     setMode(step);
   }
 
@@ -272,6 +274,7 @@ export default function TutorialPage({
                 <KitPracticeCanvas
                   key={`${practiceSessionId ?? "standalone"}:${ownerDigest ?? "unverified"}:KB:${resetVersions.KB}`}
                   active={mode === "KB"}
+                  visit={kitVisit}
                   sessionId={practiceSessionId}
                   onComplete={completeStep}
                 />
@@ -716,10 +719,12 @@ function readKitPracticeResult(value: unknown): KitPracticeResult | null {
 
 function KitPracticeCanvas({
   active,
+  visit,
   sessionId,
   onComplete,
 }: {
   active: boolean;
+  visit: number;
   sessionId?: string;
   onComplete: (step: PracticeStep) => void;
 }) {
@@ -730,7 +735,8 @@ function KitPracticeCanvas({
     isValidKitPracticeProgress,
   );
   const [error, setError] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
+  const [checkingVisit, setCheckingVisit] = useState<number | null>(null);
+  const checking = checkingVisit === visit;
   const requestId = useRef(0);
   const { placedConcepts, placedLinks, completedTasks, hasFullPlacementMismatch, correctedAfterMismatch } = progress;
   const concepts = placedConcepts.map(({ concept }) => concept);
@@ -747,11 +753,12 @@ function KitPracticeCanvas({
     if (isPracticeStepComplete("KB", progress) && (status === "ready" || status === "disabled")) onComplete("KB");
   }, [onComplete, progress, status]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // Visited panels stay mounted. Discard callbacks from an earlier visit.
     return () => {
       requestId.current += 1;
     };
-  }, [active]);
+  }, [active, visit]);
 
   const storageMessage = status === "corrupt"
     ? "この練習の保存データが破損しているため、編集を止めています。『この練習をやり直す』で初期化してください。"
@@ -765,7 +772,7 @@ function KitPracticeCanvas({
     if (!active || checking) return;
     const currentRequest = ++requestId.current;
     const judgedMapSignature = mapSignature;
-    setChecking(true);
+    setCheckingVisit(visit);
     setError(null);
     const body = {
       concepts: placedConcepts.map(({ kitConceptItemId, concept }) => ({
@@ -819,7 +826,7 @@ function KitPracticeCanvas({
       );
     } finally {
       if (requestId.current === currentRequest) {
-        setChecking(false);
+        setCheckingVisit(null);
       }
     }
   }

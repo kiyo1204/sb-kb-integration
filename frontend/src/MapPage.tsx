@@ -2146,9 +2146,10 @@ export default function MapPage({
       !isLearner ||
       !deadlineMapId ||
       !deadlineSessionId ||
+      deadlineSessionId !== learnerSessionId ||
       !deadlineStageId ||
       !deadlineMapIsIntegration ||
-      deadlineMapStatus !== "DRAFT" ||
+      (deadlineMapStatus !== "DRAFT" && !deadlineSubmissionConfirmed) ||
       integrationDeadline === null
     ) {
       return;
@@ -2161,20 +2162,26 @@ export default function MapPage({
     const controller = new AbortController();
     let checkingSubmission = false;
     let lastSubmissionCheck = Number.NEGATIVE_INFINITY;
+    const checkInterval = deadlineSubmissionConfirmed ? 5000 : 1000;
+
+    function leaveMap() {
+      setState({ status: "loading" });
+      navigate("/sessions/" + encodeURIComponent(activeSessionId));
+    }
 
     async function checkServerSubmission() {
       if (
         controller.signal.aborted ||
         document.visibilityState !== "visible" ||
         checkingSubmission ||
-        performance.now() - lastSubmissionCheck < 1000
+        performance.now() - lastSubmissionCheck < checkInterval
       ) {
         return;
       }
 
       checkingSubmission = true;
       lastSubmissionCheck = performance.now();
-      setIntegrationDeadlineCheck("checking");
+      if (!deadlineSubmissionConfirmed) setIntegrationDeadlineCheck("checking");
       try {
         const response = await apiFetch(
           "/api/sessions/" +
@@ -2184,9 +2191,8 @@ export default function MapPage({
         );
         if (controller.signal.aborted) return;
         if (!response.ok) {
-          if ([401, 403, 404, 409].includes(response.status)) {
-            setState({ status: "loading" });
-            navigate("/sessions/" + encodeURIComponent(activeSessionId));
+          if (deadlineSubmissionConfirmed || [401, 403, 404, 409, 410].includes(response.status)) {
+            leaveMap();
           } else {
             setIntegrationDeadlineCheck("error");
           }
@@ -2198,16 +2204,20 @@ export default function MapPage({
         if (
           flow.session.id !== activeSessionId ||
           flow.session.status !== "IN_PROGRESS" ||
-          flow.currentStage?.id !== activeStageId
+          flow.currentStage?.id !== activeStageId ||
+          flow.currentStage.stageType !== "INTEGRATION_MAP" ||
+          !flow.currentIntegrationMapExists
         ) {
-          setState({ status: "loading" });
-          navigate("/sessions/" + encodeURIComponent(activeSessionId));
+          leaveMap();
           return;
         }
-        if (
-          flow.currentIntegrationMapExists &&
-          flow.currentMapSubmitted
-        ) {
+        // Flow describes the current Stage's single Map. Its ID can be
+        // hidden after expiry, so require the already loaded Map's Stage.
+        if (deadlineSubmissionConfirmed) {
+          if (!flow.currentMapSubmitted) leaveMap();
+          return;
+        }
+        if (flow.currentMapSubmitted) {
           setDeadlineSubmissionConfirmed(true);
           setIntegrationDeadlineCheck(null);
           setState((current) =>
@@ -2226,14 +2236,13 @@ export default function MapPage({
                 }
               : current,
           );
-        } else if (flow.currentIntegrationMapExists) {
-          setIntegrationDeadlineCheck("waiting");
         } else {
-          setIntegrationDeadlineCheck("error");
+          setIntegrationDeadlineCheck("waiting");
         }
       } catch {
         if (!controller.signal.aborted) {
-          setIntegrationDeadlineCheck("error");
+          if (deadlineSubmissionConfirmed) leaveMap();
+          else setIntegrationDeadlineCheck("error");
         }
       } finally {
         checkingSubmission = false;
@@ -2252,7 +2261,7 @@ export default function MapPage({
       if (seconds === 0) void checkServerSubmission();
     }
 
-    const timer = window.setInterval(updateCountdown, 250);
+    const timer = window.setInterval(updateCountdown, deadlineSubmissionConfirmed ? checkInterval : 250);
     const onVisible = () => updateCountdown();
     window.addEventListener("focus", onVisible);
     document.addEventListener("visibilitychange", onVisible);
@@ -2267,16 +2276,23 @@ export default function MapPage({
   }, [
     integrationDeadline,
     isLearner,
+    learnerSessionId,
     deadlineMapId,
     deadlineSessionId,
     deadlineStageId,
     deadlineMapStatus,
     deadlineMapIsIntegration,
+    deadlineSubmissionConfirmed,
     navigate,
   ]);
 
   const isSubmittedMap =
     state.status === "success" && state.map.status === "SUBMITTED";
+  const checkDeadlineWithFlow =
+    deadlineMapIsIntegration &&
+    deadlineMapId === mapId &&
+    deadlineSessionId === learnerSessionId &&
+    integrationDeadline !== null;
 
   useEffect(() => {
     if (!isLearner || !learnerSessionId || state.status !== "success") return;
@@ -2297,10 +2313,16 @@ export default function MapPage({
           cache: "no-store",
           },
         );
+        // Access denies expired and submitted integration Maps. The Flow
+        // check still validates the active Session and Stage in this tab.
+        const expectedDeadlineDenial = response.status === 404 &&
+          checkDeadlineWithFlow && performance.now() >= integrationDeadline;
         if (
           !controller.signal.aborted &&
           !response.ok &&
-          (isSubmittedMap || [401, 403, 404].includes(response.status))
+          !expectedDeadlineDenial &&
+          (isSubmittedMap || [401, 403, 404].includes(response.status) ||
+            (checkDeadlineWithFlow && [409, 410].includes(response.status)))
         ) {
           leaveMap();
         }
@@ -2326,6 +2348,8 @@ export default function MapPage({
     mapId,
     state.status,
     isSubmittedMap,
+    checkDeadlineWithFlow,
+    integrationDeadline,
     navigate,
   ]);
 

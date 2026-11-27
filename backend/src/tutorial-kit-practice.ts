@@ -99,6 +99,7 @@ function parsePlacements(body: unknown) {
     if (
       typeof item.kitConceptItemId !== "string" ||
       !allowedConceptItems.has(item.kitConceptItemId) ||
+      typeof item.id !== "string" ||
       !practiceId.test(item.id)
     ) {
       return null;
@@ -132,6 +133,7 @@ function parsePlacements(body: unknown) {
     if (
       typeof item.kitLinkItemId !== "string" ||
       !allowedLinkItems.has(item.kitLinkItemId) ||
+      typeof item.id !== "string" ||
       !practiceId.test(item.id) ||
       !conceptIds.has(item.sourceConceptId) ||
       !conceptIds.has(item.targetConceptId) ||
