@@ -381,12 +381,23 @@ try {
     tracePractice(testCase, phase, "delivery-response-complete");
     assert.equal(await settleDelivery(), true);
     await page.unroute("**/api/me", holdIdentity);
-    await page.getByLabel("概念の名前").fill("TEST ONLY practice");
+    const conceptName = `TEST ONLY practice concept ${testCase}`;
+    const linkName = `TEST ONLY practice relation ${testCase}`;
+    await page.getByRole("button", { name: "＋ 概念", exact: true }).click();
+    await page.getByLabel("概念名", { exact: true }).fill(conceptName);
     await page.getByRole("button", { name: "概念を追加", exact: true }).click();
-    await page.getByLabel("リンクの名前").fill("TEST ONLY practice relation");
-    await page
-      .getByRole("button", { name: "リンクを追加", exact: true })
-      .click();
+    await page.getByRole("heading", { name: conceptName, exact: true }).waitFor();
+    await page.getByRole("button", { name: "＋ リンク", exact: true }).click();
+    await page.getByLabel("リンクラベル", { exact: true }).fill(linkName);
+    await page.getByRole("button", { name: "接続を開始", exact: true }).click();
+    const pendingLink = page.getByRole("button", {
+      name: `${linkName}の中央をドラッグして移動`,
+      exact: true,
+    });
+    await pendingLink.waitFor();
+    // The next delivery case reopens the same practice in the same tab.
+    await page.getByRole("button", { name: `${linkName}をキャンセル`, exact: true }).click();
+    await pendingLink.waitFor({ state: "hidden" });
     await page.getByRole("button", { name: "案内へ戻る（練習未完了）", exact: true }).click();
     await page.getByRole("heading", { name: "活動の案内" }).waitFor();
     phase = "returned";
