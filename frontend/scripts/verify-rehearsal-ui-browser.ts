@@ -1922,7 +1922,7 @@ try {
       `${vite.resolvedUrls!.local[0]}maps/${productionIntegrationMapId}`,
     );
     try {
-      await integrationMapPage.getByRole("heading", { name: "Concept マップ", exact: true }).waitFor();
+      await integrationMapPage.getByRole("heading", { name: "統合マップ", exact: true }).waitFor();
     } catch (originalError) {
       try {
         const diagnostics = {
@@ -1978,7 +1978,7 @@ try {
     await assertNoHorizontalOverflow(integrationMapPage, "production integration map", width);
 
     await integrationMapPage.reload();
-    await integrationMapPage.getByRole("heading", { name: "Concept マップ", exact: true }).waitFor();
+    await integrationMapPage.getByRole("heading", { name: "統合マップ", exact: true }).waitFor();
     await assertProductionDuplicateOrdinals();
 
     const productionMergePanel = integrationMapPage.getByRole("region", { name: "Concept Merge" });
