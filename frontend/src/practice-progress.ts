@@ -23,9 +23,10 @@ export type PracticeLink = {
 };
 
 export type SbPracticeProgress = {
+  taskSetVersion?: 2;
   concepts: PracticeConcept[];
   links: PracticeLink[];
-  completedTasks: Array<"concept.add" | "concept.move" | "link.add">;
+  completedTasks: Array<"concept.add" | "concept.move" | "concept.rename" | "link.add">;
   linkCreation: { id: string; label: string } | null;
 };
 
@@ -86,7 +87,8 @@ export const practiceKbPhotosynthesisId = "practice-kb-photosynthesis";
 
 const storagePrefix = "sbkb-practice-progress-v1:";
 const maxSerializedLength = 1_000_000;
-const sbTaskKeys = new Set(["concept.add", "concept.move", "link.add"]);
+const legacySbTaskKeys = ["concept.add", "concept.move", "link.add"] as const;
+const sbTaskKeys = new Set([ ...legacySbTaskKeys, "concept.rename"]);
 const kitTaskKeys = new Set(["kit.place", "kit.judge", "kit.correct", "kit.rejudge"]);
 const integrationTaskKeys = new Set(["identify", "merge", "submit"]);
 const stepKeys = new Set<PracticeStep>(["PRIOR", "KB", "INTEGRATION"]);
@@ -94,7 +96,7 @@ const conceptItems = new Map<string, string>(photosynthesisKitConcepts.map((item
 const linkItems = new Map<string, string>(photosynthesisKitLinks.map((item) => [item.kitLinkItemId, item.label]));
 
 export function createInitialSbPracticeProgress(): SbPracticeProgress {
-  return { concepts: [], links: [], completedTasks: [], linkCreation: null };
+  return { taskSetVersion: 2, concepts: [], links: [], completedTasks: [], linkCreation: null };
 }
 
 export function createInitialKitPracticeProgress(): KitPracticeProgress {
@@ -207,7 +209,9 @@ function isPracticeLink(value: unknown, mapId: string): value is PracticeLink {
 }
 
 export function isValidSbPracticeProgress(value: unknown): value is SbPracticeProgress {
-  if (!isRecord(value) || !hasKeys(value, ["concepts", "links", "completedTasks", "linkCreation"])) return false;
+  const legacyKeys = ["concepts", "links", "completedTasks", "linkCreation"];
+  if (!isRecord(value) || !(hasKeys(value, legacyKeys) || hasKeys(value, [...legacyKeys, "taskSetVersion"]))) return false;
+  if (Object.hasOwn(value, "taskSetVersion") && value.taskSetVersion !== 2) return false;
   if (!Array.isArray(value.concepts) || value.concepts.length > 200 || !value.concepts.every(isPracticeConcept)) return false;
   if (!Array.isArray(value.links) || value.links.length > 500 || !value.links.every((link) => isPracticeLink(link, "practice"))) return false;
   const conceptIds = new Set(value.concepts.map((concept) => (concept as PracticeConcept).id));
@@ -218,6 +222,7 @@ export function isValidSbPracticeProgress(value: unknown): value is SbPracticePr
     return !conceptIds.has(item.sourceConceptId) || !conceptIds.has(item.targetConceptId);
   })) return false;
   if (!isUniqueStringArray(value.completedTasks, sbTaskKeys)) return false;
+  if (value.taskSetVersion === undefined && value.completedTasks.includes("concept.rename")) return false;
   if (value.linkCreation !== null) {
     if (!isRecord(value.linkCreation) || !hasKeys(value.linkCreation, ["id", "label"])) return false;
     const draftId = value.linkCreation.id;
@@ -282,7 +287,7 @@ export function isValidKitPracticeProgress(value: unknown): value is KitPractice
     typeof value.hasFullPlacementMismatch !== "boolean" || typeof value.correctedAfterMismatch !== "boolean" ||
     typeof value.successfulRejudge !== "boolean") return false;
   const completed = new Set(value.completedTasks as string[]);
-  if (completed.has("kit.judge") !== value.hasFullPlacementMismatch ||
+  if ((value.hasFullPlacementMismatch && !completed.has("kit.judge")) ||
     completed.has("kit.correct") !== value.correctedAfterMismatch ||
     completed.has("kit.rejudge") !== value.successfulRejudge ||
     (value.correctedAfterMismatch && !value.hasFullPlacementMismatch) ||
@@ -341,8 +346,13 @@ export function isValidPracticeNavigation(value: unknown): value is PracticeNavi
 }
 
 export function isPracticeStepComplete(step: PracticeStep, value: unknown) {
-  if (step === "PRIOR") return isValidSbPracticeProgress(value) &&
-    ["concept.add", "concept.move", "link.add"].every((key) => value.completedTasks.includes(key as SbPracticeProgress["completedTasks"][number]));
+  if (step === "PRIOR") {
+    if (!isValidSbPracticeProgress(value)) return false;
+    const requiredTasks = value.taskSetVersion === undefined
+      ? legacySbTaskKeys
+      : [...legacySbTaskKeys.slice(0, 2), "concept.rename", legacySbTaskKeys[2]];
+    return requiredTasks.every((key) => value.completedTasks.includes(key as SbPracticeProgress["completedTasks"][number]));
+  }
   if (step === "KB") return isValidKitPracticeProgress(value) && value.successfulRejudge &&
     ["kit.place", "kit.judge", "kit.correct", "kit.rejudge"].every((key) => value.completedTasks.includes(key as KitPracticeProgress["completedTasks"][number]));
   return isValidIntegrationPracticeProgress(value) && value.submitted &&

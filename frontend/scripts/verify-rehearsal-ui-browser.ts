@@ -961,12 +961,77 @@ try {
     await failedWritePage.getByLabel("概念名").fill("保存失敗してはいけない概念");
     await failedWritePage.getByRole("button", { name: "概念を追加" }).click();
     assert.equal(await failedWritePage.locator(".concept-node").count(), 0, "a failed local write does not commit the map change in React state");
-    assert.equal(await failedWritePage.locator('.tutorial-task-progress [role="status"]').innerText(), "0 / 3 件達成", "a failed write cannot award the add task");
+    assert.equal(await failedWritePage.locator('.tutorial-task-progress [role="status"]').innerText(), "0 / 4 件達成", "a failed write cannot award the add task");
     assert.match(await failedWritePage.getByRole("alert").innerText(), /保存できませんでした/);
     await failedWritePage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
     await failedWritePage.getByRole("heading", { name: "活動の案内" }).waitFor();
     assert.equal(await failedWritePage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(), true, "a failed practice write cannot unlock P02");
     await failedWriteContext.close();
+
+    const failedRenameContext = await browser.newContext({ viewport: { width, height } });
+    const failedRenameKey = `sbkb-practice-progress-v1:00000000-0000-4000-8000-000000000001:${requestDigest(learnerToken)}:PRIOR`;
+    const failedRenameProgress = {
+      taskSetVersion: 2,
+      concepts: [{ id: "practice-rename-failure", label: "保存前の名前", positionX: 80, positionY: 80, createdAt: "", updatedAt: "" }],
+      links: [],
+      completedTasks: ["concept.add"],
+      linkCreation: null,
+    };
+    await failedRenameContext.addInitScript(({ token, progressKey, progress }) => {
+      sessionStorage.setItem("stage1-access-token", token);
+      sessionStorage.setItem(progressKey, JSON.stringify({ version: 1, sessionId: "00000000-0000-4000-8000-000000000001", step: "PRIOR", value: progress }));
+      const originalSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key: string, value: string) {
+        if (key === progressKey) throw new DOMException("Synthetic quota failure", "QuotaExceededError");
+        originalSetItem.call(this, key, value);
+      };
+    }, { token: learnerToken, progressKey: failedRenameKey, progress: failedRenameProgress });
+    const failedRenamePage = await failedRenameContext.newPage();
+    await installApiFixture(failedRenamePage, "p02");
+    await failedRenamePage.goto(vite.resolvedUrls!.local[0]!);
+    await failedRenamePage.getByRole("button", { name: /練習を開く/ }).click();
+    await failedRenamePage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+    const failedRenamePanel = failedRenamePage.locator(".tutorial-practice-panel:not([hidden])");
+    await failedRenamePage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).click();
+    await failedRenamePanel.locator(".concept-node").click();
+    await failedRenamePanel.getByLabel("概念名").fill("保存されない名前");
+    await failedRenamePanel.locator(".map-editor-drawer").getByRole("button", { name: "保存", exact: true }).click();
+    assert.equal(await failedRenamePanel.locator(".concept-node h3").innerText(), "保存前の名前", "a failed rename write keeps the last persisted label visible");
+    assert.equal(await failedRenamePanel.locator('.tutorial-task-progress [role="status"]').innerText(), "1 / 4 件達成", "a failed rename write cannot earn the rename task");
+    assert.match(await failedRenamePage.getByRole("alert").innerText(), /保存できませんでした/);
+    await failedRenameContext.close();
+
+    const legacyPriorContext = await browser.newContext({ viewport: { width, height } });
+    const legacyPriorSessionId = "00000000-0000-4000-8000-000000000001";
+    const legacyPriorDigest = requestDigest(syntheticAccessCode);
+    const legacyPriorKey = `sbkb-practice-progress-v1:${legacyPriorSessionId}:${legacyPriorDigest}:PRIOR`;
+    const legacyPriorCompletionKey = `sbkb-practice-complete-v1:${legacyPriorSessionId}:${legacyPriorDigest}`;
+    const legacyPriorProgress = {
+      concepts: [
+        { id: "practice-legacy-a", label: "以前の名前", positionX: 80, positionY: 80, createdAt: "", updatedAt: "" },
+        { id: "practice-legacy-b", label: "既存概念", positionX: 280, positionY: 180, createdAt: "", updatedAt: "" },
+      ],
+      links: [{ id: "practice-legacy-link", mapId: "practice", sourceConceptId: "practice-legacy-a", targetConceptId: "practice-legacy-b", label: "関連" }],
+      completedTasks: ["concept.add", "concept.move", "link.add"],
+      linkCreation: null,
+    };
+    await legacyPriorContext.addInitScript(({ token, sessionId, progressKey, completionKey, progress }) => {
+      sessionStorage.setItem("stage1-access-token", token);
+      sessionStorage.setItem(progressKey, JSON.stringify({ version: 1, sessionId, step: "PRIOR", value: progress }));
+      sessionStorage.setItem(completionKey, "1");
+    }, { token: syntheticAccessCode, sessionId: legacyPriorSessionId, progressKey: legacyPriorKey, completionKey: legacyPriorCompletionKey, progress: legacyPriorProgress });
+    const legacyPriorPage = await legacyPriorContext.newPage();
+    await installApiFixture(legacyPriorPage, "p02");
+    await legacyPriorPage.goto(vite.resolvedUrls!.local[0]!);
+    await legacyPriorPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+    assert.equal(await legacyPriorPage.getByRole("button", { name: "セッションを開始", exact: true }).isEnabled(), false, "an SB-only legacy record does not bypass the existing all-practice start gate");
+    await legacyPriorPage.getByRole("button", { name: /練習を開く/ }).click();
+    await legacyPriorPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+    await legacyPriorPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).click();
+    assert.equal(await legacyPriorPage.locator(".tutorial-practice-panel:not([hidden]) .concept-node").count(), 2, "a legacy SB map remains readable");
+    assert.equal(await legacyPriorPage.locator(".tutorial-practice-panel:not([hidden]) .concept-node h3").first().innerText(), "以前の名前");
+    assert.equal(await legacyPriorPage.locator('.tutorial-practice-panel:not([hidden]) .tutorial-task-progress [role="status"]').innerText(), "3 / 3 件達成", "legacy completed tasks remain readable as the previous task set");
+    await legacyPriorContext.close();
 
     // Initial material fetch 503 is retryable; no new client owner is claimed.
     const retryContext = await browser.newContext({ viewport: { width, height } });
@@ -1121,8 +1186,8 @@ try {
     assert.equal(await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).isDisabled(), true);
     assert.deepEqual(
       await activeTutorialPanel.locator(".tutorial-task-progress ol").innerText(),
-      "○ 概念を追加する未完了\n○ 概念を移動する未完了\n○ リンクを接続する未完了",
-      "SB practice lists only the three required real actions",
+      "○ 概念を追加する未完了\n○ 概念を移動する未完了\n○ 概念名を変更する未完了\n○ リンクを接続する未完了",
+      "new SB practice lists the four required real actions",
     );
     let sbZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
     let sbWritesBeforeActions = tutorialApiRequests.filter((request) => request.method !== "GET").length;
@@ -1132,9 +1197,34 @@ try {
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1);
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "1 / 3 件達成",
+      "1 / 4 件達成",
       "adding a local SB concept completes only the add task",
     );
+    const sbConceptNode = activeTutorialPanel.locator(".concept-node").first();
+    await sbConceptNode.click();
+    const sbConceptName = activeTutorialPanel.getByLabel("概念名");
+    const sbEditDrawer = activeTutorialPanel.locator(".map-editor-drawer");
+    await sbConceptName.fill("合成A");
+    await sbEditDrawer.getByRole("button", { name: "保存", exact: true }).click();
+    assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "1 / 4 件達成", "saving an unchanged concept name does not earn the rename task");
+
+    await sbConceptNode.click();
+    await activeTutorialPanel.getByLabel("概念名").fill("   ");
+    assert.equal(await activeTutorialPanel.locator(".map-editor-drawer").getByRole("button", { name: "保存", exact: true }).isDisabled(), true, "an empty concept name cannot be saved");
+    await activeTutorialPanel.locator(".map-editor-drawer").getByRole("button", { name: "編集を閉じる" }).click();
+    assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "1 / 4 件達成", "an empty name does not earn the rename task");
+
+    await sbConceptNode.click();
+    await activeTutorialPanel.getByLabel("概念名").fill("取消された名前");
+    await activeTutorialPanel.locator(".map-editor-drawer").getByRole("button", { name: "編集を閉じる" }).click();
+    assert.equal(await sbConceptNode.locator("h3").innerText(), "合成A", "closing the editor cancels the draft name");
+    assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "1 / 4 件達成", "cancelled name changes do not earn the rename task");
+
+    await sbConceptNode.click();
+    await activeTutorialPanel.getByLabel("概念名").fill("合成A変更");
+    await activeTutorialPanel.locator(".map-editor-drawer").getByRole("button", { name: "保存", exact: true }).click();
+    assert.equal(await sbConceptNode.locator("h3").innerText(), "合成A変更");
+    assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "2 / 4 件達成", "a changed and locally saved concept name earns the rename task");
     if (inlineP02) {
       const priorKey = `sbkb-practice-progress-v1:${p02SessionId}:${requestDigest(syntheticAccessCode)}:PRIOR`;
       const initialStoredProgress = await tutorialPage.evaluate((key) => sessionStorage.getItem(key), priorKey);
@@ -1145,15 +1235,16 @@ try {
       await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
       await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
       assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1, "reopening from P02 restores the unfinished SB map");
-      assert.equal(await activeTutorialPanel.locator(".concept-node h3").innerText(), "合成A");
-      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "1 / 3 件達成");
+      assert.equal(await activeTutorialPanel.locator(".concept-node h3").innerText(), "合成A変更");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "2 / 4 件達成");
 
       await tutorialPage.reload();
       await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
       await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
       await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
       assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1, "same-tab reload restores the SB map");
-      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "1 / 3 件達成");
+      assert.equal(await activeTutorialPanel.locator(".concept-node h3").innerText(), "合成A変更", "same-tab reload restores the renamed concept");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "2 / 4 件達成");
 
       await tutorialPage.evaluate((token) => sessionStorage.setItem("stage1-access-token", token), syntheticOtherAccessCode);
       await tutorialPage.reload();
@@ -1162,7 +1253,7 @@ try {
       await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
       await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
       assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 0, "another authorized Session does not inherit the first Session's map");
-      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "0 / 3 件達成");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "0 / 4 件達成");
       await tutorialPage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
       await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
 
@@ -1172,7 +1263,8 @@ try {
       await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
       await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
       assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1, "switching back restores only the original Session's saved map");
-      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "1 / 3 件達成");
+      assert.equal(await activeTutorialPanel.locator(".concept-node h3").innerText(), "合成A変更");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "2 / 4 件達成");
       const practiceStorage = await tutorialPage.evaluate(() => Object.entries(sessionStorage)
         .filter(([key]) => key.startsWith("sbkb-practice-progress-v1:")));
       assert.equal(practiceStorage.length, 1, "only the SB progress touched in this scenario has been saved");
@@ -1196,13 +1288,7 @@ try {
       sbWritesBeforeActions,
       "zooming and selecting an SB practice concept issue no write request",
     );
-    await tutorialPage.getByLabel("概念名").fill("合成A変更");
-    await activeTutorialPanel.locator(".map-editor-drawer").getByRole("button", { name: "保存" }).click();
-    assert.equal(
-      await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "1 / 3 件達成",
-      "renaming a concept is available but is not an SB practice task",
-    );
+    await activeTutorialPanel.locator(".map-editor-drawer").getByRole("button", { name: "編集を閉じる" }).click();
     const movingNode = activeTutorialPanel.locator(".concept-node").first();
     await movingNode.scrollIntoViewIfNeeded();
     const moving = await movingNode.boundingBox();
@@ -1213,14 +1299,14 @@ try {
     await tutorialPage.mouse.up();
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "2 / 3 件達成",
+      "3 / 4 件達成",
       "moving a concept completes the second task",
     );
     await activeTutorialPanel.locator(".concept-node").nth(2).click();
     await activeTutorialPanel.locator(".map-editor-drawer").getByRole("button", { name: "削除" }).click();
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "2 / 3 件達成",
+      "3 / 4 件達成",
       "deleting a concept is not an SB practice task",
     );
     await tutorialPage.getByRole("button", { name: "＋ リンク", exact: true }).click();
@@ -1240,7 +1326,7 @@ try {
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "3 / 3 件達成",
+      "4 / 4 件達成",
       "connecting both endpoints completes the final SB task",
     );
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
@@ -1324,9 +1410,46 @@ try {
     );
     const temporaryLink = activeTutorialPanel.locator(".link-connector.is-temporary");
     await temporaryLink.waitFor({ state: "visible" });
-    await connectTemporary(2, 1);
+    await connectTemporary(1, 2);
     await temporaryLink.waitFor({ state: "detached" });
     assert.equal(await activeTutorialPanel.locator(".link-connector:not(.is-temporary)").count(), 2);
+
+    const initialMatchedCheck = checkResponse();
+    await checkButton.click();
+    assert.equal((await initialMatchedCheck).status(), 200, "initially matched Kit check uses its synthetic fixture");
+    assert.equal(
+      await activeTutorialPanel.locator(".kit-feedback-result-heading").innerText(),
+      "一致",
+      "the first full placement can already match",
+    );
+    assert.equal(
+      await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(),
+      "2 / 4 件達成",
+      "full placement and the first judgment complete even when it matches immediately",
+    );
+    assert.match(
+      await activeTutorialPanel.locator(".kit-feedback-dialog-content").innerText(),
+      /両端を一度逆に接続して判定/,
+      "an initially matched map explains the remaining mismatch/correction/rejudge actions",
+    );
+
+    const requiredEdge = activeTutorialPanel
+      .locator(".link-connector:not(.is-temporary)")
+      .filter({ hasText: "必要とする" });
+    const photosynthesisNode = activeTutorialPanel
+      .locator(".concept-node")
+      .filter({ hasText: "光合成" });
+    const carbonDioxideNode = activeTutorialPanel
+      .locator(".concept-node")
+      .filter({ hasText: "二酸化炭素" });
+    await requiredEdge.locator(".link-connector-handle.is-source").scrollIntoViewIfNeeded();
+    await carbonDioxideNode.scrollIntoViewIfNeeded();
+    await requiredEdge
+      .locator(".link-connector-handle.is-source")
+      .dragTo(carbonDioxideNode);
+    await requiredEdge
+      .locator(".link-connector-handle.is-target")
+      .dragTo(photosynthesisNode);
 
     const wrongDirectionCheck = checkResponse();
     await checkButton.click();
@@ -1355,15 +1478,6 @@ try {
       "retry keeps the incorrect-direction result",
     );
 
-    const requiredEdge = activeTutorialPanel
-      .locator(".link-connector:not(.is-temporary)")
-      .filter({ hasText: "必要とする" });
-    const photosynthesisNode = activeTutorialPanel
-      .locator(".concept-node")
-      .filter({ hasText: "光合成" });
-    const carbonDioxideNode = activeTutorialPanel
-      .locator(".concept-node")
-      .filter({ hasText: "二酸化炭素" });
     await requiredEdge.locator(".link-connector-handle.is-source").scrollIntoViewIfNeeded();
     await photosynthesisNode.scrollIntoViewIfNeeded();
     await requiredEdge
@@ -1408,7 +1522,7 @@ try {
       kbZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
     }
     assert.equal(await kbZoom.percentage.innerText(), "150%", "KB correction succeeds after zoom and scroll");
-    assert.equal(tutorialPracticeBodies.length, 4, "KB uses only the fixed practice check endpoint");
+    assert.equal(tutorialPracticeBodies.length, 5, "KB uses only the fixed practice check endpoint");
     for (const body of tutorialPracticeBodies) {
       assert.deepEqual(Object.keys(body as object).sort(), ["concepts", "links"]);
       const value = body as { concepts: Array<Record<string, unknown>>; links: Array<Record<string, unknown>> };
@@ -1554,7 +1668,7 @@ try {
     await tutorialPage.getByRole("heading", { name: "Scratch-Buildの練習" }).waitFor();
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
-      "3 / 3 件達成",
+      "4 / 4 件達成",
     );
     assert.ok(await activeTutorialPanel.locator(".concept-node").count() > 0, "SB map is retained");
     await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).click();
@@ -1581,7 +1695,7 @@ try {
       await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
       assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "0 / 3 件達成", "reopening resumes the reset integration practice");
       await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).click();
-      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "3 / 3 件達成", "reset does not erase completed SB progress");
+      assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "4 / 4 件達成", "reset does not erase completed SB progress");
       assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
       await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).click();
       assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "4 / 4 件達成", "reset does not erase completed KB progress");

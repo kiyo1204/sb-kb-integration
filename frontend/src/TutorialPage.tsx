@@ -38,13 +38,15 @@ const practiceSteps: { mode: PracticeStep; label: string }[] = [
   { mode: "KB", label: "Kit-Buildの練習" },
   { mode: "INTEGRATION", label: "統合マップの練習" },
 ];
-type SbPracticeTask = { key: "concept.add" | "concept.move" | "link.add"; label: string };
+type SbPracticeTask = { key: "concept.add" | "concept.move" | "concept.rename" | "link.add"; label: string };
 type KitPracticeTask = { key: "kit.place" | "kit.judge" | "kit.correct" | "kit.rejudge"; label: string };
 const sbPracticeTasks: SbPracticeTask[] = [
   { key: "concept.add", label: "概念を追加する" },
   { key: "concept.move", label: "概念を移動する" },
+  { key: "concept.rename", label: "概念名を変更する" },
   { key: "link.add", label: "リンクを接続する" },
 ];
+const legacySbPracticeTasks = sbPracticeTasks.filter((task) => task.key !== "concept.rename");
 
 // The browser receives palette labels and opaque item IDs only. The fixed goal
 // graph and its correct endpoints remain in backend/src/tutorial-kit-practice.ts.
@@ -307,8 +309,8 @@ function SbPracticeCanvas({
   const [conceptLabel, setConceptLabel] = useState("");
   const [linkLabel, setLinkLabel] = useState("");
   const [editLabel, setEditLabel] = useState("");
-  const tasks = sbPracticeTasks;
-  const allTasksComplete = tasks.every((task) => completedTasks.includes(task.key));
+  const tasks = progress.taskSetVersion === undefined ? legacySbPracticeTasks : sbPracticeTasks;
+  const allTasksComplete = isPracticeStepComplete("PRIOR", progress);
   useEffect(() => {
     if (allTasksComplete && (status === "ready" || status === "disabled")) onComplete("PRIOR");
   }, [allTasksComplete, onComplete, status]);
@@ -374,15 +376,36 @@ function SbPracticeCanvas({
     return linkId;
   }
 
+  function saveConceptLabel(conceptId: string, value: string) {
+    const label = value.trim();
+    if (!label) return false;
+    return update((current) => {
+      const selected = current.concepts.find((concept) => concept.id === conceptId);
+      if (!selected || selected.label === label) return current;
+      const completed = current.taskSetVersion === 2
+        ? current.completedTasks.includes("concept.rename")
+          ? current.completedTasks
+          : [...current.completedTasks, "concept.rename" as const]
+        : current.completedTasks;
+      return {
+        ...current,
+        concepts: current.concepts.map((concept) => concept.id === conceptId ? { ...concept, label } : concept),
+        completedTasks: completed,
+      };
+    });
+  }
+
   function saveSelection(event: FormEvent) {
     event.preventDefault();
     const label = editLabel.trim();
     if (!label) return;
-    if (!update((current) => ({
-      ...current,
-      concepts: activeConcept ? current.concepts.map((concept) => concept.id === activeConcept.id ? { ...concept, label } : concept) : current.concepts,
-      links: activeLink ? current.links.map((link) => link.id === activeLink.id ? { ...link, label } : link) : current.links,
-    }))) return;
+    const saved = activeConcept
+      ? saveConceptLabel(activeConcept.id, label)
+      : update((current) => ({
+        ...current,
+        links: activeLink ? current.links.map((link) => link.id === activeLink.id ? { ...link, label } : link) : current.links,
+      }));
+    if (!saved) return;
     setDrawer({ kind: "closed" });
   }
 
@@ -483,9 +506,7 @@ function SbPracticeCanvas({
               canEditLinkLabel
               positionSaving={false}
               positionFeedback={null}
-              onLabelSave={async (conceptId, label) => {
-                update((current) => ({ ...current, concepts: current.concepts.map((concept) => concept.id === conceptId ? { ...concept, label } : concept) }));
-              }}
+              onLabelSave={async (conceptId, label) => { saveConceptLabel(conceptId, label); }}
               onConceptDelete={async (conceptId) => {
                 update((current) => ({ ...current,
                   concepts: current.concepts.filter((concept) => concept.id !== conceptId),
@@ -775,7 +796,7 @@ function KitPracticeCanvas({
           next.concepts.matched === 3 && next.relations.matched === 1;
         const successfulRejudge = next.matched && current.hasFullPlacementMismatch && current.correctedAfterMismatch;
         const completed = new Set(current.completedTasks);
-        if (isFullMismatch) completed.add("kit.judge");
+        if (allPartsPlaced) completed.add("kit.judge");
         if (successfulRejudge) completed.add("kit.rejudge");
         const nextProgress: KitPracticeProgress = {
           ...current,
@@ -810,7 +831,9 @@ function KitPracticeCanvas({
   const resultMessage = result?.matched
     ? hasFullPlacementMismatch && correctedAfterMismatch
       ? "練習用Kitと一致しました。"
-      : "一致しています。配置後の不一致を確認し、接続を見直してから再判定してください。"
+      : !hasFullPlacementMismatch
+        ? "最初の判定で一致しました。残りの課題も確認するには、「必要とする」の両端を一度逆に接続して判定し、不一致を確認してから正しい向きに戻し、もう一度判定してください。"
+        : "一致しています。配置後の不一致を確認し、接続を見直してから再判定してください。"
     : "配置やリンクの向きを見直して、再度確認できます。";
 
   return (
