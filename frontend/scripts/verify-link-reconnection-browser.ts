@@ -8,7 +8,7 @@ const sid = id(1),
   lid = id(3),
   stage = id(4),
   now = new Date().toISOString();
-const map = {
+const initialMap = {
   id: mid,
   type: "PRIOR",
   status: "DRAFT",
@@ -78,6 +78,7 @@ async function drag(page: Page, endpoint: string, concept: string) {
 }
 try {
   for (const width of requestedViewport ? [requestedViewport] : [1366, 1440]) {
+    const map = structuredClone(initialMap);
     const page = await browser.newPage({
       viewport: { width, height: width === 1366 ? 768 : 900 },
     });
