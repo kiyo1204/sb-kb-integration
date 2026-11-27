@@ -1940,7 +1940,13 @@ try {
         const diagnosticPath = join(tmpdir(), `rehearsal-map-heading-${Date.now()}.json`);
         await writeFile(diagnosticPath, JSON.stringify(diagnostics, null, 2), "utf8");
         await integrationMapPage.screenshot({ path: diagnosticPath.replace(/\.json$/, ".png") });
-        console.error(`Concept map heading diagnostics saved locally: ${diagnosticPath}`);
+        console.error(`[REHEARSAL_MAP_HEADING_DIAGNOSTICS] ${JSON.stringify({
+          ...diagnostics,
+          headings: diagnostics.headings.slice(0, 12).map((value) => value.slice(0, 160)),
+          alerts: diagnostics.alerts.slice(0, 8).map((value) => value.slice(0, 240)),
+          apiRequests: diagnostics.apiRequests.slice(0, 40),
+          apiResponses: diagnostics.apiResponses.slice(0, 40),
+        })}`);
       } catch (diagnosticError) {
         console.error("Concept map heading diagnostics could not be collected", diagnosticError);
       }
