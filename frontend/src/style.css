@@ -2884,6 +2884,29 @@ button.link-connector-label:active {
   align-content: center;
 }
 
+.map-editor-deadline-notices {
+  margin-block: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.map-editor-deadline-delivery {
+  min-block-size: 3em;
+}
+
+.map-editor-deadline-delivery > p,
+.map-editor-deadline-notices > .session-error {
+  margin: 0;
+}
+
+.map-editor-deadline-notices > .session-error {
+  padding: 6px 10px;
+}
+
+.map-editor-deadline-notices > [aria-hidden="true"] {
+  visibility: hidden;
+}
+
 .integration-deadline-status {
   box-sizing: border-box;
   display: inline-flex;
@@ -3331,6 +3354,10 @@ button.link-connector-label:active {
 }
 
 @media (max-width: 760px) {
+  .map-editor-deadline-delivery {
+    min-block-size: 6em;
+  }
+
   .map-editor-page {
     padding-inline: 12px;
   }

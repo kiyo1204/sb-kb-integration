@@ -2149,6 +2149,9 @@ try {
 
     const deadlineSessionId = "00000000-0000-4000-8000-000000000003";
     const deadlineStageId = "00000000-0000-4000-8000-000000000022";
+    const deadlineEventRoute = `**/api/sessions/${deadlineSessionId}/events`;
+    const acknowledgeDeadlineEvent = (route: Route) =>
+      json(route, { logSaved: true, eventId: "synthetic-deadline-event", sequenceNumber: "1" }, 201);
     const deadlineMapUrl = new URL(
       "maps/" + productionIntegrationMapId,
       vite.resolvedUrls!.local[0],
@@ -2282,6 +2285,17 @@ try {
     );
     const countdownPage = await countdownContext.newPage();
     await installApiFixture(countdownPage, "legacy-session");
+    let releaseFirstObservation = () => {};
+    const firstObservationGate = new Promise<void>((resolve) => {
+      releaseFirstObservation = resolve;
+    });
+    let holdObservation = false;
+    await countdownPage.route(deadlineEventRoute, async (route) => {
+      if (!holdObservation) return acknowledgeDeadlineEvent(route);
+      await firstObservationGate;
+      return json(route, { error: "synthetic_delivery_failure", logSaved: false }, 503);
+    });
+    countdownPage.once("close", releaseFirstObservation);
     const countdownStartedAt = new Date(Date.now() - 5000).toISOString();
     await installProductionIntegrationMapFixture(
       countdownPage,
@@ -2302,6 +2316,17 @@ try {
     await countdownPage.goto(deadlineMapUrl);
     await countdownPage.locator(".concept-canvas-viewport").waitFor();
     await countdownPage.locator(".integration-deadline-status").waitFor();
+    const pendingObservation = countdownPage.getByText(/操作記録：送信待ち/);
+    await countdownPage.locator(".map-editor-history-actions").waitFor();
+    await waitForDeadlineLayoutToSettle(countdownPage, "countdown-started");
+    holdObservation = true;
+    await countdownPage.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await pendingObservation.waitFor();
+    await waitForDeadlineLayoutToSettle(countdownPage, "observation-pending");
+    const pendingLayout = await readDeadlineLayout(countdownPage);
     const initialRemaining = await readDisplayedRemainingSeconds(countdownPage);
     assert.ok(initialRemaining > 0 && initialRemaining < 90);
     const initialCanvasTop = await canvasTop(countdownPage);
@@ -2313,10 +2338,32 @@ try {
       initialCanvasTop,
       "changing countdown digits does not move the canvas",
     );
+    releaseFirstObservation();
+    const observationWarning = countdownPage.getByText(/一部の操作記録の保存を確認できていません/);
+    await observationWarning.waitFor();
+    await waitForDeadlineLayoutToSettle(countdownPage, "observation-failed");
+    await assertDeadlineAreasStable(countdownPage, pendingLayout, "observation failure does not move the canvas");
+    const retryAcknowledged = countdownPage.waitForResponse((response) =>
+      new URL(response.url()).pathname === `/api/sessions/${deadlineSessionId}/events` &&
+      response.status() === 201,
+    );
+    holdObservation = false;
+    await countdownPage.evaluate(() => {
+      Reflect.deleteProperty(document, "visibilityState");
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("online"));
+    });
+    await retryAcknowledged;
+    await pendingObservation.waitFor({ state: "hidden" });
+    assert.equal(await observationWarning.isVisible(), true, "delivery ACK keeps the save warning visible");
+    await waitForDeadlineLayoutToSettle(countdownPage, "observation-acknowledged");
+    await assertDeadlineAreasStable(countdownPage, pendingLayout, "observation acknowledgement does not move the canvas");
 
     await countdownPage.reload();
     await countdownPage.locator(".concept-canvas-viewport").waitFor();
     await countdownPage.locator(".integration-deadline-status").waitFor();
+    await countdownPage.locator(".map-editor-history-actions").waitFor();
+    await waitForDeadlineLayoutToSettle(countdownPage, "countdown-reloaded");
     const afterReloadRemaining =
       await readDisplayedRemainingSeconds(countdownPage);
     assert.ok(
@@ -2358,6 +2405,7 @@ try {
     );
     const submissionPage = await submissionContext.newPage();
     await installApiFixture(submissionPage, "legacy-session");
+    await submissionPage.route(deadlineEventRoute, acknowledgeDeadlineEvent);
     const submissionFixture = await installProductionIntegrationMapFixture(
       submissionPage,
       deadlineSessionId,
@@ -2382,6 +2430,7 @@ try {
       ".integration-deadline-status",
     );
     await submissionLabel.waitFor();
+    await submissionPage.locator(".map-editor-history-actions").waitFor();
     await waitForDeadlineLayoutToSettle(submissionPage, "before-deadline");
     const beforeDeadlineRemaining =
       await readDisplayedRemainingSeconds(submissionPage);

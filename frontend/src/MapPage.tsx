@@ -3626,6 +3626,11 @@ function MapEditorShell({
         ? "統合マップ"
         : "Kit-Build マップ";
   const submittedMapName = mapTitle;
+  const observationWarning = (activityLogWarning || reserveIntegrationDeadlineLayout) && (
+    <p className="session-error" role="status" aria-hidden={!activityLogWarning}>
+      一部の操作記録の保存を確認できていません。送信状態を確認してください。
+    </p>
+  );
 
   return (
     <main
@@ -3679,18 +3684,14 @@ function MapEditorShell({
               {integrationDeadlineLabel}
             </p>
           )}
-          {isLearner && map.sessionId && (
+          {!reserveIntegrationDeadlineLayout && isLearner && map.sessionId && (
             experimentLayout ? (
               <div className="map-editor-delivery-status">
                 <LearnerDeliveryStatus sessionId={map.sessionId} />
               </div>
             ) : <LearnerDeliveryStatus sessionId={map.sessionId} />
           )}
-          {activityLogWarning && (
-            <p className="session-error" role="status">
-              一部の操作記録の保存を確認できていません。送信状態を確認してください。
-            </p>
-          )}
+          {!reserveIntegrationDeadlineLayout && observationWarning}
           <a
             className="map-editor-back-link"
             href={
@@ -3802,6 +3803,15 @@ function MapEditorShell({
           )}
         </div>
       </header>
+
+      {reserveIntegrationDeadlineLayout && (
+        <div className="map-editor-deadline-notices">
+          <div className="map-editor-deadline-delivery">
+            {map.sessionId && <LearnerDeliveryStatus sessionId={map.sessionId} />}
+          </div>
+          {observationWarning}
+        </div>
+      )}
 
       {validReconnection && (
         <section className="map-editor-link-creation-status" aria-label="保存済みリンクの接続編集">
