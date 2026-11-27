@@ -286,7 +286,10 @@ try {
             window.dispatchEvent(new Event("stage1-delivery-change"));
           }, { sessionId, stageId: stageIds[screen], state });
           await page.waitForFunction((state) => {
-            const notices = Array.from(document.querySelectorAll(".map-editor-header-actions p"), (p) => p.textContent ?? "");
+            const notices = Array.from(
+              document.querySelectorAll(".map-editor-header-actions p, .map-editor-deadline-notices p"),
+              (p) => p.textContent ?? "",
+            );
             const pending = notices.some((text) => text.includes("操作記録：送信待ち 1件"));
             const lost = notices.some((text) => text.includes("復旧できない記録 1件"));
             return pending === (state === "pending") && lost === (state === "lost");
@@ -308,6 +311,10 @@ try {
         assert.deepEqual(visible, empty, "delivery notice must not move the canvas");
         assert.deepEqual(cleared, empty, "clearing delivery notice must not move the canvas");
         await setSyntheticDelivery("lost");
+        await page
+          .locator(".map-editor-header-actions p, .map-editor-deadline-notices p")
+          .filter({ hasText: "復旧できない記録 1件" })
+          .waitFor({ state: "visible" });
         assert.deepEqual(await geometry(), empty, "delivery loss notice must retain its space");
         await setSyntheticDelivery("empty");
         if (screen === "kb") {
