@@ -2097,7 +2097,7 @@ try {
     await learnerMapPage.goto(
       `${vite.resolvedUrls!.local[0]}maps/${productionIntegrationMapId}`,
     );
-    await learnerMapPage.getByRole("heading", { name: "Concept マップ", exact: true }).waitFor();
+    await learnerMapPage.getByRole("heading", { name: "STEP 5：統合マップ", exact: true }).waitFor();
     assert.equal(
       await learnerMapPage.locator(".integration-deadline-status").count(),
       0,
@@ -2148,7 +2148,7 @@ try {
       "synthetic map API stores the exact position sent by the pointer drag",
     );
     await learnerMapPage.reload();
-    await learnerMapPage.getByRole("heading", { name: "Concept マップ", exact: true }).waitFor();
+    await learnerMapPage.getByRole("heading", { name: "STEP 5：統合マップ", exact: true }).waitFor();
     const reloadedLearnerPosition = await learnerMapPage
       .locator(`.concept-node[data-concept-id="${productionDuplicateConceptIds.kb}"]`)
       .evaluate((element) => ({
