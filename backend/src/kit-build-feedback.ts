@@ -1,4 +1,9 @@
 import type { PoolClient } from "pg";
+import {
+  compareKitBuild,
+  type KitBuildComparisonInput,
+} from "./kit-build-comparison.js";
+
 type KitBuildFeedback = {
   configurationComplete: boolean;
   matched: boolean;
@@ -15,176 +20,74 @@ export async function readKitBuildFeedback(
   client: PoolClient,
   mapId: string,
 ): Promise<KitBuildFeedback | null> {
-  const result = await client.query<{
-    kitDefinitionId: string | null;
-    expectedConcepts: number;
-    assignedConcepts: number;
-    validAssignedConcepts: number;
-    matchedConcepts: number;
-    activeConcepts: number;
-    expectedLinks: number;
-    assignedLinks: number;
-    validAssignedLinks: number;
-    matchedLinks: number;
-    activeLinks: number;
-  }>(
+  // Load both graphs and their assignments from one statement snapshot.
+  const result = await client.query<KitBuildComparisonInput>(
     `
-      SELECT
-        map.kit_definition_id AS "kitDefinitionId",
-        (SELECT count(*)::int
-         FROM kit_definitions AS kit
-         INNER JOIN concepts AS goal_concept
-           ON goal_concept.map_id = kit.goal_map_id
-           AND goal_concept.merged_into_concept_id IS NULL
-         WHERE kit.id = map.kit_definition_id) AS "expectedConcepts",
-        (SELECT count(*)::int FROM kit_concept_items AS item
-         WHERE item.kit_definition_id = map.kit_definition_id) AS "assignedConcepts",
-        (SELECT count(*)::int
-         FROM kit_concept_items AS item
-         INNER JOIN kit_definitions AS kit ON kit.id = item.kit_definition_id
-         INNER JOIN concepts AS goal_concept
-           ON goal_concept.id = item.source_concept_id
-           AND goal_concept.map_id = kit.goal_map_id
-           AND goal_concept.merged_into_concept_id IS NULL
-         WHERE item.kit_definition_id = map.kit_definition_id) AS "validAssignedConcepts",
-        (SELECT count(*)::int
-         FROM kit_definitions AS kit
-         INNER JOIN concepts AS goal_concept
-           ON goal_concept.map_id = kit.goal_map_id
-           AND goal_concept.merged_into_concept_id IS NULL
-         WHERE kit.id = map.kit_definition_id
-           AND EXISTS (
-             SELECT 1 FROM kit_concept_items AS item
-             WHERE item.kit_definition_id = kit.id
-               AND item.source_concept_id = goal_concept.id
-           )
-           AND EXISTS (
-             SELECT 1
-             FROM concepts AS built_concept
-             INNER JOIN concept_provenance AS provenance
-               ON provenance.target_concept_id = built_concept.id
-               AND provenance.source_concept_id = goal_concept.id
-               AND provenance.relation_type = 'CLONED_FROM'
-             WHERE built_concept.map_id = map.id
-               AND built_concept.merged_into_concept_id IS NULL
-               AND built_concept.label = goal_concept.label
-           )) AS "matchedConcepts",
-        (SELECT count(*)::int FROM concepts AS built_concept
-         WHERE built_concept.map_id = map.id
-           AND built_concept.merged_into_concept_id IS NULL) AS "activeConcepts",
-        (SELECT count(*)::int
-         FROM kit_definitions AS kit
-         INNER JOIN links AS goal_link ON goal_link.map_id = kit.goal_map_id
-         INNER JOIN concepts AS goal_source
-           ON goal_source.id = goal_link.source_concept_id
-           AND goal_source.map_id = kit.goal_map_id
-           AND goal_source.merged_into_concept_id IS NULL
-         INNER JOIN concepts AS goal_target
-           ON goal_target.id = goal_link.target_concept_id
-           AND goal_target.map_id = kit.goal_map_id
-           AND goal_target.merged_into_concept_id IS NULL
-         WHERE kit.id = map.kit_definition_id) AS "expectedLinks",
-        (SELECT count(*)::int FROM kit_link_items AS item
-         WHERE item.kit_definition_id = map.kit_definition_id) AS "assignedLinks",
-        (SELECT count(*)::int
-         FROM kit_link_items AS item
-         INNER JOIN kit_definitions AS kit ON kit.id = item.kit_definition_id
-         INNER JOIN links AS goal_link
-           ON goal_link.id = item.source_link_id
-           AND goal_link.map_id = kit.goal_map_id
-         INNER JOIN concepts AS goal_source
-           ON goal_source.id = goal_link.source_concept_id
-           AND goal_source.map_id = kit.goal_map_id
-           AND goal_source.merged_into_concept_id IS NULL
-         INNER JOIN concepts AS goal_target
-           ON goal_target.id = goal_link.target_concept_id
-           AND goal_target.map_id = kit.goal_map_id
-           AND goal_target.merged_into_concept_id IS NULL
-         WHERE item.kit_definition_id = map.kit_definition_id) AS "validAssignedLinks",
-        (SELECT count(*)::int
-         FROM kit_definitions AS kit
-         INNER JOIN links AS goal_link
-           ON goal_link.map_id = kit.goal_map_id
-         INNER JOIN concepts AS goal_source
-           ON goal_source.id = goal_link.source_concept_id
-           AND goal_source.map_id = kit.goal_map_id
-           AND goal_source.merged_into_concept_id IS NULL
-         INNER JOIN concepts AS goal_target
-           ON goal_target.id = goal_link.target_concept_id
-           AND goal_target.map_id = kit.goal_map_id
-           AND goal_target.merged_into_concept_id IS NULL
-         WHERE kit.id = map.kit_definition_id
-           AND EXISTS (
-             SELECT 1 FROM kit_link_items AS item
-             WHERE item.kit_definition_id = kit.id
-               AND item.source_link_id = goal_link.id
-           )
-           AND EXISTS (
-             SELECT 1
-             FROM links AS built_link
-             INNER JOIN link_provenance AS link_source
-               ON link_source.target_link_id = built_link.id
-               AND link_source.source_link_id = goal_link.id
-               AND link_source.relation_type = 'RECONSTRUCTED_FROM'
-             WHERE built_link.map_id = map.id
-               AND built_link.label = goal_link.label
-               AND EXISTS (
-                 SELECT 1
-                 FROM concept_provenance AS source_provenance
-                 INNER JOIN concepts AS built_source
-                   ON built_source.id = source_provenance.target_concept_id
-                   AND built_source.map_id = map.id
-                   AND built_source.merged_into_concept_id IS NULL
-                 WHERE built_source.id = built_link.source_concept_id
-                   AND source_provenance.source_concept_id = goal_link.source_concept_id
-                   AND source_provenance.relation_type = 'CLONED_FROM'
-               )
-               AND EXISTS (
-                 SELECT 1
-                 FROM concept_provenance AS target_provenance
-                 INNER JOIN concepts AS built_target
-                   ON built_target.id = target_provenance.target_concept_id
-                   AND built_target.map_id = map.id
-                   AND built_target.merged_into_concept_id IS NULL
-                 WHERE built_target.id = built_link.target_concept_id
-                   AND target_provenance.source_concept_id = goal_link.target_concept_id
-                   AND target_provenance.relation_type = 'CLONED_FROM'
-               )
-           )) AS "matchedLinks",
-        (SELECT count(*)::int
-         FROM links AS built_link
-         INNER JOIN concepts AS source_concept
-           ON source_concept.id = built_link.source_concept_id
-           AND source_concept.map_id = map.id
-           AND source_concept.merged_into_concept_id IS NULL
-         INNER JOIN concepts AS target_concept
-           ON target_concept.id = built_link.target_concept_id
-           AND target_concept.map_id = map.id
-           AND target_concept.merged_into_concept_id IS NULL
-         WHERE built_link.map_id = map.id) AS "activeLinks"
-      FROM maps AS map
-      WHERE map.id = $1::uuid AND map.type = 'KB'
+      WITH selected AS (
+        SELECT map.id, map.kit_definition_id, kit.goal_map_id
+        FROM maps AS map
+        LEFT JOIN kit_definitions AS kit ON kit.id = map.kit_definition_id
+        WHERE map.id = $1::uuid AND map.type = 'KB'
+      ),
+      comparison_concepts AS (
+        SELECT concept.id, concept.map_id, concept.label
+        FROM concepts AS concept
+        JOIN selected ON concept.map_id IN (selected.id, selected.goal_map_id)
+        WHERE concept.merged_into_concept_id IS NULL
+      ),
+      comparison_links AS (
+        SELECT link.id, link.map_id, link.label,
+          link.source_concept_id AS "sourceConceptId",
+          link.target_concept_id AS "targetConceptId"
+        FROM links AS link
+        JOIN selected ON link.map_id IN (selected.id, selected.goal_map_id)
+      )
+      SELECT selected.kit_definition_id AS "kitDefinitionId",
+        jsonb_build_object(
+          'concepts', ARRAY(SELECT row_to_json(c) FROM comparison_concepts AS c
+            WHERE c.map_id = selected.goal_map_id),
+          'links', ARRAY(SELECT row_to_json(l) FROM comparison_links AS l
+            WHERE l.map_id = selected.goal_map_id)
+        ) AS goal,
+        ARRAY(SELECT source_concept_id FROM kit_concept_items
+          WHERE kit_definition_id = selected.kit_definition_id) AS "assignedConceptIds",
+        ARRAY(SELECT source_link_id FROM kit_link_items
+          WHERE kit_definition_id = selected.kit_definition_id) AS "assignedLinkIds",
+        jsonb_build_object(
+          'concepts', ARRAY(SELECT row_to_json(c) FROM comparison_concepts AS c
+            WHERE c.map_id = selected.id),
+          'links', ARRAY(SELECT row_to_json(l) FROM comparison_links AS l
+            WHERE l.map_id = selected.id),
+          'conceptProvenance', ARRAY(
+            SELECT jsonb_build_object('targetId', p.target_concept_id,
+                                      'sourceId', p.source_concept_id)
+            FROM concept_provenance AS p
+            JOIN comparison_concepts AS c ON c.id = p.target_concept_id
+            WHERE c.map_id = selected.id AND p.relation_type = 'CLONED_FROM'
+          ),
+          'linkProvenance', ARRAY(
+            SELECT jsonb_build_object('targetId', p.target_link_id,
+                                      'sourceId', p.source_link_id)
+            FROM link_provenance AS p
+            JOIN comparison_links AS l ON l.id = p.target_link_id
+            WHERE l.map_id = selected.id AND p.relation_type = 'RECONSTRUCTED_FROM'
+          )
+        ) AS built
+      FROM selected
     `,
     [mapId],
   );
-  const counts = result.rows[0];
-  if (!counts) return null;
+  const input = result.rows[0];
+  if (!input) return null;
 
-  const conceptsMatch =
-    counts.expectedConcepts > 0 &&
-    counts.expectedConcepts === counts.matchedConcepts &&
-    counts.expectedConcepts === counts.activeConcepts;
-  const relationsMatch =
-    counts.expectedLinks === counts.matchedLinks &&
-    counts.expectedLinks === counts.activeLinks;
-  const configurationComplete =
-    counts.kitDefinitionId !== null &&
-    counts.expectedConcepts > 0 &&
-    counts.expectedConcepts === counts.assignedConcepts &&
-    counts.assignedConcepts === counts.validAssignedConcepts &&
-    counts.expectedLinks === counts.assignedLinks &&
-    counts.assignedLinks === counts.validAssignedLinks;
-  const matched = configurationComplete && conceptsMatch && relationsMatch;
+  const {
+    configurationComplete,
+    matched,
+    concepts,
+    relations,
+    conceptsMatch,
+    relationsMatch,
+  } = compareKitBuild(input);
   const issues: string[] = [];
   if (!conceptsMatch) issues.push("概念部品の配置を見直してください。");
   if (!relationsMatch) issues.push("関係部品の接続先を見直してください。");
@@ -192,19 +95,13 @@ export async function readKitBuildFeedback(
   return {
     configurationComplete,
     matched,
-    concepts: {
-      matched: counts.matchedConcepts,
-      total: counts.expectedConcepts,
-    },
-    relations: {
-      matched: counts.matchedLinks,
-      total: counts.expectedLinks,
-    },
+    concepts,
+    relations,
     message: !configurationComplete
       ? "このKitはGoal Map全体を含んでいません。研究者に確認してください。"
       : matched
         ? "Kit-Buildがゴールマップと一致しました。内容を見直して提出できます。"
-        : `一致している部品：概念 ${counts.matchedConcepts}/${counts.expectedConcepts}、関係 ${counts.matchedLinks}/${counts.expectedLinks}。${issues.join("")}`,
+        : `一致している部品：概念 ${concepts.matched}/${concepts.total}、関係 ${relations.matched}/${relations.total}。${issues.join("")}`,
   };
 }
 

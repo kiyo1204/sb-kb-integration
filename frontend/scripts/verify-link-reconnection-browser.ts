@@ -8,7 +8,7 @@ const sid = id(1),
   lid = id(3),
   stage = id(4),
   now = new Date().toISOString();
-const map = {
+const initialMap = {
   id: mid,
   type: "PRIOR",
   status: "DRAFT",
@@ -53,6 +53,12 @@ const browser = await chromium.launch({
   channel: process.env.BROWSER_CHANNEL ?? "msedge",
   headless: true,
 });
+const requestedViewport = process.env.LINK_RECONNECTION_VIEWPORT
+  ? Number(process.env.LINK_RECONNECTION_VIEWPORT)
+  : null;
+if (requestedViewport !== null && ![1366, 1440].includes(requestedViewport)) {
+  throw new Error("LINK_RECONNECTION_VIEWPORT must be 1366 or 1440");
+}
 async function drag(page: Page, endpoint: string, concept: string) {
   await page.getByRole("button", { name: "全体表示", exact: true }).click();
   const h = page.locator(`[data-connector-id="${lid}"] .is-${endpoint}`),
@@ -71,7 +77,8 @@ async function drag(page: Page, endpoint: string, concept: string) {
   await page.mouse.up();
 }
 try {
-  for (const width of [1366, 1440]) {
+  for (const width of requestedViewport ? [requestedViewport] : [1366, 1440]) {
+    const map = structuredClone(initialMap);
     const page = await browser.newPage({
       viewport: { width, height: width === 1366 ? 768 : 900 },
     });
@@ -83,14 +90,29 @@ try {
       sessionStorage.setItem("stage1-access-token", "SYNTHETIC_ONLY"),
     );
     let reject = false,
+      positionReject = false,
       conflict = false,
       patches = 0,
       positionWrites = 0,
+      savedPosition: { labelPositionX: number; labelPositionY: number } | null = null,
+      submits = 0,
       conceptReject = false,
       ended = false,
       preflightStatus = 200,
       patchGate: Promise<void> | null = null,
       preflight: (() => Promise<void>) | null = null;
+    let positionRequests = 0;
+    const positionResponses: number[] = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === `/api/links/${lid}/position`) {
+        positionRequests++;
+      }
+    });
+    page.on("response", (response) => {
+      if (new URL(response.url()).pathname === `/api/links/${lid}/position`) {
+        positionResponses.push(response.status());
+      }
+    });
     await page.route("**/api/**", async (route) => {
       const req = route.request(),
         path = new URL(req.url()).pathname;
@@ -154,6 +176,12 @@ try {
         body = map;
       } else if (path === "/api/experiment-status")
         body = { state: ended ? "ENDED" : "RUNNING" };
+      else if (req.method() === "POST" && path === `/api/maps/${mid}/submit`) {
+        submits++;
+        map.status = "SUBMITTED";
+        map.submittedAt = new Date().toISOString();
+        body = { id: mid, type: map.type, status: "SUBMITTED", submittedAt: map.submittedAt };
+      }
       else if (path.endsWith("/access")) body = { access: "ALLOWED" };
       else if (path.endsWith("/undo-redo"))
         body = {
@@ -166,8 +194,21 @@ try {
         body = { logSaved: true, eventId: id(99), sequenceNumber: "1" };
       else if (path === `/api/links/${lid}/position`) {
         positionWrites++;
-        Object.assign(map.links[0],req.postDataJSON());
-        body={id:lid,mapId:mid,labelPositionX:map.links[0].labelPositionX,labelPositionY:map.links[0].labelPositionY,updatedAt:now};
+        if (positionReject)
+          return route.fulfill({
+            status: 503,
+            json: { error: "synthetic_link_position_failure", message: "Synthetic link position failure" },
+          });
+        const payload = req.postDataJSON() as {
+          labelPositionX: number;
+          labelPositionY: number;
+        };
+        savedPosition = {
+          labelPositionX: payload.labelPositionX,
+          labelPositionY: payload.labelPositionY,
+        };
+        Object.assign(map.links[0], savedPosition);
+        body = { id: lid, mapId: mid, ...savedPosition, updatedAt: now };
       } else if (path.endsWith("/reconnect")) {
         patches++;
         const payload=req.postDataJSON();
@@ -181,7 +222,8 @@ try {
             status: 503,
             json: { message: "Synthetic reconnect failure" },
           });
-        Object.assign(map.links[0], req.postDataJSON());
+        map.links[0].sourceConceptId = req.postDataJSON().sourceConceptId;
+        map.links[0].targetConceptId = req.postDataJSON().targetConceptId;
         body = { ...map.links[0], updatedAt: now };
         if (patchGate) await patchGate;
       } else if (
@@ -219,6 +261,28 @@ try {
       });
     const root = `[data-connector-id="${lid}"]`,
       region = page.getByRole("region", { name: "保存済みリンクの接続編集" });
+    await page.evaluate(() => {
+      const targetWindow = window as Window & {
+        __sbLinkPointerTrace?: Array<Record<string, unknown>>;
+      };
+      targetWindow.__sbLinkPointerTrace = [];
+      for (const type of ["pointerdown", "pointermove", "pointerup"]) {
+        document.addEventListener(type, (event) => {
+          const pointer = event as PointerEvent,
+            target = event.target as Element | null,
+            hit = document.elementFromPoint(pointer.clientX, pointer.clientY);
+          targetWindow.__sbLinkPointerTrace?.push({
+            type,
+            x: pointer.clientX,
+            y: pointer.clientY,
+            targetClass: target?.getAttribute("class"),
+            hitClass: hit?.getAttribute("class"),
+            isPrimary: pointer.isPrimary,
+            button: pointer.button,
+          });
+        }, true);
+      }
+    });
     async function begin() {
       await page.locator(root + " .link-connector-label").dblclick();
       await region.waitFor();
@@ -230,13 +294,104 @@ try {
         .click();
       await page.locator(".is-reconnecting").waitFor({ state: "detached" });
     }
+    async function moveDraftLabel() {
+      const label = page.locator(root + ".is-reconnecting .link-connector-label");
+      const before = await page.locator(root + ".is-reconnecting").evaluate((element) => ({
+        left: (element as HTMLElement).style.left,
+        top: (element as HTMLElement).style.top,
+      }));
+      const bounds = await label.boundingBox();
+      assert.ok(bounds);
+      await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        bounds.x + bounds.width / 2 + 64,
+        bounds.y + bounds.height / 2 + 38,
+        { steps: 6 },
+      );
+      await page.mouse.up();
+      const after = await page.locator(root + ".is-reconnecting").evaluate((element) => ({
+        left: (element as HTMLElement).style.left,
+        top: (element as HTMLElement).style.top,
+      }));
+      assert.notDeepEqual(after, before, "the detached link body can be moved");
+      assert.equal(await label.innerText(), "MOCK relation", "moving retains the saved link label");
+      return after;
+    }
     // A real label drag preserves the position save and does not detach/select.
     for(const delta of [30,-30]){
       const label=page.locator(root+" .link-connector-label");await label.scrollIntoViewIfNeeded();
       const rect=await label.boundingBox();assert.ok(rect);
+      const connector = page.locator(root);
+      const beforePosition = await connector.getAttribute("style");
+      positionRequests = 0;
+      positionResponses.length = 0;
+      await page.evaluate(() => {
+        const targetWindow = window as Window & {
+          __sbLinkPointerTrace?: Array<Record<string, unknown>>;
+        };
+        targetWindow.__sbLinkPointerTrace = [];
+      });
+      const startHit = await page.evaluate((point) =>
+        document.elementFromPoint(point.x, point.y)?.getAttribute("class"),
+      { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
       await page.mouse.move(rect.x+rect.width/2,rect.y+rect.height/2);await page.mouse.down();
       const moved=page.waitForResponse(r=>r.request().method()==="PATCH"&&new URL(r.url()).pathname===`/api/links/${lid}/position`);
-      await page.mouse.move(rect.x+rect.width/2+delta,rect.y+rect.height/2,{steps:4});await page.mouse.up();assert.equal((await moved).status(),200);
+      await page.mouse.move(rect.x+rect.width/2+delta,rect.y+rect.height/2,{steps:4});await page.mouse.up();
+      try {
+        const response = await moved;
+        assert.equal(response.status(),200);
+        assert.equal(positionRequests,1,"one saved-link drag sends one position PATCH");
+        const afterPosition = await connector.getAttribute("style");
+        const pointerTrace = await page.evaluate(() => {
+          const targetWindow = window as Window & {
+            __sbLinkPointerTrace?: Array<Record<string, unknown>>;
+          };
+          return targetWindow.__sbLinkPointerTrace ?? [];
+        });
+        console.log("SAVED_LINK_MOVE_RESULT", JSON.stringify({
+          viewport: width,
+          linkId: lid,
+          delta,
+          startHit,
+          beforePosition,
+          afterPosition,
+          positionRequests,
+          positionWrites,
+          responseStatus: response.status(),
+          pointerTrace,
+        }));
+      } catch (error) {
+        const point = { x: rect.x + rect.width / 2 + delta, y: rect.y + rect.height / 2 };
+        const diagnostic = await page.evaluate(({ linkId, point }) => {
+          const targetWindow = window as Window & {
+            __sbLinkPointerTrace?: Array<Record<string, unknown>>;
+          };
+          const currentLabel = document.querySelector(
+            `[data-connector-id="${linkId}"] .link-connector-label`,
+          ) as HTMLElement | null;
+          return {
+            finalHitClass: document.elementFromPoint(point.x, point.y)?.getAttribute("class"),
+            labelBounds: currentLabel?.getBoundingClientRect().toJSON(),
+            canvasBounds: document.querySelector(".concept-canvas")?.getBoundingClientRect().toJSON(),
+            labelStyle: currentLabel?.parentElement?.getAttribute("style"),
+            pointerTrace: targetWindow.__sbLinkPointerTrace ?? [],
+          };
+        }, { linkId: lid, point });
+        console.error("SAVED_LINK_MOVE_DIAGNOSTIC", JSON.stringify({
+          viewport: width,
+          linkId: lid,
+          delta,
+          startHit,
+          beforePosition,
+          afterPosition: await connector.getAttribute("style"),
+          positionRequests,
+          positionWrites,
+          positionResponses,
+          ...diagnostic,
+        }));
+        throw error;
+      }
       assert.equal(await page.locator(".is-reconnecting").count(),0);assert.equal(await page.locator(".map-editor-drawer").count(),0);
     }
     assert.equal(positionWrites,2);assert.equal(map.links[0].labelPositionX,450);
@@ -267,6 +422,16 @@ try {
       .getByRole("button", { name: "Drawerを閉じる", exact: true })
       .click();
     await begin();
+    const savedBeforeDraft = structuredClone(map.links[0]);
+    const unconnectedWarning = page.locator(
+      ".map-editor-unconnected-link-warning",
+    );
+    assert.match(await unconnectedWarning.innerText(), /未接続のリンクがあります/);
+    assert.equal(await page.locator(root + " .is-connected").count(), 0);
+    assert.equal(await page.locator(root + " .link-connector-label").innerText(), "MOCK relation");
+    await moveDraftLabel();
+    assert.equal(positionWrites, 2, "draft movement does not write the saved label position");
+    assert.deepEqual(map.links[0], savedBeforeDraft, "draft movement does not change the saved link");
     assert.equal(await page.locator(root + " .is-connected").count(), 0);
     assert.equal(patches, 0);
     assert.ok(
@@ -281,7 +446,9 @@ try {
     );
     await drag(page, "source", id(6));
     assert.equal(await page.locator(root + " .is-connected").count(), 1);
+    assert.match(await unconnectedWarning.innerText(), /未接続のリンクがあります/);
     assert.equal(patches, 0);
+    assert.deepEqual(map.links[0], savedBeforeDraft, "one connected endpoint remains unsaved");
     // Node creation is independent of a saved-link connection draft.
     for (const failure of [true, false]) {
       conceptReject = failure;
@@ -307,29 +474,56 @@ try {
     }
     await cancel();
     assert.equal(patches, 0);
+    assert.equal(positionWrites, 2, "cancel discards the unsaved position change");
+    assert.equal(await page.locator(root + " .link-connector-label").innerText(), "MOCK relation");
+    assert.equal(
+      await unconnectedWarning.count(),
+      0,
+      "cancel restores the persisted connection and clears the warning",
+    );
+    assert.deepEqual(map.links[0], savedBeforeDraft, "cancel leaves the persisted link unchanged");
     await page.locator(root + " .link-connector-label").click();
     await page.getByRole("button", { name: "接続を編集", exact: true }).focus();
     await page.keyboard.press("Enter");
     await region.waitFor();
     await drag(page, "source", id(6));
+    await moveDraftLabel();
+    assert.equal(positionWrites, 2, "detached or one-sided movement is not saved early");
     reject = true;
     await drag(page, "target", id(7));
     await page
       .getByText("Synthetic reconnect failure", { exact: true })
       .waitFor();
     assert.equal(patches, 1);
+    assert.equal(positionWrites, 2, "a failed reconnect does not save the pending position");
     assert.equal(await page.locator(".is-reconnecting").count(), 1);
     reject = false;
+    const movedPositionSave = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api/links/${lid}/position`,
+    );
     await page
       .getByRole("button", { name: "接続の保存を再試行", exact: true })
       .click();
     await page.locator(".is-reconnecting").waitFor({ state: "detached" });
+    assert.equal((await movedPositionSave).status(), 200);
     assert.equal(patches, 2);
+    assert.equal(positionWrites, 3, "the completed reconnect saves the moved label position once");
     assert.equal(map.links[0].id, lid);
     assert.equal(map.links[0].sourceConceptId, id(6));
     assert.equal(map.links[0].targetConceptId, id(7));
-    assert.equal(map.links[0].labelPositionX, 450);
-    assert.equal(map.links[0].labelPositionY, 180);
+    assert.equal(map.links[0].label, savedBeforeDraft.label);
+    assert.ok(savedPosition);
+    assert.equal(map.links[0].labelPositionX, savedPosition.labelPositionX);
+    assert.equal(map.links[0].labelPositionY, savedPosition.labelPositionY);
+    await page.getByText("接続とリンク位置を保存しました。", { exact: true }).waitFor();
+    assert.notDeepEqual(
+      savedPosition,
+      { labelPositionX: 450, labelPositionY: 180 },
+      "the moved link position is persisted after reconnect completes",
+    );
+    assert.equal(await page.locator(".map-editor-unconnected-link-warning").count(), 0);
     await begin();
     await drag(page, "source", id(5));
     await page.reload();
@@ -763,6 +957,81 @@ try {
     }
     map.type = "PRIOR";
     map.sessionProtocolKey = "SBKB_INTEGRATION_V1";
+    map.status = "DRAFT";
+    map.submittedAt = null;
+    map.links = [savedLink];
+    await page.reload();
+    await page.locator(root).waitFor();
+    const savedPositionBeforeFailure = {
+      labelPositionX: map.links[0].labelPositionX,
+      labelPositionY: map.links[0].labelPositionY,
+    };
+    await begin();
+    await moveDraftLabel();
+    await drag(page, "source", id(5));
+    positionReject = true;
+    const reconnectSucceeded = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api/links/${lid}/reconnect`,
+    );
+    const positionFailed = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api/links/${lid}/position`,
+    );
+    await drag(page, "target", id(7));
+    assert.equal((await reconnectSucceeded).status(), 200);
+    assert.equal((await positionFailed).status(), 503);
+    positionReject = false;
+    await page.locator(".is-reconnecting").waitFor({ state: "detached" });
+    await page.getByText(
+      "接続は保存しましたが、リンク位置の保存を確認できません。再読み込みして状態を確認してください。",
+      { exact: true },
+    ).waitFor();
+    await page.getByText(/^リンク位置の保存を確認できません。/).waitFor();
+    assert.equal(map.links[0].sourceConceptId, id(5));
+    assert.equal(map.links[0].targetConceptId, id(7));
+    assert.deepEqual({
+      labelPositionX: map.links[0].labelPositionX,
+      labelPositionY: map.links[0].labelPositionY,
+    }, savedPositionBeforeFailure);
+    await page.reload();
+    await page.locator(root).waitFor();
+    assert.equal(map.links[0].id, savedLink.id);
+    assert.equal(map.links[0].sourceConceptId, id(5));
+    assert.equal(map.links[0].targetConceptId, id(7));
+    assert.deepEqual({
+      labelPositionX: map.links[0].labelPositionX,
+      labelPositionY: map.links[0].labelPositionY,
+    }, savedPositionBeforeFailure);
+    const reloadedConnectorPosition = await page.locator(root).evaluate((element) => ({
+      left: (element as HTMLElement).style.left,
+      top: (element as HTMLElement).style.top,
+    }));
+    assert.equal(Number.parseFloat(reloadedConnectorPosition.left), savedPositionBeforeFailure.labelPositionX);
+    assert.equal(Number.parseFloat(reloadedConnectorPosition.top), savedPositionBeforeFailure.labelPositionY);
+    console.log(`PASS synthetic reconnect success / position failure ${width}`);
+    assert.equal(await page.locator(".map-editor-unconnected-link-warning").count(), 0);
+    const submitButton = page.getByRole("button", {
+      name: "最終提出",
+      exact: true,
+    });
+    assert.equal(
+      await submitButton.isEnabled(),
+      true,
+      "complete SB links retain the existing submit eligibility",
+    );
+    page.once("dialog", (dialog) => dialog.accept());
+    const submitted = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === `/api/maps/${mid}/submit`,
+    );
+    await submitButton.click();
+    assert.equal((await submitted).status(), 200);
+    assert.equal(submits, 1, "a complete SB map can still be submitted normally");
+    await page.waitForURL("**/sessions/" + sid);
     await page.close();
     console.log(`PASS synthetic saved reconnect ${width}`);
   }

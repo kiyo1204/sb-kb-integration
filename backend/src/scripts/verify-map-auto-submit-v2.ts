@@ -26,6 +26,20 @@ try {
   assert.ok(submitted,"Expired integration was not auto-submitted");
   const event=await pool.query<{actorType:string;outcome:string}>(`SELECT actor_type AS "actorType",outcome FROM research_events WHERE map_id=$1::uuid AND event_type='MAP_AUTO_SUBMIT'`,[mapId]);
   assert.equal(event.rowCount,1); assert.equal(event.rows[0]!.actorType,"SYSTEM"); assert.equal(event.rows[0]!.outcome,"SUCCESS");
+  const submittedMap=await pool.query<{status:string;submittedAt:Date|null;autoSubmittedAt:Date|null}>(
+    'SELECT status, submitted_at AS "submittedAt", auto_submitted_at AS "autoSubmittedAt" FROM maps WHERE id=$1::uuid',
+    [mapId],
+  );
+  assert.equal(submittedMap.rows[0]?.status,"SUBMITTED");
+  assert.ok(submittedMap.rows[0]?.submittedAt);
+  assert.ok(submittedMap.rows[0]?.autoSubmittedAt);
+  assert.equal(submittedMap.rows[0]?.submittedAt?.getTime(),submittedMap.rows[0]?.autoSubmittedAt?.getTime());
+  const flowResponse=await fetch(process.env.API_BASE_URL+"/api/sessions/"+sessionId+"/flow",{headers:{Authorization:"Bearer "+process.env.RESEARCHER_API_TOKEN}});
+  assert.equal(flowResponse.status,200);
+  const flow=await flowResponse.json() as {currentMapSubmitted:boolean;currentIntegrationMapExists:boolean;currentMapAutoSubmittedAt:string|null};
+  assert.equal(flow.currentIntegrationMapExists,true);
+  assert.equal(flow.currentMapSubmitted,true);
+  assert.equal(new Date(flow.currentMapAutoSubmittedAt ?? "").getTime(),submittedMap.rows[0]!.autoSubmittedAt!.getTime(),"Session flow reports the same server-confirmed auto-submission timestamp stored on the Map");
   const stage=await pool.query<{status:string}>("SELECT status FROM session_stages WHERE id=$1::uuid",[stageId]); assert.equal(stage.rows[0]!.status,"IN_PROGRESS");
   const response=await fetch(`${process.env.API_BASE_URL}/api/research/sessions/${sessionId}/maps/${mapId}/mixed-history`,{headers:{Authorization:`Bearer ${process.env.RESEARCHER_API_TOKEN}`}});
   assert.equal(response.status,200); const result=await response.json() as {status:string;reason?:string}; assert.equal(result.status,"REPLAYABLE",result.reason);

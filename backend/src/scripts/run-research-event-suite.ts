@@ -86,6 +86,11 @@ async function run(test: string, frontend = false) {
   assert.equal(outcome.exitCode, 0, test);
 }
 try {
+  // This invariant snapshots the entire DB; run it before fixtures can leave
+  // expired Stages or Maps for background deadline/submission workers.
+  await start();
+  await run("test:tutorial-kit-practice-api");
+  await stop();
   for (const test of [
     "test:experiment-flow-config",
     "test:test-target-guards",
