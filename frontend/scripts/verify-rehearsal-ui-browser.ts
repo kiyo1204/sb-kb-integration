@@ -1673,8 +1673,28 @@ try {
     await requiredReconnect.waitFor({ state: "visible" });
     assert.equal(await requiredReconnect.locator(".link-connector-handle.is-source.is-connected").count(), 0, "double-click disconnects a saved Kit link source");
     assert.equal(await requiredReconnect.locator(".link-connector-handle.is-target.is-connected").count(), 0, "double-click disconnects a saved Kit link target");
+    async function assertCheckBlocked() {
+      assert.equal(await checkButton.isDisabled(), true, "an unfinished reconnection blocks judgment");
+      const requests = tutorialPracticeBodies.length;
+      await checkButton.dispatchEvent("click");
+      assert.equal(tutorialPracticeBodies.length, requests, "no judgment request while reconnecting");
+    }
+    const checksBeforeReconnect = tutorialPracticeBodies.length;
+    await assertCheckBlocked();
+    await requiredReconnect.getByRole("button", { name: "必要とするの接続編集を取消" }).click();
+    await requiredReconnect.waitFor({ state: "detached" });
+    assert.equal(tutorialPracticeBodies.length, checksBeforeReconnect);
+    const canceledCheck = checkResponse();
+    await checkButton.click();
+    assert.equal((await (await canceledCheck).json()).matched, true);
+    assert.deepEqual(tutorialPracticeBodies.at(-1), tutorialPracticeBodies[checksBeforeReconnect - 1],
+      "canceling restores the same saved endpoints for judgment");
+    await requiredEdge.locator(".link-connector-label").dblclick();
+    await requiredReconnect.waitFor({ state: "visible" });
+    await assertCheckBlocked();
     await requiredReconnect.locator(".link-connector-handle.is-source").dragTo(carbonDioxideNode);
     assert.equal(await requiredReconnect.locator(".link-connector-handle.is-source.is-connected").count(), 1, "a partially reconnected Kit link keeps its first endpoint");
+    await assertCheckBlocked();
     await requiredReconnect.locator(".link-connector-label").dblclick();
     assert.equal(await requiredReconnect.locator(".link-connector-handle.is-source.is-connected").count(), 0, "repeating the action disconnects an already restored Kit end");
     assert.equal(await requiredReconnect.locator(".link-connector-handle.is-target.is-connected").count(), 0, "repeating the action clears both Kit ends");
@@ -1806,7 +1826,7 @@ try {
       kbZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
     }
     assert.equal(await kbZoom.percentage.innerText(), "150%", "KB correction succeeds after zoom and scroll");
-    assert.equal(tutorialPracticeBodies.length, 5, "KB uses only the fixed practice check endpoint");
+    assert.equal(tutorialPracticeBodies.length, 6, "KB uses only the fixed practice check endpoint, including the check after canceling");
     for (const body of tutorialPracticeBodies) {
       assert.deepEqual(Object.keys(body as object).sort(), ["concepts", "links"]);
       const value = body as { concepts: Array<Record<string, unknown>>; links: Array<Record<string, unknown>> };

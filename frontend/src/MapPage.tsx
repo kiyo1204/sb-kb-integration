@@ -282,6 +282,15 @@ function getEdgeGeometry(
 }
 
 type ConceptPosition = Pick<Concept, "positionX" | "positionY">;
+type GoalEdit = { mapId: string; id: string } & (
+  | { kind: "concept-position"; position: ConceptPosition }
+  | { kind: "link-position"; position: Point }
+  | { kind: "connection"; link: MapLink; sourceConceptId: string; targetConceptId: string }
+);
+
+function goalEditKey(edit: GoalEdit) {
+  return `${edit.mapId}:${edit.kind}:${edit.id}`;
+}
 
 type PositionSaveFeedback = {
   type: "success" | "error" | "saving";
@@ -608,21 +617,9 @@ export default function MapPage({
   >();
   const [positionFeedback, setPositionFeedback] =
     useState<PositionSaveFeedback | null>(null);
-  const [pendingGoalConceptPosition, setPendingGoalConceptPosition] = useState<{
-    mapId: string;
-    conceptId: string;
-    position: ConceptPosition;
-  } | null>(null);
-  const [pendingGoalConnection, setPendingGoalConnection] = useState<{
-    link: MapLink;
-    sourceConceptId: string;
-    targetConceptId: string;
-  } | null>(null);
-  const [pendingGoalLinkPosition, setPendingGoalLinkPosition] = useState<{
-    mapId: string;
-    linkId: string;
-    position: Point;
-  } | null>(null);
+  const [pendingGoalEdits, setPendingGoalEdits] = useState<Map<string, GoalEdit>>(() => new Map());
+  const [goalSaveBusy, setGoalSaveBusy] = useState(false);
+  const goalSaveInFlight = useRef(false);
   const mapEditorMutationsRef = useRef({ inFlight: 0, failed: false });
   const undoRedoRequestRef = useRef(0);
   useLayoutEffect(() => () => {
@@ -1251,16 +1248,47 @@ export default function MapPage({
     }
   }
 
-  async function saveGoalLinkPosition(linkId: string, position: Point): Promise<boolean> {
-    const saved = await saveLinkPosition(linkId, position, mapId);
-    if (saved) {
-      setPendingGoalLinkPosition((pending) =>
-        pending?.mapId === mapId && pending.linkId === linkId ? null : pending,
-      );
-    } else {
-      setPendingGoalLinkPosition({ mapId, linkId, position });
+  function updatePendingGoalEdit(edit: GoalEdit, keep: boolean) {
+    setPendingGoalEdits((current) => {
+      const next = new Map(current);
+      const key = goalEditKey(edit);
+      if (keep) next.set(key, edit);
+      else next.delete(key);
+      return next;
+    });
+  }
+
+  async function runGoalSave<T>(
+    edit: GoalEdit,
+    save: () => Promise<T>,
+    succeeded: (result: T) => boolean,
+    blocked: () => T,
+  ): Promise<T> {
+    // The position endpoints can reload the whole map. Keep the editor locked
+    // through that refresh so an older response cannot overwrite a newer edit.
+    if (goalSaveInFlight.current) return blocked();
+    goalSaveInFlight.current = true;
+    setGoalSaveBusy(true);
+    try {
+      const result = await save();
+      updatePendingGoalEdit(edit, !succeeded(result));
+      return result;
+    } catch (error) {
+      updatePendingGoalEdit(edit, true);
+      throw error;
+    } finally {
+      goalSaveInFlight.current = false;
+      setGoalSaveBusy(false);
     }
-    return saved;
+  }
+
+  function saveGoalLinkPosition(linkId: string, position: Point): Promise<boolean> {
+    return runGoalSave(
+      { kind: "link-position", mapId, id: linkId, position },
+      () => saveLinkPosition(linkId, position, mapId),
+      (saved) => saved,
+      () => false,
+    );
   }
 
   async function saveGoalConceptPosition(
@@ -1268,15 +1296,12 @@ export default function MapPage({
     position: ConceptPosition,
     originalPosition: ConceptPosition,
   ): Promise<ConceptPosition | null> {
-    const saved = await saveConceptPosition(conceptId, position, originalPosition);
-    if (saved?.positionX === position.positionX && saved.positionY === position.positionY) {
-      setPendingGoalConceptPosition((pending) =>
-        pending?.mapId === mapId && pending.conceptId === conceptId ? null : pending,
-      );
-    } else {
-      setPendingGoalConceptPosition({ mapId, conceptId, position });
-    }
-    return saved;
+    return runGoalSave(
+      { kind: "concept-position", mapId, id: conceptId, position },
+      () => saveConceptPosition(conceptId, position, originalPosition),
+      (saved) => saved?.positionX === position.positionX && saved.positionY === position.positionY,
+      () => originalPosition,
+    );
   }
 
   async function saveConceptLabel(conceptId: string, label: string) {
@@ -2607,33 +2632,20 @@ export default function MapPage({
     ) : null;
 
   const isEditableGoalMap = state.map.type === "GOAL" && !isReadOnlyMap;
-  const goalPositionRetry = pendingGoalConceptPosition?.mapId === state.map.id
-    ? pendingGoalConceptPosition
-    : null;
-  const goalPositionConcept = goalPositionRetry
-    ? state.map.concepts.find(({ id }) => id === goalPositionRetry.conceptId)
-    : undefined;
-  const goalConnectionRetry = pendingGoalConnection?.link.mapId === state.map.id &&
-    state.map.links.some(({ id }) => id === pendingGoalConnection.link.id)
-    ? pendingGoalConnection
-    : null;
-  const goalLinkPositionRetry = pendingGoalLinkPosition?.mapId === state.map.id
-    ? pendingGoalLinkPosition
-    : null;
-  const goalPositionLink = goalLinkPositionRetry
-    ? state.map.links.find(({ id }) => id === goalLinkPositionRetry.linkId)
-    : undefined;
-  async function saveGoalConnection(link: MapLink, sourceConceptId: string, targetConceptId: string) {
-    try {
-      await trackMapEditorMutation(() => reconnectLink(link, sourceConceptId, targetConceptId, {
+  const goalRetries = [...pendingGoalEdits.values()].filter((edit) =>
+    edit.mapId === state.map.id && (edit.kind === "concept-position" ? state.map.concepts : state.map.links)
+      .some(({ id }) => id === edit.id),
+  );
+  function saveGoalConnection(link: MapLink, sourceConceptId: string, targetConceptId: string) {
+    return runGoalSave(
+      { kind: "connection", mapId: link.mapId, id: link.id, link, sourceConceptId, targetConceptId },
+      () => trackMapEditorMutation(() => reconnectLink(link, sourceConceptId, targetConceptId, {
         sourceConceptId: link.sourceConceptId,
         targetConceptId: link.targetConceptId,
-      }));
-      setPendingGoalConnection((pending) => pending?.link.id === link.id ? null : pending);
-    } catch (error) {
-      setPendingGoalConnection({ link, sourceConceptId, targetConceptId });
-      throw error;
-    }
+      })),
+      () => true,
+      () => { throw new Error("ゴールマップの保存が完了するまでお待ちください。"); },
+    );
   }
   if (
     isEditableGoalMap ||
@@ -2693,48 +2705,40 @@ export default function MapPage({
         instructionsText={instructions?.[state.map.type]}
         supplementalContent={(reconnectionActive, editing) => (
           <>
-            {isEditableGoalMap && goalPositionRetry && goalPositionConcept && (
-              <section aria-label="ゴールマップの未保存位置">
-                <p>「{goalPositionConcept.label}」の移動先を保持しています。</p>
-                <button type="button" disabled={editing} onClick={() =>
-                  void saveGoalConceptPosition(goalPositionConcept.id, goalPositionRetry.position, goalPositionConcept)
-                }>位置の保存を再試行</button>
-                <button type="button" disabled={editing} onClick={() => {
-                  setPendingGoalConceptPosition(null);
-                  setPositionFeedback(null);
-                }}>移動を取り消す</button>
-              </section>
-            )}
-            {isEditableGoalMap && goalConnectionRetry && (
-              <section aria-label="ゴールマップの未保存接続">
-                <p role="alert">リンク「{goalConnectionRetry.link.label}」の接続を保存できませんでした。付け替え先を保持しています。</p>
-                <button type="button" disabled={editing} onClick={() => {
-                  const { link, sourceConceptId, targetConceptId } = goalConnectionRetry;
-                  void saveGoalConnection(link, sourceConceptId, targetConceptId).catch(() => undefined);
-                }}>接続の保存を再試行</button>
-                <button type="button" disabled={editing} onClick={() => setPendingGoalConnection(null)}>
-                  付け替えを取り消す
-                </button>
-              </section>
-            )}
-            {isEditableGoalMap && goalLinkPositionRetry && goalPositionLink && (
-              <section aria-label="ゴールマップのリンクの未保存位置">
-                <p>リンク「{goalPositionLink.label}」の移動先を保持しています。</p>
-                <button type="button" disabled={editing} onClick={() =>
-                  void saveGoalLinkPosition(goalPositionLink.id, goalLinkPositionRetry.position)
-                }>リンク位置の保存を再試行</button>
-                <button type="button" disabled={editing} onClick={() => {
-                  setPendingGoalLinkPosition(null);
-                  setPositionFeedback(null);
-                }}>リンクの移動を取り消す</button>
-              </section>
-            )}
+            {isEditableGoalMap && goalRetries.map((edit) => {
+              const concept = state.map.concepts.find(({ id }) => id === edit.id);
+              const link = state.map.links.find(({ id }) => id === edit.id);
+              const label = (edit.kind === "concept-position" ? concept : link)?.label;
+              const connection = edit.kind === "connection";
+              const region = connection ? "ゴールマップの未保存接続"
+                : edit.kind === "link-position" ? "ゴールマップのリンクの未保存位置" : "ゴールマップの未保存位置";
+              const retryLabel = connection ? "接続の保存を再試行"
+                : edit.kind === "link-position" ? "リンク位置の保存を再試行" : "位置の保存を再試行";
+              return (
+                <section key={goalEditKey(edit)} aria-label={region}>
+                  <p role="alert">「{label}」の{connection ? "接続" : "位置"}を保存できませんでした。編集内容を保持しています。</p>
+                  <button type="button" disabled={editing} onClick={() => {
+                    if (edit.kind === "concept-position" && concept) {
+                      void saveGoalConceptPosition(edit.id, edit.position, concept);
+                    } else if (edit.kind === "link-position" && link) {
+                      void saveGoalLinkPosition(edit.id, edit.position);
+                    } else if (edit.kind === "connection" && link) {
+                      void saveGoalConnection({ ...edit.link, label: link.label }, edit.sourceConceptId, edit.targetConceptId)
+                        .catch(() => undefined);
+                    }
+                  }}>{retryLabel}</button>
+                  <button type="button" disabled={editing} onClick={() => updatePendingGoalEdit(edit, false)}>
+                    {connection ? "付け替えを取り消す" : "移動を取り消す"}
+                  </button>
+                </section>
+              );
+            })}
             {isEditableGoalMap && (
               <GoalKitRegistrationPanel
                 title={state.map.title ?? ""}
                 conceptCount={state.map.concepts.length}
                 linkCount={state.map.links.length}
-                disabled={editing || !!goalPositionConcept || !!goalConnectionRetry || !!goalPositionLink}
+                disabled={editing || goalRetries.length > 0}
                 onRegister={async (name) => {
                   const response = await apiFetch(
                     `/api/maps/${encodeURIComponent(state.map.id)}/kits`,
@@ -2772,7 +2776,7 @@ export default function MapPage({
           </>
         )}
         additionalBusy={
-          mergingConcepts ||
+          goalSaveBusy || mergingConcepts ||
           undoRedoBusy ||
           (state.map.sessionProtocolKey === "SBKB_INTEGRATION_V1" &&
             kitFeedbackChecking)

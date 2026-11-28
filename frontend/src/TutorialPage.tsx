@@ -797,7 +797,7 @@ function KitPracticeCanvas({
   const links = useMemo(() => placedLinks.map(({ link }) => link), [placedLinks]);
   const allPartsPlaced = placedConcepts.length === 3 && placedLinks.length === 2;
   const mapSignature = kitPracticeMapSignature(progress);
-  const result = !checking && progress.lastResult?.mapSignature === mapSignature
+  const result = !checking && !reconnectionDraft && progress.lastResult?.mapSignature === mapSignature
     ? progress.lastResult.result
     : null;
   const completedCount = photosynthesisPracticeTasks.filter((task) =>
@@ -879,7 +879,7 @@ function KitPracticeCanvas({
         : null;
 
   async function checkKit() {
-    if (!active || checking) return;
+    if (!active || checking || reconnectionDraft) return;
     const currentRequest = ++requestId.current;
     const judgedMapSignature = mapSignature;
     setCheckingVisit(visit);
@@ -981,11 +981,12 @@ function KitPracticeCanvas({
       <section className="kit-feedback-actions" aria-label="Kitの一致確認">
         <p>配置した部品の一致状況を確認できます。判定はこの練習用Kitに対して行います。</p>
         <KitBuildFeedbackCheckButton
-          disabled={checking || storageBlocked}
+          disabled={checking || storageBlocked || reconnectionDraft !== null}
           loading={checking}
           label="一致状況を確認"
           onClick={() => void checkKit()}
         />
+        {reconnectionDraft && <p>リンクの再接続を完了するか、取り消すと判定できます。</p>}
         {checking && <p role="status">練習用Kitを確認しています…</p>}
         {error && <p role="alert">{error}</p>}
         {result && (

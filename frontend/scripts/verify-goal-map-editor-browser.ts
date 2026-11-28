@@ -33,8 +33,14 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.addInitScript((value) => sessionStorage.setItem("stage1-access-token", value), token);
   let failPath: string | null = null;
+  let holdPatch: { path: string; released: Promise<void> } | null = null;
   await page.route("**/api/**", async (route) => {
     const { pathname, search } = new URL(route.request().url());
+    const held = holdPatch;
+    if (held?.path === pathname && route.request().method() === "PATCH") {
+      holdPatch = null;
+      await held.released;
+    }
     if (pathname === failPath && route.request().method() === "PATCH") {
       failPath = null;
       return route.fulfill({ status: 503, json: { message: "TEST ONLY 保存失敗" } });
@@ -86,8 +92,12 @@ try {
     // All new connectors start at the same location; keep test links apart.
     await dragLabel(pending, offsetX, 0);
     await pending.locator(".is-source").dragTo(concept(source), { targetPosition: { x: 18, y: 18 } });
+    const savedPosition = page.waitForResponse((response) => response.ok() &&
+      response.request().method() === "PATCH" && /\/api\/links\/[^/]+\/position$/.test(new URL(response.url()).pathname));
     await pending.locator(".is-target").dragTo(concept(target), { targetPosition: { x: 18, y: 18 } });
+    await savedPosition;
     await pending.waitFor({ state: "detached" });
+    await page.getByText("リンクの位置を保存しました。", { exact: true }).waitFor();
   }
 
   for (const label of ["概念A", "概念B", "概念C", "削除する概念"]) await addConcept(label);
@@ -126,9 +136,30 @@ try {
   await page.mouse.down();
   await page.mouse.move(bounds.x + 58, bounds.y + 48, { steps: 5 });
   await page.mouse.up();
-  const retryPosition = page.getByRole("button", { name: "位置の保存を再試行" });
+  const retryConceptFor = (label: string) => page.getByRole("region", { name: "ゴールマップの未保存位置", exact: true })
+    .filter({ hasText: label }).getByRole("button", { name: "位置の保存を再試行", exact: true });
+  const retryPosition = retryConceptFor("変更後の概念");
+  await retryPosition.waitFor();
+  const secondConcept = before.concepts.find(({ label }) => label === "削除する概念")!;
+  const secondNode = concept(secondConcept.label);
+  await secondNode.scrollIntoViewIfNeeded();
+  const secondBounds = await secondNode.boundingBox();
+  assert.ok(secondBounds);
+  failPath = `/api/concepts/${secondConcept.id}/position`;
+  await page.mouse.move(secondBounds.x + 18, secondBounds.y + 18);
+  await page.mouse.down();
+  await page.mouse.move(secondBounds.x + 46, secondBounds.y + 42, { steps: 5 });
+  await page.mouse.up();
+  const secondConceptRetry = retryConceptFor(secondConcept.label);
+  await secondConceptRetry.waitFor();
   await retryPosition.click();
   await retryPosition.waitFor({ state: "detached" });
+  assert.equal(await secondConceptRetry.count(), 1);
+  await secondConceptRetry.click();
+  await secondConceptRetry.waitFor({ state: "detached" });
+  const secondConceptSaved = (await readMap(id)).concepts.find(({ id }) => id === secondConcept.id)!;
+  assert.notDeepEqual([secondConceptSaved.positionX, secondConceptSaved.positionY],
+    [secondConcept.positionX, secondConcept.positionY]);
   await page.locator(".map-editor-save-status").getByText("保存済み", { exact: true }).waitFor();
 
   const connector = page.locator(`[data-connector-id="${edited.id}"]`);
@@ -150,12 +181,65 @@ try {
   const retryLinkPosition = page.getByRole("button", { name: "リンク位置の保存を再試行" });
   await retryLinkPosition.waitFor();
   assert.deepEqual((await readMap(id)).links.find((link) => link.id === edited.id), movedLink);
+  const secondMovedLink = before.links.find(({ label }) => label === "削除する関係")!;
+  const secondPositionPath = `/api/links/${secondMovedLink.id}/position`;
+  const secondPositionPatch = (response: import("playwright").Response) =>
+    response.request().method() === "PATCH" && new URL(response.url()).pathname === secondPositionPath;
+  failPath = secondPositionPath;
+  const [secondFailure] = await Promise.all([
+    page.waitForResponse(secondPositionPatch),
+    dragLabel(page.locator(`[data-connector-id="${secondMovedLink.id}"]`), -35, 22),
+  ]);
+  assert.equal(secondFailure.status(), 503);
+  const retryFor = (label: string) => page.getByRole("region", { name: "ゴールマップのリンクの未保存位置" })
+    .filter({ hasText: label }).getByRole("button", { name: "リンク位置の保存を再試行" });
+  await retryFor(secondMovedLink.label).waitFor();
+  assert.equal(await retryFor(edited.label).count(), 1, "a second failure must preserve the first link's edit");
   const retriedMove = page.waitForResponse(isPositionPatch);
-  await retryLinkPosition.click();
-  assert.equal((await retriedMove).status(), 200);
+  const [retryResponse] = await Promise.all([
+    retriedMove,
+    (async () => {
+      let releaseRetry!: () => void;
+      const retryReleased = new Promise<void>((resolve) => { releaseRetry = resolve; });
+      holdPatch = { path: positionPath, released: retryReleased };
+      try {
+        await Promise.all([
+          page.waitForRequest((request) => request.method() === "PATCH" && new URL(request.url()).pathname === positionPath),
+          retryFor(edited.label).click(),
+        ]);
+        assert.equal(await retryFor(edited.label).isDisabled(), true, "the same edit cannot be retried while its prior response is pending");
+        const label = connector.locator(".link-connector-label");
+        await label.hover();
+        const box = await label.boundingBox();
+        assert.ok(box);
+        const start = await connector.getAttribute("style");
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        try {
+          await page.mouse.move(box.x + box.width / 2 + 35, box.y + box.height / 2 + 20, { steps: 5 });
+          assert.equal(await connector.getAttribute("style"), start, "the same link cannot be moved while its response is pending");
+        } finally {
+          await page.mouse.up();
+        }
+      } finally {
+        releaseRetry();
+      }
+    })(),
+  ]);
+  assert.equal(retryResponse.status(), 200);
+  await retryFor(edited.label).waitFor({ state: "detached" });
+  assert.equal(await retryFor(secondMovedLink.label).count(), 1);
+  const secondRetry = page.waitForResponse(secondPositionPatch);
+  await retryFor(secondMovedLink.label).click();
+  assert.equal((await secondRetry).status(), 200);
   await retryLinkPosition.waitFor({ state: "detached" });
   await page.reload();
   await connector.waitFor();
+  const bothSaved = await readMap(id);
+  const secondSaved = bothSaved.links.find(({ id }) => id === secondMovedLink.id)!;
+  const secondBody = secondFailure.request().postDataJSON();
+  assert.deepEqual([secondSaved.labelPositionX, secondSaved.labelPositionY],
+    [secondBody.labelPositionX, secondBody.labelPositionY]);
   assert.deepEqual(await connector.evaluate((element) => {
     const style = (element as HTMLElement).style;
     return [parseFloat(style.left), parseFloat(style.top)];
@@ -183,10 +267,22 @@ try {
   await drawer.getByRole("button", { name: /閉じる/ }).click();
   failPath = `/api/links/${edited.id}/reconnect`;
   await connector.locator(".is-target").dragTo(concept("概念A"), { targetPosition: { x: 18, y: 18 } });
-  const retryConnection = page.getByRole("button", { name: "接続の保存を再試行", exact: true });
+  const retryConnectionFor = (label: string) => page.getByRole("region", { name: "ゴールマップの未保存接続" })
+    .filter({ hasText: label }).getByRole("button", { name: "接続の保存を再試行", exact: true });
+  const retryConnection = retryConnectionFor("変更後の関係");
   await retryConnection.waitFor();
+  const secondConnector = page.locator(`[data-connector-id="${secondMovedLink.id}"]`);
+  failPath = `/api/links/${secondMovedLink.id}/reconnect`;
+  await secondConnector.locator(".is-target").dragTo(concept("概念B"), { targetPosition: { x: 18, y: 18 } });
+  const secondConnectionRetry = retryConnectionFor(secondMovedLink.label);
+  await secondConnectionRetry.waitFor();
   assert.equal((await readMap(id)).links.find(({ id }) => id === edited.id)?.targetConceptId, b.id);
   await retryConnection.click();
+  await retryConnection.waitFor({ state: "detached" });
+  assert.equal(await secondConnectionRetry.count(), 1);
+  await secondConnectionRetry.click();
+  await secondConnectionRetry.waitFor({ state: "detached" });
+  assert.equal((await readMap(id)).links.find(({ id }) => id === secondMovedLink.id)?.targetConceptId, b.id);
   await page.getByRole("button", { name: `Link ${edited.id}: 変更後の概念 → 変更後の関係 → 概念A` }).waitFor({ state: "attached" });
   const deletedLink = page.locator(".link-connector-label").filter({ hasText: "削除する関係" });
   await deletedLink.click();
