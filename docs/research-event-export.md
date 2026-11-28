@@ -1,5 +1,47 @@
 # 絞り込み研究イベント出力 v2（Issue #9）
 
+[現行出力の列と結合キー](#現行出力の列と結合キー)は、下記の導入時仕様に対する現行コードの照合結果。発生条件と保存経路は[現行実装の取得項目一覧](research-events-v1.md#現行実装の取得項目一覧)を参照。
+
+## 現行出力の列と結合キー
+
+ローカル `main` の `03a094569701b0fe065f0a96f07ee7d09a4b9a0c` と、PR #96マージ `5cf56ddee7e12c3be7ac21337a3f4d5394cfcaa2` を基準とする統合差分で、絞り込み出力の版は3。個々のイベントの `schema_version` とは独立している。
+
+### 絞り込み出力
+
+`events.csv` の列順は以下のとおり。用途別CSVも同じ列を先頭に置き、`event_id` で `events.csv` と結合する。[列契約と行の選択条件](../backend/src/event-export-contract.ts)
+
+```text
+event_id,source_format,schema_version,session_id,learner_id,study_group,activity,stage_id,map_id,actor_type,event_type,target_type,target_id,outcome,reason_code,sequence_number,sequence_scope,client_timestamp,client_time_quality,server_timestamp,related_event_id,related_legacy_operation_log_id,before_quality,after_quality,payload_status,boundary_status,legacy_boundary_count,legacy_boundary_last_id,feedback_match,protocol_key
+```
+
+| ファイル | 共通列に続く列と行の範囲 |
+| --- | --- |
+| `map_operations.csv` | `before_json, after_json, details_json`。対象型がMAP/CONCEPT/LINK。 |
+| `activity_times.csv` | `stage_started_at, server_elapsed_ms, elapsed_quality, recorded_duration_ms, from_seconds, to_seconds`。Session開始・完了、Stage・画面・動画・フィードバック。 |
+| `assessment_events.csv` | `timepoint, question_id, before_answer, after_answer, before_json, after_json`。ASSESSMENT対象のv7以外。 |
+| `survey_events.csv` | `question_id, before_value, after_value, before_json, after_json`。v7。 |
+| `system_events.csv` / `researcher_events.csv` | `details_json`。それぞれSYSTEM／RESEARCHER主体。 |
+
+`events.json` は共通項目に `before`／`after`／`details` とStage開始からのサーバー時間差・品質を持つ。 `feedback_match=false` はv6で保存された不一致、空欄は結果なし・非該当。旧v1の不一致は `outcome` を版と併読する。本文が検証不能、非公開、上限超過の場合は `payload_status` を確認する。絞り込みが関連先を除外する場合があり、用途別の行数を足すと重複する。[SQLと本文投影](../backend/src/event-export-query.ts) · [生成処理](../backend/src/event-export-service.ts) · [データ辞書の生成](../backend/src/event-export-dictionary.ts)
+
+### Session単位と実施単位の出力
+
+- Session [生データJSON](../backend/src/research-export.ts) の本編契約は `exportVersion: 4`。 `session` の仮名、`maps`・`operationLogs`・`integrationStates`・配送状態を、Session/Map/Stage/EventのIDで照合する。Mapの保存状態、統合開始のsnapshot、受理済み提出snapshotは別の時点を表す。
+- Session `operations.csv` は以下の列。 `historySource` と `schemaVersion` で旧・新を分け、`sequenceNumber` はMap内の履歴位置、`eventSequenceNumber` は新イベントのSession保存順として読む。[操作CSVルート](../backend/src/stage1-analysis.ts)
+
+```text
+sessionId,participantCode,mapId,mapType,researchRole,sessionStageId,id,sequenceNumber,operationType,relatedOperationLogId,targetType,targetId,serverTimestamp,clientTimestamp,elapsedMs,before,after,historySource,eventId,schemaVersion,eventType,actorType,outcome,eventSequenceNumber,relatedEventId,relatedLegacyOperationLogId,protocolKey
+```
+
+- 実施 `research.json` は実施と所属Sessionの保存済みデータをまとめる。実施 `research.csv` とSession `map-states.csv` の列は以下のとおり。同じMapの複数時点の識別に `point`、取得可否に `status`／`reason` を使う。欠測の詳細は[実施・Session出力仕様](experiment-learner-flow.md#api画面)。実装は[実施出力](../backend/src/experiment-research.ts)と[状態復元](../backend/src/experiment-research-states.ts)。
+
+```text
+outputContract,protocolKey,runId,materialVersionId,sessionId,pseudonym,sessionStatus,exportedAt,mapId,mapType,point,status,reason,recordedAt,submissionEventId,state,mapStatus,mapSubmittedAt
+```
+
+- 実施 `research.xlsx` は所属Sessionに限定した可視化用出力。Events、Map_Operations、Activity_Times、System_Events、Researcher_Events は上記の共通イベント列・用途別列を再利用する。ほかにOverview、Map_States、Operations、SB_Analysis、KB_Analysis、Integration_Analysisがある。シートと派生列の意味は[11シート仕様](research-workbook-11-sheets.md)と[生成実装](../backend/src/research-workbook.ts)。
+- 絞り込み出力の集合・順序・列の照合は[イベント出力テスト](../backend/src/scripts/verify-event-export.ts)と[合成サンプル照合](../backend/src/scripts/verify-event-export-samples.ts)、実施・Session出力の認可と列の照合は[実施出力テスト](../backend/src/scripts/verify-experiment-research.ts)と[詳細アサーション](../backend/src/scripts/experiment-research-checks.ts)を参照。
+
 > 新規作成は群なし5活動（STAGE1_5）です。旧4・6活動の意味は保持します。[追加仕様・v7アンケート・出力schemaVersion 3](session-flow-survey.md)を参照してください。新しい4テーブルも確認付き削除・模擬DBリセットの対象です。
 
 ## 既存出力との関係

@@ -14,6 +14,7 @@ import {
   useSyncExternalStore,
   type FormEvent,
   type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
@@ -47,9 +48,9 @@ type MergeConceptResponse = {
 };
 
 const mergeReleaseNotice =
-  "このConceptを削除すると、直近のMergeを1段階だけ解除し、直接の元ConceptとMerge前のリンク・位置を復元します。内側のMergeは維持します。このConceptに接続する後発リンクは削除されます。無関係な編集は保持されます。";
+  "この概念を削除すると、直近のマージを1段階だけ解除し、直接の元概念とマージ前のリンク・位置を復元します。内側のマージは維持します。この概念に接続する後発リンクは削除されます。無関係な編集は保持されます。";
 
-type MapLink = {
+export type MapLink = {
   labelPositionX?: number | null;
   labelPositionY?: number | null;
   id: string;
@@ -102,7 +103,7 @@ type KitPalettePart =
   | { kind: "concept"; itemId: string; label: string }
   | { kind: "link"; itemId: string; label: string };
 
-type TemporaryConnector = {
+export type PracticeReconnectionConnector = {
   id: string;
   kind: "kit" | "map" | "reconnect";
   kitLinkItemId: string | null;
@@ -112,6 +113,12 @@ type TemporaryConnector = {
   targetConceptId: string | null;
   saving: boolean;
   error: string | null;
+};
+type TemporaryConnector = PracticeReconnectionConnector;
+
+export type PracticeReconnectionDraft = PracticeReconnectionConnector & {
+  original: MapLink;
+  originalPosition: Point;
 };
 
 const KIT_PALETTE_MIME = "application/x-kbcm-kit-part";
@@ -275,6 +282,15 @@ function getEdgeGeometry(
 }
 
 type ConceptPosition = Pick<Concept, "positionX" | "positionY">;
+type GoalEdit = { mapId: string; id: string } & (
+  | { kind: "concept-position"; position: ConceptPosition }
+  | { kind: "link-position"; position: Point }
+  | { kind: "connection"; link: MapLink; sourceConceptId: string; targetConceptId: string }
+);
+
+function goalEditKey(edit: GoalEdit) {
+  return `${edit.mapId}:${edit.kind}:${edit.id}`;
+}
 
 type PositionSaveFeedback = {
   type: "success" | "error" | "saving";
@@ -534,6 +550,9 @@ export default function MapPage({
     };
   }, []);
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const integrationMapLoaded = state.status === "success" && state.map.type === "INTEGRATION";
+  const conceptTerm = integrationMapLoaded ? "概念" : "Concept";
+  const nameTerm = integrationMapLoaded ? "名称" : "label";
   const [activityLogWarning, setActivityLogWarning] = useState(false);
   const noteActivityLogFailure = useCallback(
     () => setActivityLogWarning(true),
@@ -598,6 +617,9 @@ export default function MapPage({
   >();
   const [positionFeedback, setPositionFeedback] =
     useState<PositionSaveFeedback | null>(null);
+  const [pendingGoalEdits, setPendingGoalEdits] = useState<Map<string, GoalEdit>>(() => new Map());
+  const [goalSaveBusy, setGoalSaveBusy] = useState(false);
+  const goalSaveInFlight = useRef(false);
   const mapEditorMutationsRef = useRef({ inFlight: 0, failed: false });
   const undoRedoRequestRef = useRef(0);
   useLayoutEffect(() => () => {
@@ -1074,10 +1096,10 @@ export default function MapPage({
       if (!response.ok) {
         const message =
           response.status === 404
-            ? "Conceptが見つからないため、位置を保存できませんでした。"
+            ? `${conceptTerm}が見つからないため、位置を保存できませんでした。`
             : response.status === 400
               ? "座標が正しくないため、位置を保存できませんでした。"
-              : "Conceptの位置を保存できませんでした。";
+              : `${conceptTerm}の位置を保存できませんでした。`;
 
         try {
           const latestMap = await reloadMapFromServer();
@@ -1136,7 +1158,7 @@ export default function MapPage({
       await reloadUndoRedoState(mapId);
       setPositionFeedback({
         type: "success",
-        message: "Conceptの位置を保存しました。",
+        message: `${conceptTerm}の位置を保存しました。`,
       });
       return {
         positionX: updated.positionX,
@@ -1175,6 +1197,7 @@ export default function MapPage({
   async function saveLinkPosition(
     linkId: string,
     position: Point,
+    goalMapId?: string,
   ): Promise<boolean> {
     setPositionSaving(true);
     setPositionFeedback({ type: "saving", message: "リンクの位置を保存中…" });
@@ -1186,6 +1209,7 @@ export default function MapPage({
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+              ...(goalMapId ? { mapId: goalMapId } : {}),
               labelPositionX: position.x,
               labelPositionY: position.y,
               clientTimestamp: new Date().toISOString(),
@@ -1196,6 +1220,13 @@ export default function MapPage({
           throw new Error(
             "リンクの位置を保存できませんでした。サーバーの状態を再確認してください。",
           );
+        if (goalMapId) {
+          const saved = (await r.json()) as { id?: string; mapId?: string; labelPositionX?: number; labelPositionY?: number };
+          if (saved.id !== linkId || saved.mapId !== goalMapId ||
+            saved.labelPositionX !== position.x || saved.labelPositionY !== position.y) {
+            throw new Error("リンクの位置の保存結果を確認できませんでした。");
+          }
+        }
         await reloadMapFromServer();
       });
       await reloadUndoRedoState(mapId);
@@ -1217,6 +1248,62 @@ export default function MapPage({
     }
   }
 
+  function updatePendingGoalEdit(edit: GoalEdit, keep: boolean) {
+    setPendingGoalEdits((current) => {
+      const next = new Map(current);
+      const key = goalEditKey(edit);
+      if (keep) next.set(key, edit);
+      else next.delete(key);
+      return next;
+    });
+  }
+
+  async function runGoalSave<T>(
+    edit: GoalEdit,
+    save: () => Promise<T>,
+    succeeded: (result: T) => boolean,
+    blocked: () => T,
+  ): Promise<T> {
+    // The position endpoints can reload the whole map. Keep the editor locked
+    // through that refresh so an older response cannot overwrite a newer edit.
+    if (goalSaveInFlight.current) return blocked();
+    goalSaveInFlight.current = true;
+    setGoalSaveBusy(true);
+    try {
+      const result = await save();
+      updatePendingGoalEdit(edit, !succeeded(result));
+      return result;
+    } catch (error) {
+      updatePendingGoalEdit(edit, true);
+      throw error;
+    } finally {
+      goalSaveInFlight.current = false;
+      setGoalSaveBusy(false);
+    }
+  }
+
+  function saveGoalLinkPosition(linkId: string, position: Point): Promise<boolean> {
+    return runGoalSave(
+      { kind: "link-position", mapId, id: linkId, position },
+      () => saveLinkPosition(linkId, position, mapId),
+      (saved) => saved,
+      () => false,
+    );
+  }
+
+  async function saveGoalConceptPosition(
+    conceptId: string,
+    position: ConceptPosition,
+    originalPosition: ConceptPosition,
+  ): Promise<ConceptPosition | null> {
+    return runGoalSave(
+      { kind: "concept-position", mapId, id: conceptId, position },
+      () => saveConceptPosition(conceptId, position, originalPosition),
+      (saved) => saved?.positionX === position.positionX && saved.positionY === position.positionY,
+      () => originalPosition,
+    );
+  }
+
   async function saveConceptLabel(conceptId: string, label: string) {
     const response = await apiFetch(
       `/api/concepts/${encodeURIComponent(conceptId)}/label`,
@@ -1236,10 +1323,10 @@ export default function MapPage({
       } | null;
       const message =
         response.status === 404
-          ? "Conceptが見つからないため、labelを保存できませんでした。"
+          ? `${conceptTerm}が見つからないため、${nameTerm}を保存できませんでした。`
           : typeof errorBody?.message === "string"
             ? uiText(errorBody.message)
-            : "Conceptのlabelを保存できませんでした。時間をおいて再度お試しください。";
+            : `${conceptTerm}の${nameTerm}を保存できませんでした。時間をおいて再度お試しください。`;
 
       throw new Error(message);
     }
@@ -1292,10 +1379,10 @@ export default function MapPage({
       } | null;
       const message =
         response.status === 404
-          ? "Conceptが見つからないため、削除できませんでした。マップを再読み込みしてください。"
+          ? `${conceptTerm}が見つからないため、削除できませんでした。マップを再読み込みしてください。`
           : typeof errorBody?.message === "string"
             ? uiText(errorBody.message)
-            : "Conceptを削除できませんでした。時間をおいて再度お試しください。";
+            : `${conceptTerm}を削除できませんでした。時間をおいて再度お試しください。`;
 
       throw new Error(message);
     }
@@ -1362,7 +1449,7 @@ export default function MapPage({
         throw new Error(
           typeof errorBody?.message === "string"
             ? uiText(errorBody.message)
-            : "ConceptをMergeできませんでした。マップを再読み込みしてください。",
+            : `${conceptTerm}をマージできませんでした。マップを再読み込みしてください。`,
         );
       }
 
@@ -1392,7 +1479,7 @@ export default function MapPage({
 
       if (!validResult) {
         throw new Error(
-          "Merge結果を確認できませんでした。マップを再読み込みしてください。",
+          "マージ結果を確認できませんでした。マップを再読み込みしてください。",
         );
       }
 
@@ -1432,7 +1519,7 @@ export default function MapPage({
       throw error instanceof Error
         ? error
         : new Error(
-            "ConceptをMergeできませんでした。マップを再読み込みしてください。",
+            `${conceptTerm}をマージできませんでした。マップを再読み込みしてください。`,
           );
     } finally {
       setMergingConcepts(false);
@@ -1446,9 +1533,9 @@ export default function MapPage({
         : null;
     if (
       !currentMap ||
-      (currentMap.type !== "PRIOR" && currentMap.type !== "INTEGRATION")
+      (currentMap.type !== "PRIOR" && currentMap.type !== "INTEGRATION" && currentMap.type !== "GOAL")
     ) {
-      throw new Error("マップを読み込んでからConceptを追加してください。");
+      throw new Error(`マップを読み込んでから${conceptTerm}を追加してください。`);
     }
 
     const response = await apiFetch(
@@ -1472,10 +1559,10 @@ export default function MapPage({
       } | null;
       throw new Error(
         response.status === 404
-          ? "マップが見つからないため、Conceptを保存できませんでした。"
+          ? `マップが見つからないため、${conceptTerm}を保存できませんでした。`
           : typeof errorBody?.message === "string"
             ? uiText(errorBody.message)
-            : "Conceptを保存できませんでした。時間をおいて再度お試しください。",
+            : `${conceptTerm}を保存できませんでした。時間をおいて再度お試しください。`,
       );
     }
 
@@ -1533,9 +1620,9 @@ export default function MapPage({
       } | null;
       const message =
         response.status === 404
-          ? "マップまたは選択したConceptが見つかりません。マップを再読み込みしてください。"
+          ? `マップまたは選択した${conceptTerm}が見つかりません。マップを再読み込みしてください。`
           : response.status === 422
-            ? "sourceとtargetはこのマップ内のConceptを選んでください。"
+            ? `始点と矢印の先はこのマップ内の${conceptTerm}を選んでください。`
             : typeof errorBody?.message === "string"
               ? uiText(errorBody.message)
               : "Linkを保存できませんでした。時間をおいて再度お試しください。";
@@ -1750,10 +1837,10 @@ export default function MapPage({
       } | null;
       const message =
         response.status === 404
-          ? "Linkが見つからないため、labelを保存できませんでした。マップを再読み込みしてください。"
+          ? `リンクが見つからないため、名称を保存できませんでした。マップを再読み込みしてください。`
           : typeof errorBody?.message === "string"
             ? uiText(errorBody.message)
-            : "Link labelを保存できませんでした。時間をおいて再度お試しください。";
+            : "リンク名称を保存できませんでした。時間をおいて再度お試しください。";
 
       throw new Error(message);
     }
@@ -1817,7 +1904,7 @@ export default function MapPage({
       } | null;
       const message =
         response.status === 404
-          ? "LinkまたはConceptが見つからないため、再接続できませんでした。マップを再読み込みしてください。"
+          ? `リンクまたは${conceptTerm}が見つからないため、再接続できませんでした。マップを再読み込みしてください。`
           : typeof errorBody?.message === "string"
             ? uiText(errorBody.message)
             : "Linkを再接続できませんでした。時間をおいて再度お試しください。";
@@ -1987,7 +2074,7 @@ export default function MapPage({
       throw new Error(
         typeof errorBody?.message === "string"
           ? uiText(errorBody.message)
-          : "Kit ConceptをImportできませんでした。マップを再読み込みしてください。",
+          : `Kitの概念を配置できませんでした。マップを再読み込みしてください。`,
       );
     }
 
@@ -2544,7 +2631,24 @@ export default function MapPage({
       </div>
     ) : null;
 
+  const isEditableGoalMap = state.map.type === "GOAL" && !isReadOnlyMap;
+  const goalRetries = [...pendingGoalEdits.values()].filter((edit) =>
+    edit.mapId === state.map.id && (edit.kind === "concept-position" ? state.map.concepts : state.map.links)
+      .some(({ id }) => id === edit.id),
+  );
+  function saveGoalConnection(link: MapLink, sourceConceptId: string, targetConceptId: string) {
+    return runGoalSave(
+      { kind: "connection", mapId: link.mapId, id: link.id, link, sourceConceptId, targetConceptId },
+      () => trackMapEditorMutation(() => reconnectLink(link, sourceConceptId, targetConceptId, {
+        sourceConceptId: link.sourceConceptId,
+        targetConceptId: link.targetConceptId,
+      })),
+      () => true,
+      () => { throw new Error("ゴールマップの保存が完了するまでお待ちください。"); },
+    );
+  }
   if (
+    isEditableGoalMap ||
     state.map.type === "PRIOR" ||
     state.map.type === "KB" ||
     state.map.type === "INTEGRATION"
@@ -2599,8 +2703,69 @@ export default function MapPage({
                   kitFeedbackFreshness === "current"))))
         }
         instructionsText={instructions?.[state.map.type]}
-        supplementalContent={(reconnectionActive) => (
+        supplementalContent={(reconnectionActive, editing) => (
           <>
+            {isEditableGoalMap && goalRetries.map((edit) => {
+              const concept = state.map.concepts.find(({ id }) => id === edit.id);
+              const link = state.map.links.find(({ id }) => id === edit.id);
+              const label = (edit.kind === "concept-position" ? concept : link)?.label;
+              const connection = edit.kind === "connection";
+              const region = connection ? "ゴールマップの未保存接続"
+                : edit.kind === "link-position" ? "ゴールマップのリンクの未保存位置" : "ゴールマップの未保存位置";
+              const retryLabel = connection ? "接続の保存を再試行"
+                : edit.kind === "link-position" ? "リンク位置の保存を再試行" : "位置の保存を再試行";
+              return (
+                <section key={goalEditKey(edit)} aria-label={region}>
+                  <p role="alert">「{label}」の{connection ? "接続" : "位置"}を保存できませんでした。編集内容を保持しています。</p>
+                  <button type="button" disabled={editing} onClick={() => {
+                    if (edit.kind === "concept-position" && concept) {
+                      void saveGoalConceptPosition(edit.id, edit.position, concept);
+                    } else if (edit.kind === "link-position" && link) {
+                      void saveGoalLinkPosition(edit.id, edit.position);
+                    } else if (edit.kind === "connection" && link) {
+                      void saveGoalConnection({ ...edit.link, label: link.label }, edit.sourceConceptId, edit.targetConceptId)
+                        .catch(() => undefined);
+                    }
+                  }}>{retryLabel}</button>
+                  <button type="button" disabled={editing} onClick={() => updatePendingGoalEdit(edit, false)}>
+                    {connection ? "付け替えを取り消す" : "移動を取り消す"}
+                  </button>
+                </section>
+              );
+            })}
+            {isEditableGoalMap && (
+              <GoalKitRegistrationPanel
+                title={state.map.title ?? ""}
+                conceptCount={state.map.concepts.length}
+                linkCount={state.map.links.length}
+                disabled={editing || goalRetries.length > 0}
+                onRegister={async (name) => {
+                  const response = await apiFetch(
+                    `/api/maps/${encodeURIComponent(state.map.id)}/kits`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        name,
+                        conceptIds: state.map.concepts.map((concept) => concept.id),
+                        linkIds: state.map.links.map((link) => link.id),
+                      }),
+                    },
+                  );
+                  const result = (await response.json().catch(() => null)) as {
+                    message?: unknown;
+                  } | null;
+                  if (!response.ok) {
+                    throw new Error(
+                      typeof result?.message === "string"
+                        ? uiText(result.message)
+                        : "Kitを登録できませんでした。ゴールマップを確認して再試行してください。",
+                    );
+                  }
+                  await reloadMapFromServer();
+                }}
+              />
+            )}
             {state.map.sessionProtocolKey === "SBKB_INTEGRATION_V1" &&
               !online && (
                 <p role="alert">
@@ -2611,7 +2776,7 @@ export default function MapPage({
           </>
         )}
         additionalBusy={
-          mergingConcepts ||
+          goalSaveBusy || mergingConcepts ||
           undoRedoBusy ||
           (state.map.sessionProtocolKey === "SBKB_INTEGRATION_V1" &&
             kitFeedbackChecking)
@@ -2649,6 +2814,9 @@ export default function MapPage({
         }
         onSavedMapRefresh={(latest) => setState(current => current.status === "success" && current.map.id === latest.id ? { status: "success", map: latest } : current)}
         onReconnectLink={(link, sourceConceptId, targetConceptId, expectedConnection) => {
+          if (isEditableGoalMap) {
+            return saveGoalConnection(link, sourceConceptId, targetConceptId);
+          }
           const context = captureObservationContext(state.map.sessionId ?? "", true);
           const scope = mapEditorMutationsRef.current;
           const isCurrent = () =>
@@ -2676,8 +2844,8 @@ export default function MapPage({
             ),
           )
         }
-        onPositionSave={saveConceptPosition}
-        onLinkPositionSave={saveLinkPosition}
+        onPositionSave={isEditableGoalMap ? saveGoalConceptPosition : saveConceptPosition}
+        onLinkPositionSave={isEditableGoalMap ? saveGoalLinkPosition : saveLinkPosition}
       />
     );
   }
@@ -2729,40 +2897,6 @@ export default function MapPage({
         </p>
       )}
 
-      {state.map.type === "GOAL" && !isRegisteredGoalMap && (
-        <GoalKitRegistrationPanel
-          title={state.map.title ?? ""}
-          conceptCount={state.map.concepts.length}
-          linkCount={state.map.links.length}
-          disabled={positionSaving || mapEditorSaveStatus === "saving"}
-          onRegister={async (name) => {
-            const response = await apiFetch(
-              `/api/maps/${encodeURIComponent(state.map.id)}/kits`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  name,
-                  conceptIds: state.map.concepts.map((concept) => concept.id),
-                  linkIds: state.map.links.map((link) => link.id),
-                }),
-              },
-            );
-            const result = (await response.json().catch(() => null)) as {
-              message?: unknown;
-            } | null;
-            if (!response.ok) {
-              throw new Error(
-                typeof result?.message === "string"
-                  ? uiText(result.message)
-                  : "Kitを登録できませんでした。ゴールマップを確認して再試行してください。",
-              );
-            }
-            await reloadMapFromServer();
-          }}
-        />
-      )}
-
       {state.map.type === "GOAL" && isRegisteredGoalMap && (
         <p className="goal-kit-registered-note" role="status">
           このゴールマップから作成したKitを、活動 1
@@ -2774,6 +2908,7 @@ export default function MapPage({
         <>
           <AddConceptForm
             mapId={state.map.id}
+            mapType={state.map.type}
             concepts={state.map.concepts}
             disabled={
               positionSaving || submitting || mergingConcepts || isReadOnlyMap
@@ -2794,6 +2929,7 @@ export default function MapPage({
           />
 
           <AddLinkForm
+            mapType={state.map.type}
             disabled={
               positionSaving ||
               submitting ||
@@ -3018,7 +3154,7 @@ function MapEditorShell({
   onShowKitFeedback: () => void;
   onCloseKitFeedback: () => void;
   canSubmit: boolean;
-  supplementalContent?: React.ReactNode | ((reconnectionActive: boolean) => React.ReactNode);
+  supplementalContent?: React.ReactNode | ((reconnectionActive: boolean, editing: boolean) => React.ReactNode);
   instructionsText?: string;
   additionalBusy: boolean;
   undoRedoState?: UndoRedoState | null;
@@ -3073,6 +3209,7 @@ function MapEditorShell({
     type: "error" | "success";
     message: string;
   } | null>(null);
+  const kitFeedbackReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const [linkCreation, setLinkCreation] = useState<{
     id: string;
     label: string;
@@ -3132,6 +3269,8 @@ function MapEditorShell({
   const [reconnectionBlocked, setReconnectionBlocked] = useState(false);
   const reconnectionAllowed = map.sessionProtocolKey === "SBKB_INTEGRATION_V1" &&
     (map.type === "PRIOR" || map.type === "KB" || map.type === "INTEGRATION") && isLearner && !readOnly && !deadlineReached && !reconnectionBlocked && map.status === "DRAFT";
+  const integrationMap = map.type === "INTEGRATION";
+  const conceptTerm = integrationMap ? "概念" : "Concept";
   const validReconnection = reconnectionAllowed && reconnectionDraft?.mapId === map.id &&
     isObservationContextCurrent(reconnectionDraft.context) &&
     (sameSavedLink(map.links.find(l => l.id === reconnectionDraft?.id), reconnectionDraft.original) ||
@@ -3348,7 +3487,7 @@ function MapEditorShell({
         message:
           error instanceof Error
             ? error.message
-            : "Conceptを追加できませんでした。時間をおいて再度お試しください。",
+            : `${conceptTerm}を追加できませんでした。時間をおいて再度お試しください。`,
       });
     } finally {
       setDrawerSaving(false);
@@ -3421,7 +3560,7 @@ function MapEditorShell({
         message:
           error instanceof Error
             ? error.message
-            : "Conceptを削除できませんでした。時間をおいて再度お試しください。",
+            : `${conceptTerm}を削除できませんでした。時間をおいて再度お試しください。`,
       });
     } finally {
       setDrawerSaving(false);
@@ -3463,7 +3602,7 @@ function MapEditorShell({
       setDrawer({ kind: "closed" });
       setLinkCreationFeedback({
         type: "success",
-        message: "Linkを追加しました。",
+        message: "リンクを追加しました。",
       });
       return createdLinkId;
     } catch (error) {
@@ -3472,7 +3611,7 @@ function MapEditorShell({
         message:
           error instanceof Error
             ? error.message
-            : "Linkを作成できませんでした。両handleを確認して再度お試しください。",
+            : "リンクを作成できませんでした。両端を確認して再度お試しください。",
       });
       throw error;
     } finally {
@@ -3603,6 +3742,7 @@ function MapEditorShell({
             loading={kitFeedbackChecking}
             label={map.sessionProtocolKey === "SBKB_INTEGRATION_V1" ? "一時提出" : "一致状況を確認"}
             onClick={() => void onCheckKitFeedback()}
+            onActivate={(button) => { kitFeedbackReturnFocusRef.current = button; }}
             ariaDescribedBy={experimentKB ? "kb-submission-guidance" : undefined}
           />
           {kitBuildFeedback && (
@@ -3618,7 +3758,10 @@ function MapEditorShell({
           <button
             type="button"
             className="kit-feedback-review-button"
-            onClick={onShowKitFeedback}
+            onClick={(event) => {
+              kitFeedbackReturnFocusRef.current = event.currentTarget;
+              onShowKitFeedback();
+            }}
           >
                 前回の結果を表示
               </button>
@@ -3634,7 +3777,9 @@ function MapEditorShell({
     ? (map.concepts.find((concept) => concept.id === activeLink.targetConceptId)
         ?.label ?? "概念が見つかりません")
     : "";
-  const mapTitle = isLearner
+  const mapTitle = map.type === "GOAL"
+    ? (map.title || "ゴールマップ")
+    : isLearner
     ? map.type === "PRIOR"
       ? map.sessionProtocolKey === "STAGE1_5"
         ? "STEP 2：学習者マップ（Scratch-Build）"
@@ -3668,7 +3813,7 @@ function MapEditorShell({
               初期概念は移動・リンク作成ができます。名前変更・削除はできません。
             </p>
           )}
-          {!isLearner && <span>{mapTitle}</span>}
+          {!isLearner && <span>{map.type === "GOAL" ? "ゴールマップ" : mapTitle}</span>}
         </div>
         <div className="map-editor-header-actions">
           {experimentLayout && creationTools}
@@ -3721,10 +3866,10 @@ function MapEditorShell({
             href={
               map.sessionId
                 ? `/sessions/${encodeURIComponent(map.sessionId)}`
-                : "/"
+                : map.type === "GOAL" ? "/research/goal-maps" : "/"
             }
           >
-            ← {map.sessionId ? "セッション画面へ戻る" : "トップへ戻る"}
+            ← {map.sessionId ? "セッション画面へ戻る" : map.type === "GOAL" ? "ゴールマップ一覧へ戻る" : "トップへ戻る"}
           </a>
           <p
             className={`map-editor-save-status${hasSaveError ? " is-error" : isSaving ? " is-saving" : ""}`}
@@ -3879,7 +4024,7 @@ function MapEditorShell({
       {!experimentLayout && feedbackControls}
 
       {typeof supplementalContent === "function"
-        ? supplementalContent(validReconnection !== null)
+        ? supplementalContent(validReconnection !== null, isSaving || drawer.kind !== "closed" || linkCreation !== null)
         : supplementalContent}
 
       <section
@@ -3906,8 +4051,10 @@ function MapEditorShell({
           {linkCreation && (
             <div className="map-editor-link-creation-status" role="status">
               <span>
-                「{linkCreation.label}
-                」の中央をドラッグして配置し、両端をConceptへ接続してください。
+                「{linkCreation.label}」
+                {map.type === "GOAL" && !onLinkPositionSave
+                  ? "の両端を概念へ接続してください。"
+                  : "の中央をドラッグして配置し、両端をConceptへ接続してください。"}
               </span>
               <button
                 type="button"
@@ -3935,7 +4082,7 @@ function MapEditorShell({
             mapId={map.id}
             mapType={map.type}
             fitRef={canvasFitRef}
-            showZoomControls={isLearner}
+            showZoomControls={isLearner || map.type === "GOAL"}
             allowMergeRelease={
               map.type === "INTEGRATION" &&
               ["STAGE1_5", "SBKB_INTEGRATION_V1"].includes(
@@ -4054,7 +4201,7 @@ function MapEditorShell({
                 className="map-editor-drawer-form"
                 onSubmit={startLinkCreation}
               >
-                <label htmlFor="map-editor-link-label">リンクラベル</label>
+                <label htmlFor="map-editor-link-label">{integrationMap ? "リンク名称" : "リンクラベル"}</label>
                 <input
                   id="map-editor-link-label"
                   type="text"
@@ -4066,7 +4213,9 @@ function MapEditorShell({
                   required
                 />
                 <p className="map-editor-drawer-hint">
-                  ラベルを入力して部品を追加した後、中央を配置し、両端を概念へドラッグして接続します。
+                  {map.type === "GOAL" && !onLinkPositionSave
+                    ? "ラベルを入力し、リンクの両端を概念へドラッグして接続します。"
+                    : `${integrationMap ? "名称" : "ラベル"}を入力して部品を追加した後、中央を配置し、両端を概念へドラッグして接続します。`}
                 </p>
                 <div className="map-editor-drawer-actions">
                   <button
@@ -4162,7 +4311,7 @@ function MapEditorShell({
                         map.sessionProtocolKey ?? "",
                       )
                         ? mergeReleaseNotice
-                        : "Mergeの履歴を保持するため、このConceptは削除できません。"}
+                        : "マージの履歴を保持するため、この概念は削除できません。"}
                     </p>
                   )}
                 </form>
@@ -4182,7 +4331,7 @@ function MapEditorShell({
                 {canEditLinkLabel ? (
                   <>
                     <label htmlFor="map-editor-link-edit-label">
-                      リンクラベル
+                      {integrationMap ? "リンク名称" : "リンクラベル"}
                     </label>
                     <input
                       id="map-editor-link-edit-label"
@@ -4199,7 +4348,7 @@ function MapEditorShell({
                   </>
                 ) : (
                   <p className="link-label-fixed">
-                    Kit Link由来のlabel: <strong>{activeLink.label}</strong>
+                    Kit由来の{integrationMap ? "リンク名称" : "リンクラベル"}: <strong>{activeLink.label}</strong>
                   </p>
                 )}
                 <dl className="map-editor-link-endpoints">
@@ -4257,6 +4406,7 @@ function MapEditorShell({
           feedback={kitBuildFeedback}
           freshness={validReconnection ? "unknown" : kitFeedbackFreshness}
           onClose={onCloseKitFeedback}
+          returnFocusRef={kitFeedbackReturnFocusRef}
         />
       )}
     </main>
@@ -4288,12 +4438,14 @@ export function KitBuildFeedbackCheckButton({
   loading,
   label,
   onClick,
+  onActivate,
   ariaDescribedBy,
 }: {
   disabled: boolean;
   loading: boolean;
   label: string;
   onClick: () => void;
+  onActivate?: (button: HTMLButtonElement) => void;
   ariaDescribedBy?: string;
 }) {
   return (
@@ -4302,7 +4454,10 @@ export function KitBuildFeedbackCheckButton({
       className="kit-feedback-check-button"
       aria-describedby={ariaDescribedBy}
       disabled={disabled}
-      onClick={onClick}
+      onClick={(event) => {
+        onActivate?.(event.currentTarget);
+        onClick();
+      }}
     >
       {loading ? "確認中…" : label}
     </button>
@@ -4318,11 +4473,11 @@ export function KitBuildFeedbackResultDisplay({
 }) {
   return (
     <>
-      <p className="kit-feedback-result-heading">
+      <p className={`kit-feedback-result-heading ${result.matched ? "is-matched" : "is-unmatched"}`}>
         {result.matched ? "一致" : "不一致"}
       </p>
       {result.message && <p>{uiText(result.message)}</p>}
-      <p>
+      <p className="kit-feedback-counts">
         概念 {result.concepts.matched}/{result.concepts.total}、関係{" "}
         {result.relations.matched}/{result.relations.total}
       </p>
@@ -4340,15 +4495,25 @@ function KitBuildFeedbackDialog({
   feedback,
   freshness,
   onClose,
+  returnFocusRef,
 }: {
   view: KitFeedbackDialog | null;
   feedback: KitBuildFeedbackState | null;
   freshness: KitFeedbackFreshness;
   onClose: () => void;
+  returnFocusRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const open = view !== null;
+
+  function handleClose() {
+    onClose();
+    window.requestAnimationFrame(() => {
+      const target = returnFocusRef.current;
+      if (target?.isConnected && !target.disabled) target.focus();
+    });
+  }
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -4365,7 +4530,13 @@ function KitBuildFeedbackDialog({
     <dialog
       className="kit-feedback-dialog"
       ref={dialogRef}
-      onClose={onClose}
+      onClose={handleClose}
+      onKeyDown={(event) => {
+        if (event.key === "Tab") {
+          event.preventDefault();
+          closeRef.current?.focus();
+        }
+      }}
       aria-labelledby="kit-feedback-dialog-title"
     >
       <h2 id="kit-feedback-dialog-title">ゴールマップとの一致確認</h2>
@@ -4393,7 +4564,9 @@ function KitBuildFeedbackDialog({
         ref={closeRef}
         onClick={() => dialogRef.current?.close()}
       >
-        閉じる
+        {view?.status === "result" && feedback && !feedback.result.matched
+          ? "閉じてマップを修正"
+          : "閉じる"}
       </button>
     </dialog>
   );
@@ -4415,7 +4588,7 @@ function MapPageFrame({
         <p className="eyebrow">
           {isKBMap ? "KB Concept / Link再構成" : "概念マップ"}
         </p>
-        <h1>Concept マップ</h1>
+        <h1>{isKBMap ? "Kit-Build マップ" : "Concept マップ"}</h1>
         <p className="description">
           {isKBMap
             ? "Kit PaletteからConceptとLinking Wordを配置し、handleで学習者自身が接続します。"
@@ -4460,6 +4633,8 @@ export function ConceptCanvas({
   onMapConceptSelect,
   onMapLinkSelect,
   reconnectionDraft = null,
+  practiceReconnectionDraft = null,
+  enablePracticeReconnection = false,
   onReconnectionStart,
   onReconnectionUpdate,
   onReconnectionCancel,
@@ -4530,8 +4705,10 @@ export function ConceptCanvas({
   onMapConceptSelect?: (concept: Concept) => void;
   onMapLinkSelect?: (link: MapLink) => void;
   reconnectionDraft?: ReconnectionDraft | null;
+  practiceReconnectionDraft?: PracticeReconnectionDraft | null;
+  enablePracticeReconnection?: boolean;
   onReconnectionStart?: (link: MapLink, position: Point) => void;
-  onReconnectionUpdate?: (connector: TemporaryConnector) => void;
+  onReconnectionUpdate?: (connector: PracticeReconnectionConnector) => void | Promise<void>;
   onReconnectionCancel?: () => void;
   linkCreation?: { id: string; label: string } | null;
   onMapLinkCreate?: (
@@ -4546,13 +4723,16 @@ export function ConceptCanvas({
     targetId?: string,
   ) => void;
 }) {
+  const integrationMap = mapType === "INTEGRATION";
+  const conceptTerm = integrationMap ? "概念" : "Concept";
+  const nameTerm = integrationMap ? "名称" : "label";
   const conceptDisplayLabelsById = displayLabelsByConceptId ??
     (mapType === "INTEGRATION"
       ? buildDuplicateConceptDisplayLabels(concepts)
       : undefined);
   const edges = useMemo(
-    () => mapLinksToEdges(links.filter(l => l.id !== reconnectionDraft?.id), concepts, mapId),
-    [concepts, links, mapId, reconnectionDraft],
+    () => mapLinksToEdges(links.filter(l => l.id !== (reconnectionDraft?.id ?? practiceReconnectionDraft?.id)), concepts, mapId),
+    [concepts, links, mapId, practiceReconnectionDraft, reconnectionDraft],
   );
   const conceptsById = useMemo(
     () => new Map(concepts.map((concept) => [concept.id, concept])),
@@ -4709,6 +4889,7 @@ export function ConceptCanvas({
     moved: boolean;
   } | null>(null);
   const suppressConnectorClickRef = useRef(false);
+  const practiceLinkClickTimerRef = useRef<number | null>(null);
   const connectorDragCleanupRef = useRef<(() => void) | null>(null);
   const touchPaletteDragRef = useRef<{
     pointerId: number;
@@ -4732,7 +4913,8 @@ export function ConceptCanvas({
   const creationConnectors = mapTemporaryConnector
     ? [...kitTemporaryConnectors, mapTemporaryConnector]
     : kitTemporaryConnectors;
-  const temporaryConnectors = reconnectionDraft ? [...creationConnectors, reconnectionDraft] : creationConnectors;
+  const activeReconnectionDraft = reconnectionDraft ?? practiceReconnectionDraft;
+  const temporaryConnectors = activeReconnectionDraft ? [...creationConnectors, activeReconnectionDraft] : creationConnectors;
   const pendingConnectors = temporaryConnectors.filter(
     (connector) => !connector.sourceConceptId || !connector.targetConceptId,
   );
@@ -4743,6 +4925,7 @@ export function ConceptCanvas({
     () => () => {
     connectorDragCleanupRef.current?.();
     activeConnectorDragRef.current = null;
+    if (practiceLinkClickTimerRef.current !== null) window.clearTimeout(practiceLinkClickTimerRef.current);
     },
     [],
   );
@@ -4768,8 +4951,12 @@ export function ConceptCanvas({
           const conceptId = element.dataset.conceptId;
           if (!conceptId) continue;
 
-          const bounds = element.getBoundingClientRect();
-          const size = { width: bounds.width, height: bounds.height };
+          // Practice edges use canvas coordinates even when the viewport is zoomed.
+          const bounds = enablePracticeReconnection ? null : element.getBoundingClientRect();
+          const size = {
+            width: bounds?.width ?? element.offsetWidth,
+            height: bounds?.height ?? element.offsetHeight,
+          };
           const previous = next.get(conceptId);
           if (
             previous?.width === size.width &&
@@ -4790,7 +4977,7 @@ export function ConceptCanvas({
     if (viewport) observer.observe(viewport);
     nodeElementsRef.current.forEach((element) => observer.observe(element));
     return () => observer.disconnect();
-  }, [concepts]);
+  }, [concepts, enablePracticeReconnection]);
 
   useEffect(() => {
     const observer = new ResizeObserver((entries) => {
@@ -4866,7 +5053,9 @@ export function ConceptCanvas({
       )
     : kitLinks;
   const usesMapEditorDrawers =
-    mapType === "PRIOR" || mapType === "KB" || mapType === "INTEGRATION";
+    mapType === "PRIOR" || mapType === "KB" || mapType === "INTEGRATION" ||
+    (mapType === "GOAL" && onMapConceptSelect !== undefined);
+  const canMoveConnector = mapType !== "GOAL" || !!onLinkPositionSave;
   const canOpenConceptDrawer =
     usesMapEditorDrawers &&
     !readOnly &&
@@ -4967,7 +5156,7 @@ export function ConceptCanvas({
           message:
             error instanceof Error
               ? error.message
-              : "Kit Conceptを配置できませんでした。",
+              : `${integrationMap ? "Kitの概念" : "Kit Concept"}を配置できませんでした。`,
         });
       } finally {
         setKitConceptSavingId(null);
@@ -5007,7 +5196,7 @@ export function ConceptCanvas({
     });
     setPaletteFeedback({
       type: "success",
-      message: `「${item.label}」の中央を配置し、両handleをConceptへ接続してください。`,
+      message: `「${item.label}」の中央を配置し、両端を${conceptTerm}へ接続してください。`,
     });
   }
 
@@ -5185,17 +5374,33 @@ export function ConceptCanvas({
       (candidate) => candidate.id === connection.id,
     );
     if (!connector || connector.saving) return;
-    if (connector.kind === "reconnect") {
-      if (!readOnly) onReconnectionUpdate?.({ ...connector, [connection.endpoint === "source" ? "sourceConceptId" : "targetConceptId"]: conceptId });
-      return;
-    }
     const updated: TemporaryConnector = {
       ...connector,
-      [connection.endpoint === "source"
-        ? "sourceConceptId"
-        : "targetConceptId"]: conceptId,
+      [connection.endpoint === "source" ? "sourceConceptId" : "targetConceptId"]: conceptId,
       error: null,
     };
+    // Keep the occupied handle in place while only one end is attached.
+    // When the other end is attached, the previously occupied end is the source.
+    if (
+      enablePracticeReconnection &&
+      (connector.kind !== "reconnect" || practiceReconnectionDraft?.id === connector.id) &&
+      !connector.sourceConceptId && connector.targetConceptId &&
+      connection.endpoint === "source"
+    ) {
+      updated.sourceConceptId = connector.targetConceptId;
+      updated.targetConceptId = conceptId;
+    }
+    if (connector.kind === "reconnect") {
+      if (!readOnly) {
+        if (practiceReconnectionDraft?.id === connector.id && updated.sourceConceptId && updated.targetConceptId) {
+          await onReconnectionUpdate?.(updated);
+          setLinkConnectorPositions((current) => new Map(current).set(connector.id, updated.position));
+        } else {
+          onReconnectionUpdate?.(updated);
+        }
+      }
+      return;
+    }
     updateTemporaryConnector(connector.id, () => updated);
     if (!updated.sourceConceptId || !updated.targetConceptId) return;
 
@@ -5227,7 +5432,7 @@ export function ConceptCanvas({
       }
       if (createdLinkId && onLinkPositionSave)
         await onLinkPositionSave(createdLinkId, updated.position);
-      if (createdLinkId) {
+      if (createdLinkId && canMoveConnector) {
         setLinkConnectorPositions((current) => {
           const next = new Map(current);
           next.set(createdLinkId, updated.position);
@@ -5494,7 +5699,7 @@ export function ConceptCanvas({
       setLinkLabelFeedback({
         linkId: link.id,
         type: "error",
-        message: "Link labelを入力してください。",
+        message: `${integrationMap ? "リンク名称" : "Link label"}を入力してください。`,
       });
       return;
     }
@@ -5503,7 +5708,7 @@ export function ConceptCanvas({
     setLinkLabelFeedback({
       linkId: link.id,
       type: "saving",
-      message: "Link labelを保存中…",
+      message: `${integrationMap ? "リンク名称" : "Link label"}を保存中…`,
     });
 
     try {
@@ -5512,7 +5717,7 @@ export function ConceptCanvas({
       setLinkLabelFeedback({
         linkId: link.id,
         type: "success",
-        message: "Link labelを保存しました。",
+        message: `${integrationMap ? "リンク名称" : "Link label"}を保存しました。`,
       });
     } catch (error) {
       setLinkLabelFeedback({
@@ -5521,7 +5726,7 @@ export function ConceptCanvas({
         message:
           error instanceof Error
             ? error.message
-            : "Link labelを保存できませんでした。時間をおいて再度お試しください。",
+            : `${integrationMap ? "リンク名称" : "Link label"}を保存できませんでした。時間をおいて再度お試しください。`,
       });
     } finally {
       setLinkLabelSaving(false);
@@ -5577,7 +5782,7 @@ export function ConceptCanvas({
       setLabelFeedback({
         conceptId: concept.id,
         type: "error",
-        message: "Concept名を入力してください。",
+        message: `${integrationMap ? "概念名" : "Concept名"}を入力してください。`,
       });
       return;
     }
@@ -5586,7 +5791,7 @@ export function ConceptCanvas({
     setLabelFeedback({
       conceptId: concept.id,
       type: "saving",
-      message: "labelを保存中…",
+      message: `${integrationMap ? "名称" : "label"}を保存中…`,
     });
 
     try {
@@ -5596,7 +5801,7 @@ export function ConceptCanvas({
       setLabelFeedback({
         conceptId: concept.id,
         type: "success",
-        message: "labelを保存しました。",
+        message: `${integrationMap ? "名称" : "label"}を保存しました。`,
       });
     } catch (error) {
       setLabelFeedback({
@@ -5605,7 +5810,7 @@ export function ConceptCanvas({
         message:
           error instanceof Error
             ? error.message
-            : "Concept名を保存できませんでした。時間をおいて再度お試しください。",
+            : `${integrationMap ? "概念名" : "Concept名"}を保存できませんでした。時間をおいて再度お試しください。`,
       });
     } finally {
       setLabelSaving(false);
@@ -5664,7 +5869,7 @@ export function ConceptCanvas({
         message:
           error instanceof Error
             ? error.message
-            : "Conceptを削除できませんでした。時間をおいて再度お試しください。",
+            : `${integrationMap ? "概念" : "Concept"}を削除できませんでした。時間をおいて再度お試しください。`,
       });
     } finally {
       deletingConceptRef.current = null;
@@ -5845,6 +6050,30 @@ export function ConceptCanvas({
     if (!geometry) return;
     onReconnectionStart?.(link, linkConnectorPositions.get(link.id) ?? { x: geometry.labelX, y: geometry.labelY });
   }
+  function handleLinkDoubleClick(link: MapLink, event: ReactMouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (practiceLinkClickTimerRef.current !== null) {
+      window.clearTimeout(practiceLinkClickTimerRef.current);
+      practiceLinkClickTimerRef.current = null;
+    }
+    if (enablePracticeReconnection && practiceReconnectionDraft?.id === link.id) {
+      onReconnectionUpdate?.({ ...practiceReconnectionDraft, sourceConceptId: null, targetConceptId: null, error: null });
+      return;
+    }
+    editConnection(link);
+  }
+  function handleLinkClick(link: MapLink) {
+    if (!enablePracticeReconnection) {
+      selectLink(link);
+      return;
+    }
+    if (practiceLinkClickTimerRef.current !== null) window.clearTimeout(practiceLinkClickTimerRef.current);
+    practiceLinkClickTimerRef.current = window.setTimeout(() => {
+      practiceLinkClickTimerRef.current = null;
+      selectLink(link);
+    }, 280);
+  }
   function geometryForEdge(edge: LinkEdge) {
     const parallelEdges = edges.filter(
       (candidate) =>
@@ -5891,7 +6120,7 @@ export function ConceptCanvas({
   ) {
     if (kind === "temporary") {
       const connector = temporaryConnectors.find((item) => item.id === id);
-      if (connector?.kind === "reconnect" && mapType === "PRIOR") {
+      if (connector?.kind === "reconnect" && (mapType === "PRIOR" || practiceReconnectionDraft?.id === id)) {
         onReconnectionUpdate?.({ ...connector, position });
         return;
       }
@@ -5918,13 +6147,14 @@ export function ConceptCanvas({
   ) {
     if (
       readOnly ||
+      !canMoveConnector ||
       activeConnectorDragRef.current !== null ||
       positionSaving ||
       !event.isPrimary ||
       event.button !== 0 ||
       (kind === "temporary" &&
         (temporaryConnectors.find((connector) => connector.id === id)?.saving ||
-          (temporaryConnectors.find((connector) => connector.id === id)?.kind === "reconnect" && mapType !== "PRIOR")))
+          (temporaryConnectors.find((connector) => connector.id === id)?.kind === "reconnect" && mapType !== "PRIOR" && practiceReconnectionDraft?.id !== id)))
     ) {
       return;
     }
@@ -6128,7 +6358,7 @@ export function ConceptCanvas({
                 })}
                 {visibleKitConcepts.length === 0 && (
                   <li className="kit-palette-empty" role="status">
-                    {kitPaletteCopy === "kits" ? "該当する概念はありません。" : "該当するConcept部品はありません。"}
+                    {kitPaletteCopy === "kits" || integrationMap ? "該当する概念はありません。" : "該当するConcept部品はありません。"}
                   </li>
                 )}
               </ul>
@@ -6216,9 +6446,9 @@ export function ConceptCanvas({
               <p>
                 「
                 {connectionPreview.endpoint === "source" ? "始点" : "矢印の先"}
-                」を接続するConceptへドラッグしてください。
+                」を接続する{conceptTerm}へドラッグしてください。
                 {connectionPreview.hoveredConceptId
-                  ? ` 接続先候補：${conceptsById.get(connectionPreview.hoveredConceptId)?.label ?? "Concept"}。離すと接続します。`
+                  ? ` 接続先候補：${conceptsById.get(connectionPreview.hoveredConceptId)?.label ?? conceptTerm}。離すと接続します。`
                   : ""}{" "}
                 Escでこの接続操作を中止できます。
               </p>
@@ -6237,7 +6467,7 @@ export function ConceptCanvas({
                     : "未接続"}
                   。
                   {!connector.sourceConceptId || !connector.targetConceptId
-                    ? ` ${!connector.sourceConceptId && !connector.targetConceptId ? "始点と矢印の先" : !connector.sourceConceptId ? "始点" : "矢印の先"}のハンドルを対応するConceptへドラッグしてください。`
+                    ? ` ${!connector.sourceConceptId && !connector.targetConceptId ? "始点と矢印の先" : !connector.sourceConceptId ? "始点" : "矢印の先"}のハンドルを対応する${conceptTerm}へドラッグしてください。`
                     : " 保存中です。"}
                 </p>
               ))
@@ -6281,13 +6511,13 @@ export function ConceptCanvas({
         className="concept-canvas-viewport"
         ref={canvasViewportRef}
         role="region"
-        aria-label="Concept Canvas。横スクロールして右側へ移動できます。"
+        aria-label={`${conceptTerm}キャンバス。横スクロールして右側へ移動できます。`}
         tabIndex={0}
       >
         <div
           className={`concept-canvas${readOnly ? " is-read-only" : ""}`}
           role="list"
-          aria-label="Concept一覧"
+          aria-label={`${conceptTerm}一覧`}
           style={{
             width: `${canvasWidth}px`,
             height: `${canvasHeight}px`,
@@ -6300,7 +6530,7 @@ export function ConceptCanvas({
           <svg
             className="concept-edges"
             role="group"
-            aria-label="Concept間のLink"
+            aria-label={`${conceptTerm}間のリンク`}
             width={canvasWidth}
             height={canvasHeight}
             viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
@@ -6375,9 +6605,9 @@ export function ConceptCanvas({
                       const link = links.find(
                         (candidate) => candidate.id === edge.id,
                       );
-                      if (link) selectLink(link);
+                      if (link) handleLinkClick(link);
                     }}
-                    onDoubleClick={(event) => { event.stopPropagation(); const link = links.find(l => l.id === edge.id); if (link) editConnection(link); }}
+                    onDoubleClick={(event) => { const link = links.find(l => l.id === edge.id); if (link) handleLinkDoubleClick(link, event); }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
@@ -6440,6 +6670,8 @@ export function ConceptCanvas({
               );
             })}
             {temporaryConnectors.map((connector) => {
+              const directionPending = enablePracticeReconnection &&
+                (!connector.sourceConceptId || !connector.targetConceptId);
               const source = temporaryEndpoint(
                 connector.sourceConceptId,
                 connector.position,
@@ -6472,7 +6704,7 @@ export function ConceptCanvas({
                     <path
                       className="temporary-connector-path"
                       d={`M ${connector.position.x + 10} ${connector.position.y} L ${target.x} ${target.y}`}
-                      markerEnd={`url(#${arrowMarkerId}-normal)`}
+                      markerEnd={directionPending ? undefined : `url(#${arrowMarkerId}-normal)`}
                     />
                   )}
                   {!source &&
@@ -6484,7 +6716,7 @@ export function ConceptCanvas({
                       <path
                         className="connection-preview-path"
                         d={`M ${connector.position.x - halfWidth - 46} ${connector.position.y} L ${connector.position.x - halfWidth - 8} ${connector.position.y}`}
-                        markerEnd={`url(#${arrowMarkerId}-normal)`}
+                        markerEnd={directionPending ? undefined : `url(#${arrowMarkerId}-normal)`}
                         aria-hidden="true"
                       />
                     )}
@@ -6497,7 +6729,7 @@ export function ConceptCanvas({
                       <path
                         className="connection-preview-path"
                         d={`M ${connector.position.x + halfWidth + 8} ${connector.position.y} L ${connector.position.x + halfWidth + 46} ${connector.position.y}`}
-                        markerEnd={`url(#${arrowMarkerId}-normal)`}
+                        markerEnd={directionPending ? undefined : `url(#${arrowMarkerId}-normal)`}
                         aria-hidden="true"
                       />
                     )}
@@ -6522,7 +6754,8 @@ export function ConceptCanvas({
                   };
                   return `M ${from.x} ${from.y} L ${middle.x} ${middle.y} L ${to.x} ${to.y}`;
                 })()}
-                markerMid={`url(#${arrowMarkerId}-normal)`}
+                markerMid={enablePracticeReconnection && connectionPreview.kind === "temporary"
+                  ? undefined : `url(#${arrowMarkerId}-normal)`}
                 aria-hidden="true"
               />
             )}
@@ -6624,22 +6857,25 @@ export function ConceptCanvas({
                 <button
                   type="button"
                   className="link-connector-label"
-                  aria-label={`Link ${edge.label}の中央をドラッグして移動。クリックで選択`}
+                  aria-label={canMoveConnector
+                    ? `${integrationMap ? "リンク" : "Link"} ${edge.label}の中央をドラッグして移動。クリックで選択`
+                    : `リンク ${edge.label}を選択`}
                   title={
                     readOnly
                       ? edge.label
-                      : "ドラッグで位置を移動、クリックで選択"
+                      : canMoveConnector ? "ドラッグで位置を移動、クリックで選択" : "クリックで選択"
                   }
+                  style={canMoveConnector ? undefined : { cursor: readOnly ? "default" : "pointer" }}
                   onPointerDown={(event) =>
                     beginConnectorDrag(event, "saved", edge.id, center)
                   }
-                  onDoubleClick={(event) => { event.stopPropagation(); editConnection(link); }}
+                  onDoubleClick={(event) => handleLinkDoubleClick(link, event)}
                   onClick={() => {
                     if (suppressConnectorClickRef.current) {
                       suppressConnectorClickRef.current = false;
                       return;
                     }
-                    selectLink(link);
+                    handleLinkClick(link);
                   }}
                 >
                   {edge.label}
@@ -6691,9 +6927,10 @@ export function ConceptCanvas({
               <button
                 type="button"
                 className="link-connector-label"
-                aria-label={connector.kind === "reconnect" && mapType !== "PRIOR"
+                aria-label={connector.kind === "reconnect" && mapType !== "PRIOR" && practiceReconnectionDraft?.id !== connector.id
                   ? `${connector.label}の接続編集中`
-                  : `${connector.label}の中央をドラッグして移動`}
+                  : canMoveConnector ? `${connector.label}の中央をドラッグして移動` : connector.label}
+                style={canMoveConnector ? undefined : { cursor: "default" }}
                 disabled={readOnly || connector.saving}
                 onPointerDown={(event) =>
                   beginConnectorDrag(
@@ -6703,6 +6940,12 @@ export function ConceptCanvas({
                     connector.position,
                   )
                 }
+                onDoubleClick={(event) => {
+                  if (!enablePracticeReconnection || connector.kind !== "reconnect") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onReconnectionUpdate?.({ ...connector, sourceConceptId: null, targetConceptId: null, error: null });
+                }}
               >
                 {connector.saving ? "保存中…" : connector.label}
               </button>
@@ -6744,7 +6987,7 @@ export function ConceptCanvas({
               >
                 ×
               </button>
-              {connector.error && connector.kind !== "reconnect" && (
+              {connector.error && (connector.kind !== "reconnect" || practiceReconnectionDraft?.id === connector.id) && (
                 <span className="temporary-connector-error" role="alert">
                   {connector.error}
                 </span>
@@ -6766,9 +7009,7 @@ export function ConceptCanvas({
                 key={concept.id}
                 role="listitem"
                 tabIndex={canOpenConceptDrawer ? 0 : undefined}
-                aria-label={
-                  canOpenConceptDrawer ? `${displayLabel} 概念` : undefined
-                }
+                aria-label={canOpenConceptDrawer ? `${displayLabel} ${conceptTerm}` : undefined}
                 data-concept-id={concept.id}
                 ref={(element) => {
                   if (element) {
@@ -6798,7 +7039,7 @@ export function ConceptCanvas({
                 }}
               >
                 {!usesMapEditorDrawers && (
-                  <span className="concept-node-label">Concept</span>
+                  <span className="concept-node-label">{conceptTerm}</span>
                 )}
                 {concept.isSeed && (
                   <span className="concept-seed-tag">初期概念</span>
@@ -6824,7 +7065,7 @@ export function ConceptCanvas({
                   >
                     <input
                       type="text"
-                      aria-label={`${concept.label}のlabel`}
+                      aria-label={`${concept.label}の${nameTerm}`}
                       value={editingLabel}
                       autoComplete="off"
                       autoFocus
@@ -6863,7 +7104,7 @@ export function ConceptCanvas({
                     <p>
                       {concept.isMergeResult && allowMergeRelease
                         ? mergeReleaseNotice
-                        : "このConceptを削除しますか？"}
+                        : integrationMap ? "この概念を削除しますか？" : "このConceptを削除しますか？"}
                     </p>
                     <p className="concept-delete-id">
                       ID末尾: {concept.id.slice(-6)}
@@ -6918,7 +7159,7 @@ export function ConceptCanvas({
                         aria-label={`「${concept.label}」を削除`}
                         title={
                           concept.isMergeResult && !allowMergeRelease
-                            ? "Merge lineageを保持するため削除できません。"
+                            ? integrationMap ? "マージの由来情報を保持するため削除できません。" : "Merge lineageを保持するため削除できません。"
                             : undefined
                         }
                         disabled={
@@ -6942,7 +7183,7 @@ export function ConceptCanvas({
                       <p className="concept-merge-protected-notice">
                         {allowMergeRelease
                           ? mergeReleaseNotice
-                          : "Mergeの履歴を保持するため、このConceptは削除できません。"}
+                          : integrationMap ? "マージの履歴を保持するため、この概念は削除できません。" : "Mergeの履歴を保持するため、このConceptは削除できません。"}
                       </p>
                     )}
                   </>
@@ -6972,7 +7213,7 @@ export function ConceptCanvas({
       </div>
       {!usesMapEditorDrawers && edges.length > 0 && !readOnly && (
         <label className="link-selection-control" htmlFor="link-selection">
-          Link選択
+          {integrationMap ? "リンク選択" : "Link選択"}
           <select
             id="link-selection"
             value={selectedLinkId ?? ""}
@@ -6990,7 +7231,7 @@ export function ConceptCanvas({
               else cancelLinkLabelEdit();
             }}
           >
-            <option value="">Linkを選択してください</option>
+            <option value="">{integrationMap ? "リンクを選択してください" : "Linkを選択してください"}</option>
             {edges.map((edge) => (
               <option key={edge.id} value={edge.id}>
                 {conceptsById.get(edge.source)?.label ?? edge.source} →{" "}
@@ -7005,7 +7246,7 @@ export function ConceptCanvas({
       {!usesMapEditorDrawers && selectedLink && !readOnly && (
         <form
           className="link-label-edit-panel"
-          aria-label="Link label編集"
+          aria-label={integrationMap ? "リンク名称の編集" : "Link label編集"}
           onSubmit={(event) => {
             if (!canEditLinkLabel) {
               event.preventDefault();
@@ -7015,7 +7256,7 @@ export function ConceptCanvas({
           }}
         >
           <div className="link-label-edit-context">
-            <p className="eyebrow">選択中のLink</p>
+            <p className="eyebrow">{integrationMap ? "選択中のリンク" : "選択中のLink"}</p>
             <p className="link-label-edit-summary">
               {selectedSourceConcept?.label ?? selectedLink.sourceConceptId}
               <span aria-hidden="true"> → </span>
@@ -7025,7 +7266,7 @@ export function ConceptCanvas({
           </div>
           {canEditLinkLabel ? (
             <>
-              <label htmlFor="link-label-edit-input">Link label</label>
+              <label htmlFor="link-label-edit-input">{integrationMap ? "リンク名称" : "Link label"}</label>
               <input
                 id="link-label-edit-input"
                 type="text"
@@ -7041,7 +7282,7 @@ export function ConceptCanvas({
             </>
           ) : (
             <p className="link-label-fixed">
-              Kit Link由来のlabel: <strong>{selectedLink.label}</strong>
+              {integrationMap ? "Kitリンク由来の名称" : "Kit Link由来のlabel"}: <strong>{selectedLink.label}</strong>
             </p>
           )}
           <div className="link-label-edit-actions">
@@ -7093,7 +7334,7 @@ export function ConceptCanvas({
               {linkLabelFeedback.message}
             </p>
           )}
-          <section className="link-reconnect-panel" aria-label="Link再接続">
+          <section className="link-reconnect-panel" aria-label={integrationMap ? "リンク再接続" : "Link再接続"}>
             <h3>接続先変更</h3>
             <div className="link-reconnect-fields">
               <label htmlFor="link-reconnect-source">
@@ -7234,8 +7475,8 @@ export function ConceptCanvas({
         {readOnly
           ? "提出済みマップは読み取り専用です。"
           : onLinkPositionSave
-            ? "ConceptやLinkの文字部分は、ドラッグを離した位置で保存します。"
-            : "Conceptをドラッグすると、移動後の位置を保存します。"}
+            ? `${conceptTerm}や${integrationMap ? "リンク" : "Link"}の文字部分は、ドラッグを離した位置で保存します。`
+            : `${conceptTerm}をドラッグすると、移動後の位置を保存します。`}
       </p>
     </section>
   );
@@ -7419,8 +7660,8 @@ export function IntegrationConceptMergeForm({
     const secondDisplayLabel =
       displayLabelsByConceptId?.get(secondConcept.id) ?? secondConcept.label;
     const confirmed = window.confirm(
-      `「${firstDisplayLabel}」と「${secondDisplayLabel}」をMergeし、「${finalLabel}」として表示します。
-元のConceptはMerge済み状態で保持されます。確定しますか？`,
+      `「${firstDisplayLabel}」と「${secondDisplayLabel}」をマージし、「${finalLabel}」として表示します。
+元の概念はマージ済み状態で保持されます。確定しますか？`,
     );
     if (!confirmed) {
       void onCancel();
@@ -7428,20 +7669,20 @@ export function IntegrationConceptMergeForm({
     }
 
     setSaving(true);
-    setFeedback({ type: "saving", message: "ConceptをMerge中…" });
+    setFeedback({ type: "saving", message: "概念をマージ中…" });
     try {
       await onMerge([firstConcept.id, secondConcept.id], finalLabel);
       setFirstConceptId("");
       setSecondConceptId("");
       setLabel("");
-      setFeedback({ type: "success", message: "ConceptをMergeしました。" });
+      setFeedback({ type: "success", message: "概念をマージしました。" });
     } catch (error) {
       setFeedback({
         type: "error",
         message:
           error instanceof Error
             ? error.message
-            : "ConceptをMergeできませんでした。マップを再読み込みしてください。",
+            : "概念をマージできませんでした。マップを再読み込みしてください。",
       });
     } finally {
       setSaving(false);
@@ -7449,16 +7690,16 @@ export function IntegrationConceptMergeForm({
   }
 
   return (
-    <section className="integration-concept-merge" aria-label="Concept Merge">
+    <section className="integration-concept-merge" aria-label="概念のマージ">
       <div className="integration-concept-merge-heading">
-        <h3>ConceptをMerge</h3>
+        <h3>概念をマージ</h3>
         <p>
-          2つのConceptを選択し、新しいConceptとして統合します。候補の自動選択は行いません。
+          2つの概念を選択し、新しい概念として統合します。候補の自動選択は行いません。
         </p>
       </div>
       {concepts.length < 2 ? (
         <p className="integration-concept-merge-empty">
-          MergeにはactiveなConceptが2件以上必要です。
+          マージには概念が2件以上必要です。
         </p>
       ) : (
         <form
@@ -7466,47 +7707,47 @@ export function IntegrationConceptMergeForm({
           onSubmit={handleSubmit}
         >
           <label>
-            Concept A
+            概念A
             <select
               value={firstConceptId}
               onChange={(event) => updateFirstConcept(event.target.value)}
               disabled={saving || disabled}
               required
             >
-              <option value="">Conceptを選択</option>
+              <option value="">概念を選択</option>
               {concepts.map((concept) => (
                 <option
                   key={concept.id}
                   value={concept.id}
                   disabled={concept.id === secondConceptId}
                 >
-                  {displayLabelsByConceptId?.get(concept.id) ?? concept.label}（ID末尾 {concept.id.slice(-8)}）
+                  {displayLabelsByConceptId?.get(concept.id) ?? concept.label}
                 </option>
               ))}
             </select>
           </label>
           <label>
-            Concept B
+            概念B
             <select
               value={secondConceptId}
               onChange={(event) => updateSecondConcept(event.target.value)}
               disabled={saving || disabled}
               required
             >
-              <option value="">Conceptを選択</option>
+              <option value="">概念を選択</option>
               {concepts.map((concept) => (
                 <option
                   key={concept.id}
                   value={concept.id}
                   disabled={concept.id === firstConceptId}
                 >
-                  {displayLabelsByConceptId?.get(concept.id) ?? concept.label}（ID末尾 {concept.id.slice(-8)}）
+                  {displayLabelsByConceptId?.get(concept.id) ?? concept.label}
                 </option>
               ))}
             </select>
           </label>
           <label className="integration-concept-merge-label">
-            Merge後のlabel
+            マージ後の名称
             <input
               type="text"
               value={label}
@@ -7522,13 +7763,13 @@ export function IntegrationConceptMergeForm({
           {firstConcept && secondConcept && (
             <p className="integration-concept-merge-summary">
               「{displayLabelsByConceptId?.get(firstConcept.id) ?? firstConcept.label}」と「{displayLabelsByConceptId?.get(secondConcept.id) ?? secondConcept.label}
-              」から新しいConceptを作成します。
-              元ConceptとProvenanceは
+              」から新しい概念を作成します。
+              元の概念と由来情報は
               {localPractice ? "練習画面内だけに保持されます。" : "DBに保持されます。"}
             </p>
           )}
           <button type="submit" disabled={saving || disabled || !canMerge}>
-            {saving ? "Merge中…" : "Merge"}
+            {saving ? "マージ中…" : "マージ"}
           </button>
         </form>
       )}
@@ -7547,15 +7788,18 @@ export function IntegrationConceptMergeForm({
 
 function AddConceptForm({
   mapId,
+  mapType,
   concepts,
   disabled = false,
   onCreated,
 }: {
   mapId: string;
+  mapType: MapResponse["type"];
   concepts: Concept[];
   disabled?: boolean;
   onCreated: (concept: Concept) => void;
 }) {
+  const conceptTerm = mapType === "INTEGRATION" ? "概念" : "Concept";
   const [label, setLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<
@@ -7592,10 +7836,10 @@ function AddConceptForm({
         } | null;
         const message =
           response.status === 404
-            ? "マップが見つからないため、Conceptを保存できませんでした。"
+            ? `マップが見つからないため、${conceptTerm}を保存できませんでした。`
             : typeof errorBody?.message === "string"
               ? uiText(errorBody.message)
-              : "Conceptを保存できませんでした。時間をおいて再度お試しください。";
+              : `${conceptTerm}を保存できませんでした。時間をおいて再度お試しください。`;
 
         setFeedback({ type: "error", message });
         return;
@@ -7604,7 +7848,7 @@ function AddConceptForm({
       const concept = (await response.json()) as Concept;
       onCreated(concept);
       setLabel("");
-      setFeedback({ type: "success", message: "Conceptを追加しました。" });
+      setFeedback({ type: "success", message: `${conceptTerm}を追加しました。` });
     } catch {
       setFeedback({
         type: "error",
@@ -7618,7 +7862,7 @@ function AddConceptForm({
 
   return (
     <form className="add-concept-form" onSubmit={handleSubmit}>
-      <label htmlFor="concept-label">Conceptを追加</label>
+      <label htmlFor="concept-label">{conceptTerm}を追加</label>
       <div className="add-concept-controls">
         <input
           id="concept-label"
@@ -7627,7 +7871,7 @@ function AddConceptForm({
           autoComplete="off"
           value={label}
           onChange={(event) => setLabel(event.target.value)}
-          placeholder="Concept名を入力"
+          placeholder={`${conceptTerm}名を入力`}
           disabled={saving || disabled}
           required
         />
@@ -7649,12 +7893,15 @@ function AddConceptForm({
 }
 
 function AddLinkForm({
+  mapType,
   disabled,
   onStart,
 }: {
+  mapType: MapResponse["type"];
   disabled: boolean;
   onStart: (label: string) => void;
 }) {
+  const integrationMap = mapType === "INTEGRATION";
   const [isOpen, setIsOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [feedback, setFeedback] = useState<
@@ -7672,7 +7919,7 @@ function AddLinkForm({
     if (disabled) return;
 
     if (!label.trim()) {
-      setFeedback({ type: "error", message: "Link labelを入力してください。" });
+      setFeedback({ type: "error", message: `${integrationMap ? "リンク名称" : "リンクラベル"}を入力してください。` });
       return;
     }
 
@@ -7682,12 +7929,12 @@ function AddLinkForm({
     setFeedback({
       type: "success",
       message:
-        "Link部品をCanvasへ追加しました。中央を配置し、両端をConceptへ接続してください。",
+        `リンクをCanvasへ追加しました。中央を配置し、両端を${integrationMap ? "概念" : "Concept"}へ接続してください。`,
     });
   }
 
   return (
-    <section className="add-link-section" aria-label="Link作成">
+    <section className="add-link-section" aria-label={integrationMap ? "リンク作成" : "Link作成"}>
       {!isOpen && (
         <button
           className="add-link-open-button"
@@ -7698,14 +7945,14 @@ function AddLinkForm({
             setIsOpen(true);
           }}
         >
-          Linkを追加
+          {integrationMap ? "リンクを追加" : "Linkを追加"}
         </button>
       )}
       {isOpen && (
         <form className="add-link-form" onSubmit={handleSubmit}>
           <div className="add-link-fields">
             <label htmlFor="link-label">
-              Link label
+              {integrationMap ? "リンク名称" : "Link label"}
               <input
                 id="link-label"
                 name="label"
@@ -7807,7 +8054,7 @@ function IntegrationKitAssignmentPanel({
       <div className="integration-kit-heading">
         <div>
           <h3>活動で使うKit</h3>
-          <p>Kitを設定すると、ConceptとLinking WordのPaletteが表示されます。</p>
+          <p>Kitを設定すると、概念とリンクのパレットが表示されます。</p>
         </div>
       </div>
       {availableKitDefinitions.length === 0 ? (

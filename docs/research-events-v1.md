@@ -6,6 +6,8 @@
 
 # 研究イベント仕様 v1（Issue #3）
 
+現行の収集経路・分析時の読み方は[現行実装の取得項目一覧](#現行実装の取得項目一覧)を参照。以下のIssueごとの記述には実装当時の仕様も含む。
+
 本基盤は追加方式。保存済みv2を保持し、現在のStage 1のマップ操作はv5イベントとして収集し、履歴照合とUndo/Redoでは旧ログと連結する。研究者向け分析・既存出力にも混在履歴を含める。開発・模擬データ用であり実研究向けの安全性は別途確認する。名称は `対象_操作` または既存操作名とし、実行結果は eventType ではなく outcome に入れる。登録成功は操作成功を意味しない。
 
 ## 共通フィールド
@@ -226,3 +228,61 @@ Mapエラー応答の記録は、pool.connect・BEGIN・イベント保存・COM
 適用時は単一APIを停止してバックアップと追加マイグレーションを確認し、179104適用後に対応する更新済みAPIを起動する。旧APIと新APIを混在稼働させない。旧インデックスを戻すと共存した監査行が衝突するためdownは拒否する。既存DBへの適用・本番更新訓練は今回実施しない。
 
 検証: test:map-failure-retryを標準suiteへ追加。テスト専用preloadによる実APIのログ接続拒否、接続後の保存失敗、Undo/Redo/Link移動の失敗後の同一キー再送・並行再送、失敗行保持、拒否後の回復、混在再生・Exportを確認する。実行結果は[PR16 P1修正検証記録](pr16-p1-verification.md)で過去の28件記録と区別する。
+
+## 現行実装の取得項目一覧
+
+初回の照合対象はローカル `main` の `03a094569701b0fe065f0a96f07ee7d09a4b9a0c`。PR #96マージ `5cf56ddee7e12c3be7ac21337a3f4d5394cfcaa2` を基準とする統合差分でも収集・保存・出力経路を照合した。主対象は本編の `SBKB_INTEGRATION_V1`。旧プロトコルの行も共通出力に含まれるため、以下では版と対象を併記する。稼働DB、実データ、実際の収集率は調査対象外。練習画面の操作履歴や練習の進捗は本編の研究イベントとして扱わない。
+
+統合後、ゴールマップのリンクラベル位置保存は研究者が編集できるKit未登録のマップを対象に、既存の座標列を更新する。これは下表の学習者マップの `MOVE_LINK` には含まれない。KB本編の結果ダイアログの見た目とフォーカス復帰を調整したが、観測の生成条件は引き続き学習者のKBダイアログが `result` になること。練習の判定APIは固定教材の比較で、練習の状態はブラウザー内で保存される。[リンク位置API](../backend/src/index.ts) · [KB結果表示](../frontend/src/MapPage.tsx) · [練習API回帰](../backend/src/scripts/verify-tutorial-kit-practice-api.ts)
+
+### イベントと保存経路
+
+イベント名と対象型の全語彙は[カタログ](../backend/src/research-event-catalog.ts)。カタログに存在することと、現行UIに発生経路があることは区別する。
+
+| イベント | 発生条件・固有の取得項目 | 生成 → 保存 |
+| --- | --- | --- |
+| `SESSION_START` / `SESSION_COMPLETE`、`STAGE_START` / `STAGE_COMPLETE`（v1） | 開始・完了がサーバー処理で確定したとき。Session/Stage、主体、結果、DB時刻。開始済みStageの再開要求にはサーバー側の `STAGE_RESUME/SUCCESS` がある。活動完了とMap提出は別の記録。 | [活動画面](../frontend/src/SessionFlowPage.tsx) → `/api/sessions/:id/start`、`/api/session-stages/:id/{start,complete}`、Map提出等の[ルート](../backend/src/index.ts) |
+| `SCREEN_ENTER` / `SCREEN_LEAVE`、`STAGE_PAUSE` / `STAGE_RESUME`（v1） | 活動画面のマウント・離脱、pagehide、復元時のpageshowを画面観測に使用。可視性が変わると後者を生成し、結果・理由は `UNKNOWN`。Stage、該当時のMap、クライアント時刻。可視性は実作業の中断時間を測るものではない。 | [画面観測フック](../frontend/src/learning-events.ts) → [観測API](../backend/src/research-events.ts) |
+| `VIDEO_PLAY` / `VIDEO_PAUSE` / `VIDEO_SEEK` / `VIDEO_COMPLETE`（v1） | HTML video の play、終端でないpause、seeked、ended。シークの `details` は `fromSeconds` / `toSeconds`。連続した再生位置、動画URL、YouTube iframeや外部リンク上の同等操作はこの経路で収集しない。 | [動画プレーヤー](../frontend/src/SessionFlowPage.tsx) → [観測API](../backend/src/research-events.ts) |
+| `ADD_CONCEPT` / `EDIT_CONCEPT` / `MOVE_CONCEPT` / `DELETE_CONCEPT` / `MERGE_CONCEPT` / `IMPORT_KIT_CONCEPT`（v5、従来v2・旧ログ） | サーバーに到達した追加、名称編集、座標移動、削除、統合、Kit部品配置。成功時に対象IDとMap全体の変更前後を保存。概念の名称・座標・統合先・由来IDや関係型を含む。 | [Map編集](../frontend/src/MapPage.tsx) → [概念・統合ルートと appendMapOperationLog](../backend/src/index.ts) → [v5検証](../backend/src/research-event-map-v5.ts) |
+| `ADD_LINK` / `EDIT_LINK` / `MOVE_LINK` / `DELETE_LINK` / `RECONNECT_LINK` / `IMPORT_KIT_LINK`（同上） | リンクの作成・名称編集・ラベル移動・削除・付け替え・Kit取込。状態の始点と終点は `sourceConceptId` / `targetConceptId`。ラベル手動位置はv5の `labelPositionX` / `labelPositionY` の組。マウス軌跡や接続操作の途中状態を記録する経路はない。 | [Map編集](../frontend/src/MapPage.tsx) → [リンク更新ルート](../backend/src/index.ts) → [v5検証](../backend/src/research-event-map-v5.ts) |
+| `UNDO` / `REDO`、`MAP_KIT_ASSIGN`、`MAP_SUBMIT` / `MAP_AUTO_SUBMIT`（同上） | 取り消し・やり直し、Kit割当変更、手動提出とシステムによる提出の確定。成功時はMap状態の前後。Undo/Redoは元の新イベントIDまたは旧ログIDを参照する。Kit不一致の提出拒否は `MAP_SUBMIT/REJECTED`。自動提出失敗の監査にはv4経路もある。 | [Map編集](../frontend/src/MapPage.tsx) → [操作・提出・自動提出ルート](../backend/src/index.ts) |
+| `STAGE_DEADLINE`（v4） | 期限監査の現行走査は旧 `STAGE1_6` / `STAGE1_5` が対象。Stage ID、SYSTEM主体、結果・理由。新本編の期限到達や自動提出をこの行の有無だけで判定できない。 | [サーバーの期限監査](../backend/src/system-submission.ts) |
+| `MAP_SAVE` | カタログと既存履歴読出の対象。操作別に保存する現行Map編集の一括保存イベントとして数えられる発生経路は確認できなかった。 | [カタログ](../backend/src/research-event-catalog.ts)、[保存・履歴ルート](../backend/src/index.ts) |
+| `FEEDBACK_CHECK`（v6） / `FEEDBACK_DISPLAY`（観測v1、互換ルートあり） | 明示的一致確認はサーバー処理が成功すると `SUCCESS`、一致・不一致は `details.matched` の真偽。旧v1では不一致を `REJECTED` で表す。結果表示は学習者のKBダイアログが`result`になると観測する。表示にはStage/Map参照を持つが、判定イベントIDとの直接の関連、件数、正解接続、表示時間は保存しない。旧互換の表示報告ではクライアント時刻が欠測し得る。 | [KB確認と結果表示](../frontend/src/MapPage.tsx) → [kit-feedbackと旧displayルート](../backend/src/index.ts)／[観測API](../backend/src/research-events.ts) → [v6検証](../backend/src/research-event-feedback-v6.ts) |
+| `ASSESSMENT_EDIT` / `ASSESSMENT_SUBMIT`（v3）、`SURVEY_EDIT` / `SURVEY_SUBMIT`（v7） | 旧プロトコルの回答保存・提出。サーバー保存値が変わった設問の前後に `questionId` と `answer`（v3）または `kind` / `value`（v7）。提出イベントは設問本文を複製しない。入力途中の打鍵は収集しない。本編 `SBKB_INTEGRATION_V1` にこれらの活動はない。 | [評価UI](../frontend/src/Assessment.tsx) → [評価API](../backend/src/assessments.ts)、[アンケートUI](../frontend/src/Survey.tsx) → [アンケートAPI](../backend/src/surveys.ts) |
+| `SESSION_CREATE` / `SESSION_SETTINGS_CHANGE`、`RESEARCH_ANALYSIS_VIEW` / `RESEARCH_EXPORT` / `RESEARCH_ASSESSMENT_CHANGE`（主にv4） | 対象ルートでのSession作成、設定変更、分析・出力準備、評価設定等の監査。主体、参照ID、結果・理由、DB時刻を記録。回答・出力本文を監査行に複製しない。Session未所属のGoal Map削除は `DELETE_CONCEPT` / `DELETE_LINK` のv4監査。実施単位の読取監査は別の `experiment_run_audit`。 | [監査ルーター](../backend/src/server-audit.ts)、[絞り込み出力ルート](../backend/src/event-export-routes.ts)、[実施単位の研究出力](../backend/src/experiment-research.ts) |
+
+### 共通項目・時刻・関連付け
+
+- 保存列は `research_events` のイベントUUID・スキーマ版、Session/Stage/Map UUID、DBから得る参加者参照・群・活動、主体、イベント・対象型・対象UUID、結果・理由、連番、クライアント時刻と品質、DB時刻、前後状態と各品質、`details`、関連イベント／旧ログID、該当時の冪等キー。Map→Stage→Session の所属を照合してから登録する。観測APIは学習者本人の許可リストに限定し、Map操作のサーバー確定結果をブラウザーから登録できない。[保存・検証・一覧API](../backend/src/research-events.ts)
+- `client_timestamp` は観測時の端末時刻または処理対象に添付した時刻。未取得はnullで、`OBSERVED` / `MISSING` / `NOT_APPLICABLE` 等の品質を併読する。 `server_timestamp` はDBの `clock_timestamp()` による挿入時刻で、端末での発生時刻やトランザクション完了時刻の代用にはならない。活動CSVの `server_elapsed_ms` はDBのStage開始から記録挿入までの差で、再送の遅延を含む。[DB定義](../backend/migrations/1790890000000_create_research_events.js) · [出力投影](../backend/src/event-export-query.ts)
+- `sequence_number` はSession内の全主体・全イベントの保存順。Session未所属監査はGLOBAL、旧操作ログはMap内のMAP、ブラウザーの `client_sequence` はSession内のストリーム別観測順。操作CSVの `sequenceNumber` は混在履歴のMap内位置で、新イベントの保存順は別列 `eventSequenceNumber`。出力や分析で、これらの連番を相互に置き換えない。[出力SQL](../backend/src/event-export-query.ts) · [操作履歴の組立て](../backend/src/research-export.ts)
+- 結合は `session_id`／`stage_id`／`map_id` のUUIDを使う。用途別イベントCSVは `event_id` で共通CSVへ結合でき、旧ログのキーには `legacy:` が付く。 `learner_id` は出力時点の `research_session_ids.pseudonym`（`P-UUID`）。対応がないSessionの共通イベント出力は `L-SessionUUID`、Sessionなしは空。Session生データの `participantCode` は対応表の仮名またはnull。明示的に関連付けたSession間だけ同じ仮名を共有し、再発行後の出力では仮名が変わり得る。Session UUIDは維持される。仮名IDは匿名化を意味しない。[仮名対応のDB定義](../backend/migrations/1791000000000_add_research_data_management.js) · [出力SQL](../backend/src/event-export-query.ts) · [管理仕様](research-data-management.md)
+
+### 保存失敗と再送
+
+- 観測は [learning-events.ts](../frontend/src/learning-events.ts) から IndexedDB の [observation-outbox.ts](../frontend/src/observation-outbox.ts) に積み、初回・追加時・pageshow・online・15秒周期等で送信する。送信時にSessionと現行認証を照合する。通信断・5xx・ACK不明は保持。2xxと `logSaved=true`、イベントID、連番でACKとする。同じイベントキー・ストリーム・順序・内容の再送は既存receiptを返し、保存行を増やさない。確定拒否を損失として扱う経路と、旧生成元を検出して先頭を保留する経路は異なる。新規記録が上限を超える場合は新規分を拒否し、既存の未確認項目を押し出さない。7日は保管の見直し目安。旧文書にある自動除去・keepalive送信を現行の保証としない。[観測API](../backend/src/research-events.ts) · [生成元と受領照会](plans/observation-origin-recovery.md)
+- 参加者画面の送信待ち、ブラウザーの申告件数、サーバーreceiptで照合した件数・欠番は別の指標。後続が届かない末尾の欠測、キューへの保存前の終了、報告未着は確定できない。受領照会とv3の検証実装の存在を、通常画面で滞留を自動解消する根拠にはしない。[配送状態](../frontend/src/DeliveryStatus.tsx) · [配送API](../backend/src/delivery-reliability.ts) · [受領照会](../backend/src/observation-receipt-lookup.ts)
+- 対象更新APIでは [operation-client.ts](../frontend/src/operation-client.ts) が本文指紋に対応する固定キーを保持する。状態変更・履歴・操作receiptが同じトランザクションで確定する経路では、同一の確定要求を再実行しない。失敗・拒否と後の成功は別イベントになり得る。キーなしの要求は同一操作と推定しない。一方、開始・判定等にはSAVEPOINTでログだけ失敗する経路があり、操作結果と `logSaved`／`activityLogSaved` を分けて読む。連続したKB確認は個別の要求で、観測キューの再送と同じ方式でまとめられるとは限らない。[APIの操作・監査経路](../backend/src/index.ts) · [共通保存](../backend/src/research-events.ts) · [配送仕様](research-event-delivery.md)
+
+### 既存テストとの照合
+
+| 確認対象 | 対応するテストのアサーション |
+| --- | --- |
+| カタログ・版・対象・順序 | [カタログと対応表](../backend/src/scripts/verify-event-catalog.ts)、[スキーマ・認可・連番](../backend/src/scripts/verify-research-event-schema.ts) |
+| 活動・判定の記録 | [活動イベントAPI](../backend/src/scripts/verify-learning-activity-events.ts) の開始・終了とKB確認・表示、[本編ブラウザー](../frontend/scripts/verify-experiment-learner-browser.ts) の活動遷移・KB操作 |
+| Map・回答・監査 | [Map API](../backend/src/scripts/verify-map-api-v2.ts) の編集・再接続・Undo/Redo・再生、[自動提出](../backend/src/scripts/verify-map-auto-submit-v2.ts)、[評価](../backend/src/scripts/verify-assessment-events.ts)、[アンケート](../backend/src/scripts/verify-session-flow-survey.ts)、[監査](../backend/src/scripts/verify-server-audit.ts) |
+| 再送・失敗 | [配送API](../backend/src/scripts/verify-delivery-reliability.ts)、[合成配送ブラウザー](../frontend/scripts/verify-delivery-browser.ts) のACK喪失・保留・容量、[生成元](../backend/src/scripts/verify-observation-origin.ts) の拒否と照会 |
+| 出力・仮名 | [絞り込み出力](../backend/src/scripts/verify-event-export.ts) の集合・版・順序、[出力サンプル](../backend/src/scripts/verify-event-export-samples.ts)、[実施出力](../backend/src/scripts/experiment-research-checks.ts) のJSON/CSVと仮名、[仮名管理](../backend/src/scripts/verify-data-management.ts) |
+
+### 未確定事項と変更候補
+
+既存のイベントからは実作業時間、視聴理解、全操作の欠測数、確認と表示の一対一対応を確定できない。実験計画がどの分析指標と欠測規則を採用するか、外部の分析処理が列順や仮名の再発行をどう扱うか、稼働データの欠測率は未確認。
+
+| 分析目的・対象候補 | 影響 | 承認後の実施・検証・復旧案 |
+| --- | --- | --- |
+| 「どの判定結果を何回表示したか」を集計するため、`FEEDBACK_DISPLAY` と判定イベントの関連を保持 | UIの新規表示／再表示の定義、観測項目、受付・保管・出力が対象。旧行の対応は不明のまま保持。 | 表示の定義と関連IDの所有確認を先に合意し、新しい契約で保存。人工データで新規表示、再表示、遅延・ACK喪失・本人境界、旧行と混在する出力を確認。問題時は新規収集を停止し、保存済みの新形式を読める状態で旧経路へ戻す。 |
+| 学習時間推定に使える区間と欠測を区別するため、開始・終了、可視性、動画シーク、配送申告を分析する | まず現行出力だけで再現可能な派生指標と欠測ルールを定義できる。新たな可視性や動画の取得が必要なら記録条件と保有データが増える。 | 研究側で対象区間・欠測の扱いを決め、既存イベントを使う別集計を合成時系列で検証する。追加収集が必要な場合は別途承認し、プロトコル・版で区別する。撤回時は派生出力を止め、原本に加えた新記録の意味を変更しない。 |
+
+取得項目、記録条件、意味、出力形式を変える案は個別承認の対象。上記候補の実装、過去データの補完、練習APIによるDB更新の検査はこの棚卸しに含めない。

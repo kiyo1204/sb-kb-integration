@@ -101,42 +101,8 @@ export function createInitialSbPracticeProgress(): SbPracticeProgress {
 
 export function createInitialKitPracticeProgress(): KitPracticeProgress {
   return {
-    placedConcepts: [
-      {
-        kitConceptItemId: photosynthesisKitConcepts[0].kitConceptItemId,
-        concept: {
-          id: "practice-kit-plant",
-          label: "植物",
-          positionX: 100,
-          positionY: 120,
-          createdAt: "",
-          updatedAt: "",
-        },
-      },
-      {
-        kitConceptItemId: photosynthesisKitConcepts[1].kitConceptItemId,
-        concept: {
-          id: "practice-kit-photosynthesis",
-          label: "光合成",
-          positionX: 420,
-          positionY: 220,
-          createdAt: "",
-          updatedAt: "",
-        },
-      },
-    ],
-    placedLinks: [
-      {
-        kitLinkItemId: photosynthesisKitLinks[0].kitLinkItemId,
-        link: {
-          id: "practice-kit-perform",
-          mapId: "tutorial-photosynthesis-kb",
-          sourceConceptId: "practice-kit-plant",
-          targetConceptId: "practice-kit-photosynthesis",
-          label: "行う",
-        },
-      },
-    ],
+    placedConcepts: [],
+    placedLinks: [],
     completedTasks: [],
     hasFullPlacementMismatch: false,
     correctedAfterMismatch: false,

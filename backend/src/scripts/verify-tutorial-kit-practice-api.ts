@@ -16,26 +16,67 @@ const parts = {
   require: "88888888-8888-4888-8888-888888888883",
 };
 
-async function snapshot() {
-  const result = await pool.query<{
-    sessions: string;
-    stages: string;
-    maps: string;
-    concepts: string;
-    links: string;
-    researchEvents: string;
-    operationLogs: string;
-    historyBoundaries: string;
-  }>(`SELECT
-      (SELECT count(*)::text FROM sessions) AS sessions,
-      (SELECT count(*)::text FROM session_stages) AS stages,
-      (SELECT count(*)::text FROM maps) AS maps,
-      (SELECT count(*)::text FROM concepts) AS concepts,
-      (SELECT count(*)::text FROM links) AS links,
-      (SELECT count(*)::text FROM research_events) AS "researchEvents",
-      (SELECT count(*)::text FROM map_operation_logs) AS "operationLogs",
-      (SELECT count(*)::text FROM map_history_boundaries) AS "historyBoundaries"`);
-  return result.rows[0];
+const tables = [
+  // Session progress, saved graphs, and Kit/goal references.
+  "sessions", "session_stages", "maps", "concepts", "links",
+  "concept_provenance", "link_provenance",
+  "kit_definitions", "kit_concept_items", "kit_link_items",
+  // Map history and the event/receipt paths used by persisted operations.
+  "map_initial_snapshots", "map_history_boundaries", "map_operation_logs",
+  "research_events", "research_event_counters", "operation_receipts",
+] as const;
+type Table = (typeof tables)[number];
+type Snapshot = Record<Table, string[]>;
+
+async function snapshot(db: Pick<Pool, "query"> = pool): Promise<Snapshot> {
+  // A single statement uses one MVCC snapshot. Compare full rows as text so
+  // PostgreSQL bigint and timestamp values are not rounded by JS conversion.
+  const projections = tables.map((table) => `ARRAY(
+    SELECT to_jsonb(saved_row)::text FROM public.${table} AS saved_row
+    ORDER BY to_jsonb(saved_row)::text COLLATE "C"
+  ) AS ${table}`);
+  const result = await db.query<Snapshot>(`SELECT ${projections.join(", ")}`);
+  return result.rows[0]!;
+}
+
+function assertUnchanged(before: Snapshot, after: Snapshot) {
+  for (const table of tables) {
+    const expected = before[table];
+    const actual = after[table];
+    assert.equal(actual.length, expected.length, `practice DB row count changed: ${table}`);
+    assert.ok(
+      expected.every((row, index) => row === actual[index]),
+      `practice DB row identifiers or values changed: ${table}`,
+    );
+  }
+}
+
+async function verifySameCountUpdateDetection() {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const fixture = await client.query<{ id: string }>(
+      "INSERT INTO maps (type, status, title) VALUES ('GOAL', 'DRAFT', 'Synthetic invariant probe') RETURNING id",
+    );
+    const beforeUpdate = await snapshot(client);
+    const updated = await client.query(
+      "UPDATE maps SET title = 'Synthetic invariant probe updated' WHERE id = $1",
+      [fixture.rows[0]!.id],
+    );
+    assert.equal(updated.rowCount, 1);
+    const afterUpdate = await snapshot(client);
+    assert.equal(afterUpdate.maps.length, beforeUpdate.maps.length);
+    assert.throws(
+      () => assertUnchanged(beforeUpdate, afterUpdate),
+      { message: "practice DB row identifiers or values changed: maps" },
+    );
+  } finally {
+    try {
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
+  }
 }
 
 async function post(body: unknown, status: number) {
@@ -128,9 +169,10 @@ try {
   );
   const unauthorized = await fetch(base + "/api/me");
   assert.equal(unauthorized.status, 401, "existing learner API authentication remains required");
-  const after = await snapshot();
-  assert.deepEqual(after, before, "practice checks do not modify experimental DB state or research events");
-  console.log("Tutorial Kit practice API: PASS (partial, reversed, corrected, invalid, DB invariant)");
+  assertUnchanged(before, await snapshot());
+  await verifySameCountUpdateDetection();
+  assertUnchanged(before, await snapshot());
+  console.log("Tutorial Kit practice API: PASS (partial, reversed, corrected, invalid, DB invariant, same-count update detected and rolled back)");
 } finally {
   await pool.end();
 }

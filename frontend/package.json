@@ -28,6 +28,7 @@
     "test:participant-access-browser": "tsx scripts/verify-participant-access-browser.ts",
     "test:r08-progress-display-browser": "tsx scripts/verify-r08-progress-display-browser.ts",
     "test:rehearsal-ui-browser": "tsx scripts/verify-rehearsal-ui-browser.ts",
+    "test:goal-map-editor-browser": "tsx scripts/verify-goal-map-editor-browser.ts",
     "test:learner-layout-browser": "tsx scripts/verify-learner-layout-browser.ts",
     "test:experiment-learner-browser": "tsx scripts/verify-experiment-learner-browser.ts",
     "test:r05-browser": "tsx scripts/verify-r05-browser.ts",

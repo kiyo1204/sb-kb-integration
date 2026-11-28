@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ConceptCanvas,
   KitBuildFeedbackCheckButton,
   KitBuildFeedbackResultDisplay,
+  type PracticeReconnectionConnector,
+  type PracticeReconnectionDraft,
 } from "./MapPage";
 import IntegrationPractice from "./IntegrationPractice";
 import { clearPracticeCompleted, markPracticeCompleted } from "./practice-completion";
@@ -28,6 +30,7 @@ import {
   type KitLinkPlacement,
   type KitPracticeProgress,
   type KitPracticeResult,
+  type PracticeLink,
   type PracticeStep,
 } from "./practice-progress";
 
@@ -180,7 +183,6 @@ export default function TutorialPage({
           <p className="tutorial-practice-note">
             Scratch-Build → Kit-Build → 統合マップの順で、各段階のすべての操作を完了すると次へ進めます。完了した段階へはいつでも戻り、練習内容を続けて確認できます。
           </p>
-          {practiceSessionId && <p className="tutorial-practice-description" role="note">練習のMapと達成状況は、このタブ内で本人の利用中Sessionごとに保存します。別の参加者・タブ・端末へは引き継ぎません。</p>}
           {storageNotice && <p role="alert">{storageNotice}</p>}
           {finishError && <p role="alert">{finishError}</p>}
         </header>
@@ -312,6 +314,7 @@ function SbPracticeCanvas({
   const [conceptLabel, setConceptLabel] = useState("");
   const [linkLabel, setLinkLabel] = useState("");
   const [editLabel, setEditLabel] = useState("");
+  const [reconnectionDraft, setReconnectionDraft] = useState<PracticeReconnectionDraft | null>(null);
   const tasks = progress.taskSetVersion === undefined ? legacySbPracticeTasks : sbPracticeTasks;
   const allTasksComplete = isPracticeStepComplete("PRIOR", progress);
   useEffect(() => {
@@ -324,6 +327,53 @@ function SbPracticeCanvas({
   const activeLink = drawer.kind === "edit-link"
     ? links.find((link) => link.id === drawer.linkId)
     : undefined;
+
+  function beginPracticeReconnection(link: PracticeLink, position: { x: number; y: number }) {
+    if (reconnectionDraft) return;
+    setDrawer({ kind: "closed" });
+    setReconnectionDraft({
+      id: link.id,
+      kind: "reconnect",
+      kitLinkItemId: null,
+      label: link.label,
+      position,
+      sourceConceptId: null,
+      targetConceptId: null,
+      saving: false,
+      error: null,
+      original: link,
+      originalPosition: position,
+    });
+  }
+
+  async function savePracticeReconnection(link: PracticeLink, sourceConceptId: string, targetConceptId: string) {
+    const saved = update((current) => ({
+      ...current,
+      links: current.links.map((candidate) => candidate.id === link.id
+        ? { ...candidate, sourceConceptId, targetConceptId }
+        : candidate),
+    }));
+    if (!saved) throw new Error("練習の変更を保存できませんでした。");
+  }
+
+  async function handleReconnectionUpdate(connector: PracticeReconnectionConnector) {
+    const current = reconnectionDraft;
+    if (!current || current.id !== connector.id || current.saving) return;
+    const next = { ...current, ...connector };
+    if (!next.sourceConceptId || !next.targetConceptId) {
+      setReconnectionDraft(next);
+      return;
+    }
+    setReconnectionDraft({ ...next, saving: true, error: null });
+    try {
+      await savePracticeReconnection(current.original, next.sourceConceptId, next.targetConceptId);
+      setReconnectionDraft((draft) => draft?.id === connector.id ? null : draft);
+    } catch (error) {
+      setReconnectionDraft((draft) => draft?.id === connector.id
+        ? { ...next, saving: false, error: error instanceof Error ? error.message : "リンクを再接続できませんでした。" }
+        : draft);
+    }
+  }
 
   const storageMessage = status === "corrupt"
     ? "この練習の保存データが破損しているため、編集を止めています。『この練習をやり直す』で初期化してください。"
@@ -449,7 +499,6 @@ function SbPracticeCanvas({
             </li>
           ))}
         </ol>
-        <p>課題は練習画面内で実際に操作を完了したときだけ達成扱いです。学習成績ではありません。</p>
       </section>
 
       <div className="map-editor-page is-experiment is-prior is-learner tutorial-map-editor">
@@ -519,9 +568,7 @@ function SbPracticeCanvas({
               onLinkLabelSave={async (link, label) => {
                 update((current) => ({ ...current, links: current.links.map((candidate) => candidate.id === link.id ? { ...candidate, label } : candidate) }));
               }}
-              onLinkReconnect={async (link, sourceConceptId, targetConceptId) => {
-                update((current) => ({ ...current, links: current.links.map((candidate) => candidate.id === link.id ? { ...candidate, sourceConceptId, targetConceptId } : candidate) }));
-              }}
+              onLinkReconnect={savePracticeReconnection}
               onLinkDelete={async (linkId) => {
                 update((current) => ({ ...current, links: current.links.filter((link) => link.id !== linkId) }));
               }}
@@ -554,10 +601,15 @@ function SbPracticeCanvas({
                 setDrawer({ kind: "edit-concept", conceptId: concept.id });
               }}
               onMapLinkSelect={(link) => {
-                if (linkCreation) return;
+                if (linkCreation || reconnectionDraft) return;
                 setEditLabel(link.label);
                 setDrawer({ kind: "edit-link", linkId: link.id });
               }}
+              enablePracticeReconnection
+              practiceReconnectionDraft={reconnectionDraft}
+              onReconnectionStart={beginPracticeReconnection}
+              onReconnectionUpdate={handleReconnectionUpdate}
+              onReconnectionCancel={() => setReconnectionDraft(null)}
             />
           </div>
 
@@ -736,19 +788,77 @@ function KitPracticeCanvas({
   );
   const [error, setError] = useState<string | null>(null);
   const [checkingVisit, setCheckingVisit] = useState<number | null>(null);
+  const [reconnectionDraft, setReconnectionDraft] = useState<PracticeReconnectionDraft | null>(null);
   const checking = checkingVisit === visit;
   const requestId = useRef(0);
   const { placedConcepts, placedLinks, completedTasks, hasFullPlacementMismatch, correctedAfterMismatch } = progress;
   const concepts = placedConcepts.map(({ concept }) => concept);
-  const links = placedLinks.map(({ link }) => link);
+  // ConceptCanvas uses the link array to distinguish new saved data from local moves.
+  const links = useMemo(() => placedLinks.map(({ link }) => link), [placedLinks]);
   const allPartsPlaced = placedConcepts.length === 3 && placedLinks.length === 2;
   const mapSignature = kitPracticeMapSignature(progress);
-  const result = !checking && progress.lastResult?.mapSignature === mapSignature
+  const result = !checking && !reconnectionDraft && progress.lastResult?.mapSignature === mapSignature
     ? progress.lastResult.result
     : null;
   const completedCount = photosynthesisPracticeTasks.filter((task) =>
     completedTasks.includes(task.key),
   ).length;
+
+  function beginPracticeReconnection(link: PracticeLink, position: { x: number; y: number }) {
+    if (reconnectionDraft) return;
+    setReconnectionDraft({
+      id: link.id,
+      kind: "reconnect",
+      kitLinkItemId: null,
+      label: link.label,
+      position,
+      sourceConceptId: null,
+      targetConceptId: null,
+      saving: false,
+      error: null,
+      original: link,
+      originalPosition: position,
+    });
+  }
+
+  async function savePracticeReconnection(link: PracticeLink, sourceConceptId: string, targetConceptId: string) {
+    const saved = update((current) => {
+      const completed = new Set(current.completedTasks);
+      if (link.sourceConceptId !== sourceConceptId || link.targetConceptId !== targetConceptId) {
+        if (current.hasFullPlacementMismatch) completed.add("kit.correct");
+      }
+      return {
+        ...current,
+        correctedAfterMismatch: current.correctedAfterMismatch ||
+          (current.hasFullPlacementMismatch && (link.sourceConceptId !== sourceConceptId || link.targetConceptId !== targetConceptId)),
+        completedTasks: [...completed] as KitPracticeProgress["completedTasks"],
+        placedLinks: current.placedLinks.map((placement) => placement.link.id === link.id
+          ? { ...placement, link: { ...placement.link, sourceConceptId, targetConceptId } }
+          : placement),
+      };
+    });
+    if (!saved) throw new Error("練習の変更を保存できませんでした。");
+    invalidateResult();
+  }
+
+  async function handleReconnectionUpdate(connector: PracticeReconnectionConnector) {
+    const current = reconnectionDraft;
+    if (!current || current.id !== connector.id || current.saving) return;
+    const next = { ...current, ...connector };
+    if (!next.sourceConceptId || !next.targetConceptId) {
+      setReconnectionDraft(next);
+      return;
+    }
+    setReconnectionDraft({ ...next, saving: true, error: null });
+    try {
+      await savePracticeReconnection(current.original, next.sourceConceptId, next.targetConceptId);
+      setReconnectionDraft((draft) => draft?.id === connector.id ? null : draft);
+    } catch (error) {
+      setReconnectionDraft((draft) => draft?.id === connector.id
+        ? { ...next, saving: false, error: error instanceof Error ? error.message : "リンクを再接続できませんでした。" }
+        : draft);
+    }
+  }
   useEffect(() => {
     if (isPracticeStepComplete("KB", progress) && (status === "ready" || status === "disabled")) onComplete("KB");
   }, [onComplete, progress, status]);
@@ -769,7 +879,7 @@ function KitPracticeCanvas({
         : null;
 
   async function checkKit() {
-    if (!active || checking) return;
+    if (!active || checking || reconnectionDraft) return;
     const currentRequest = ++requestId.current;
     const judgedMapSignature = mapSignature;
     setCheckingVisit(visit);
@@ -866,17 +976,17 @@ function KitPracticeCanvas({
             </li>
           ))}
         </ol>
-        <p>課題は練習画面内の操作で達成します。学習成績ではありません。</p>
       </section>
 
       <section className="kit-feedback-actions" aria-label="Kitの一致確認">
         <p>配置した部品の一致状況を確認できます。判定はこの練習用Kitに対して行います。</p>
         <KitBuildFeedbackCheckButton
-          disabled={checking || storageBlocked}
+          disabled={checking || storageBlocked || reconnectionDraft !== null}
           loading={checking}
           label="一致状況を確認"
           onClick={() => void checkKit()}
         />
+        {reconnectionDraft && <p>リンクの再接続を完了するか、取り消すと判定できます。</p>}
         {checking && <p role="status">練習用Kitを確認しています…</p>}
         {error && <p role="alert">{error}</p>}
         {result && (
@@ -934,26 +1044,7 @@ function KitPracticeCanvas({
           }));
           invalidateResult();
         }}
-        onLinkReconnect={async (link, sourceConceptId, targetConceptId) => {
-          if (
-            link.sourceConceptId !== sourceConceptId ||
-            link.targetConceptId !== targetConceptId
-          ) {
-            update((current) => {
-              const completed = new Set(current.completedTasks);
-              if (current.hasFullPlacementMismatch) completed.add("kit.correct");
-              return {
-                ...current,
-                correctedAfterMismatch: current.correctedAfterMismatch || current.hasFullPlacementMismatch,
-                completedTasks: [...completed] as KitPracticeProgress["completedTasks"],
-                placedLinks: current.placedLinks.map((placement) => placement.link.id === link.id
-                  ? { ...placement, link: { ...placement.link, sourceConceptId, targetConceptId } }
-                  : placement),
-              };
-            });
-            invalidateResult();
-          }
-        }}
+        onLinkReconnect={savePracticeReconnection}
         onLinkDelete={async (linkId) => {
           update((current) => ({ ...current, placedLinks: current.placedLinks.filter(({ link }) => link.id !== linkId) }));
           invalidateResult();
@@ -1033,6 +1124,11 @@ function KitPracticeCanvas({
         onMapLinkCreate={async () => undefined}
         onMapLinkSelect={() => undefined}
         onMapConceptSelect={() => undefined}
+        enablePracticeReconnection
+        practiceReconnectionDraft={reconnectionDraft}
+        onReconnectionStart={beginPracticeReconnection}
+        onReconnectionUpdate={handleReconnectionUpdate}
+        onReconnectionCancel={() => setReconnectionDraft(null)}
       />
     </>
   );

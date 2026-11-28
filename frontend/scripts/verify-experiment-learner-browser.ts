@@ -905,20 +905,84 @@ try {
     path: join(dir, "kb-unchecked.png"),
     fullPage: true,
   });
+  await page.setViewportSize({ width: 1366, height: 768 });
   await page.getByRole("button", { name: "一時提出", exact: true }).click();
   await page.locator(".kit-feedback-result-heading").waitFor();
-  assert.ok(
-    !(await page.getByRole("dialog").innerText()).includes("正しい接続先"),
+  const mismatchDialog = page.getByRole("dialog");
+  const mismatchCloseButton = mismatchDialog.getByRole("button", {
+    name: "閉じてマップを修正",
+    exact: true,
+  });
+  await mismatchCloseButton.waitFor();
+  assert.equal(
+    await mismatchDialog.locator(".kit-feedback-result-heading").getAttribute("class"),
+    "kit-feedback-result-heading is-unmatched",
   );
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "閉じる", exact: true })
-    .click();
+  assert.match(
+    await mismatchDialog.locator(".kit-feedback-counts").innerText(),
+    /概念 \d+\/\d+、関係 \d+\/\d+/,
+  );
+  const mismatchDialogBounds = await mismatchDialog.evaluate((dialog) => {
+    const bounds = dialog.getBoundingClientRect();
+    const buttonBounds = dialog
+      .querySelector("button")!
+      .getBoundingClientRect();
+    return {
+      insideViewport:
+        bounds.left >= 0 &&
+        bounds.right <= window.innerWidth &&
+        bounds.top >= 0 &&
+        bounds.bottom <= window.innerHeight,
+      buttonInside:
+        buttonBounds.left >= bounds.left &&
+        buttonBounds.right <= bounds.right &&
+        buttonBounds.top >= bounds.top &&
+        buttonBounds.bottom <= bounds.bottom,
+    };
+  });
+  assert.equal(
+    mismatchDialogBounds.insideViewport,
+    true,
+    "P06 feedback stays within the 1366x768 viewport",
+  );
+  assert.equal(
+    mismatchDialogBounds.buttonInside,
+    true,
+    "the next-action button is not clipped",
+  );
+  assert.equal(
+    await mismatchCloseButton.evaluate(
+      (button) => button === document.activeElement,
+    ),
+    true,
+    "focus enters the feedback popup",
+  );
+  await page.keyboard.press("Tab");
+  assert.equal(
+    await mismatchCloseButton.evaluate(
+      (button) => button === document.activeElement,
+    ),
+    true,
+    "keyboard focus remains within the popup",
+  );
+  assert.ok(
+    !(await mismatchDialog.innerText()).includes("正しい接続先"),
+  );
+  await page.keyboard.press("Escape");
+  await mismatchDialog.waitFor({ state: "hidden" });
+  assert.equal(
+    await page
+      .getByRole("button", { name: "一時提出", exact: true })
+      .evaluate((button) => button === document.activeElement),
+    true,
+    "closing the feedback popup returns focus to the check action",
+  );
   assert.ok(
     (await page.locator(".concept-canvas-viewport").boundingBox())!.height <=
       601,
     "bounded visible working area",
   );
+  await page.setViewportSize({ width: 1366, height: 1200 });
   assert.equal(await page.locator(".kit-palette-list").count(), 2);
   assert.ok(
     await page
@@ -1076,12 +1140,20 @@ try {
   await page.getByRole("link", { name: /セッション画面へ戻る/ }).click();
   await page.getByRole("button", { name: "続ける", exact: true }).click();
   await page.getByRole("button", { name: "一時提出", exact: true }).click();
-  await page.getByRole("dialog").getByText("一致", { exact: true }).waitFor();
+  const matchedDialog = page.getByRole("dialog");
+  await matchedDialog.getByText("一致", { exact: true }).waitFor();
+  assert.equal(
+    await matchedDialog.locator(".kit-feedback-result-heading").getAttribute("class"),
+    "kit-feedback-result-heading is-matched",
+  );
   await page.screenshot({ path: join(dir, "kb-match.png"), fullPage: true });
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "閉じる", exact: true })
-    .click();
+  await matchedDialog.getByRole("button", { name: "閉じる", exact: true }).click();
+  await matchedDialog.waitFor({ state: "hidden" });
+  assert.equal(
+    await page.getByRole("button", { name: "一時提出", exact: true }).evaluate((button) => button === document.activeElement),
+    true,
+    "closing a matched feedback popup returns focus to the check action",
+  );
   await page
     .locator("#kb-submission-guidance")
     .filter({ hasText: "確認結果：一致" })

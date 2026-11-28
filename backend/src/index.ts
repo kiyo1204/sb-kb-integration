@@ -6000,18 +6000,30 @@ app.patch("/api/concepts/:conceptId/position", async (request, response) => {
 app.patch("/api/links/:linkId/position", async (request, response) => {
  const {linkId}=request.params, body=request.body as Record<string,unknown>|undefined;
  if(!uuidPattern.test(linkId))return response.status(404).json({error:"not_found"});
- if(!body||typeof body!=="object"||Array.isArray(body)||Object.keys(body).some(k=>!["labelPositionX","labelPositionY","clientTimestamp"].includes(k))||!validMapCoordinate(body.labelPositionX)||!validMapCoordinate(body.labelPositionY))return response.status(400).json({error:"invalid_link_position",message:"リンクの座標は絶対値10000000以内の数値で指定してください。"});
+ if(!body||typeof body!=="object"||Array.isArray(body)||Object.keys(body).some(k=>!["labelPositionX","labelPositionY","clientTimestamp","mapId"].includes(k))||!validMapCoordinate(body.labelPositionX)||!validMapCoordinate(body.labelPositionY))return response.status(400).json({error:"invalid_link_position",message:"リンクの座標は絶対値10000000以内の数値で指定してください。"});
+ const requestedMapId = body.mapId;
+ if (requestedMapId !== undefined && (typeof requestedMapId !== "string" || !uuidPattern.test(requestedMapId))) {
+   return response.status(400).json({ error: "invalid_map_id" });
+ }
  const {labelPositionX,labelPositionY}=body; const timestamp=validateClientTimestamp(body.clientTimestamp);
  if(!timestamp.valid)return response.status(400).json({error:"invalid_client_timestamp"});
  try {
   const saved=await withTransaction(async client=>{
-   const map=await lockMapForLink(client,linkId);if(!map)return null;ensureMapIsEditable(map);
-   if(!await isStage1LearnerMap(client,map.mapId))return null;
+   const map = await lockMapForLink(client, linkId);
+   if (!map) return null;
+   const isGoalMap = map.mapType === "GOAL";
+   if (isGoalMap && (principalOf(response).role !== "researcher" ||
+     requestedMapId?.toLowerCase() !== map.mapId)) return null;
+   if (!isGoalMap && requestedMapId !== undefined) return null;
+   ensureMapIsEditable(map);
+   if (!isGoalMap && !await isStage1LearnerMap(client, map.mapId)) return null;
    const row=(await client.query("SELECT label_position_x, label_position_y FROM links WHERE id=$1 AND map_id=$2 FOR UPDATE",[linkId,map.mapId])).rows[0];
    if(!row)return null;
    if(row.label_position_x!==labelPositionX||row.label_position_y!==labelPositionY){
-    await client.query("UPDATE links SET label_position_x=$2,label_position_y=$3 WHERE id=$1",[linkId,labelPositionX,labelPositionY]);
-    await appendMapOperationLog(client,{mapId:map.mapId,operationType:"MOVE_LINK",targetType:"LINK",targetId:linkId,before:null,after:null,clientTimestamp:timestamp.value,idempotencyKey:request.get("Idempotency-Key")??null});
+    await client.query("UPDATE links SET label_position_x=$2,label_position_y=$3 WHERE id=$1 AND map_id=$4",[linkId,labelPositionX,labelPositionY,map.mapId]);
+    if (!isGoalMap) {
+      await appendMapOperationLog(client,{mapId:map.mapId,operationType:"MOVE_LINK",targetType:"LINK",targetId:linkId,before:null,after:null,clientTimestamp:timestamp.value,idempotencyKey:request.get("Idempotency-Key")??null});
+    }
    }
    return{id:linkId,mapId:map.mapId,labelPositionX,labelPositionY};
   });return saved?response.json(saved):response.status(404).json({error:"not_found"});
