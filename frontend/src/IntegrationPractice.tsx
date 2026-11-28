@@ -21,7 +21,7 @@ type PracticeTask = { key: "identify" | "merge" | "submit"; label: string };
 
 const tasks: PracticeTask[] = [
   { key: "identify", label: "同名概念を見分ける" },
-  { key: "merge", label: "Mergeする" },
+  { key: "merge", label: "マージする" },
   { key: "submit", label: "練習内で提出する" },
 ];
 
@@ -127,7 +127,7 @@ export default function IntegrationPractice({
     <>
       <h2 id="tutorial-practice-heading">統合マップの練習</h2>
       <p className="tutorial-practice-description">
-        SB由来とKB由来の同名概念を番号で見分け、選択欄の番号を確かめてMergeします。番号は表示専用で、概念名には含まれません。
+        SB由来とKB由来の同名概念を番号で見分け、選択欄の番号を確かめてマージします。番号は表示専用で、概念名には含まれません。
       </p>
       {storageMessage && <p role="alert">{storageMessage}{status === "unavailable" && <button type="button" onClick={retry}>保存を再確認</button>}</p>}
       {sbDisplayName && kbDisplayName ? (
@@ -136,7 +136,7 @@ export default function IntegrationPractice({
         </p>
       ) : (
         <p className="tutorial-practice-description" role="status">
-          Merge後の概念「光合成」はこの練習画面内に保持されています。
+          マージ後の概念「光合成」はこの練習画面内に保持されています。
         </p>
       )}
       <section className="tutorial-task-progress" aria-label="操作練習の課題">
@@ -155,7 +155,6 @@ export default function IntegrationPractice({
             </li>
           ))}
         </ol>
-        <p>Map・Merge結果・提出状態はこの練習画面内だけに保持し、学習Sessionには保存しません。</p>
       </section>
 
       <IntegrationConceptMergeForm

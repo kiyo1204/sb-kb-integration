@@ -5,7 +5,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { chromium, type Locator, type Page, type Route } from "playwright";
+import { chromium, type Locator, type Page, type Request, type Route } from "playwright";
 import { createServer } from "vite";
 
 type Scenario =
@@ -1147,6 +1147,10 @@ try {
       await tutorialPage.getByLabel("アクセスコード", { exact: true }).fill(syntheticAccessCode);
       await tutorialPage.getByRole("button", { name: "続行", exact: true }).click();
       await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      const practiceCardText = await tutorialPage.locator(".session-practice-card").innerText();
+      assert.ok(!practiceCardText.includes("練習内容はこのタブで再開できるよう保存されます"));
+      assert.ok(!practiceCardText.includes("この操作案内は正式な研究説明・同意取得を代替しません"));
+      assert.equal(await tutorialPage.getByText("この操作案内は正式な研究説明・同意取得を代替しません。", { exact: true }).count(), 0);
       assert.equal(
         await tutorialPage.getByRole("button", { name: "セッションを開始", exact: true }).isDisabled(),
         true,
@@ -1192,6 +1196,8 @@ try {
       "○ 概念を追加する未完了\n○ 概念を移動する未完了\n○ 概念名を変更する未完了\n○ リンクを接続する未完了",
       "new SB practice lists the four required real actions",
     );
+    assert.equal(await activeTutorialPanel.locator(".tutorial-task-progress > p:not([role='status'])").count(), 0, "SB task helper copy is removed");
+    assert.equal(await tutorialPage.locator("header .tutorial-practice-description[role='note']").count(), 0, "tutorial header omits the removed progress-storage note");
     let sbZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
     let sbWritesBeforeActions = tutorialApiRequests.filter((request) => request.method !== "GET").length;
     await tutorialPage.getByRole("button", { name: "＋ 概念", exact: true }).click();
@@ -1316,15 +1322,23 @@ try {
     await tutorialPage.getByLabel("リンクラベル").fill("合成リンク");
     await tutorialPage.getByRole("button", { name: "接続を開始" }).click();
 
-    const connectTemporary = async (source: number, target: number) => {
-      await activeTutorialPanel.locator(".link-connector.is-temporary .link-connector-handle.is-source")
+    const connectTemporary = async (source: number, target: number, first: "source" | "target" = "source") => {
+      const second = first === "source" ? "target" : "source";
+      await activeTutorialPanel.locator(`.link-connector.is-temporary .link-connector-handle.is-${first}`)
         .first().dragTo(activeTutorialPanel.locator(".concept-node").nth(source));
-      await activeTutorialPanel.locator(".link-connector.is-temporary .link-connector-handle.is-target")
+      assert.equal(await activeTutorialPanel.locator(`.link-connector.is-temporary .link-connector-handle.is-${first}.is-connected`).count(), 1);
+      await activeTutorialPanel.locator(`.link-connector.is-temporary .link-connector-handle.is-${second}`)
         .first().dragTo(activeTutorialPanel.locator(".concept-node").nth(target));
       await activeTutorialPanel.locator(".link-connector.is-temporary").first()
         .waitFor({ state: "detached" });
     };
-    await connectTemporary(0, 1);
+    await activeTutorialPanel.locator(".is-temporary .is-target").dragTo(activeTutorialPanel.locator(".concept-node").nth(1));
+    await activeTutorialPanel.getByRole("button", { name: "合成リンクをキャンセル" }).click();
+    await activeTutorialPanel.locator(".link-connector.is-temporary").waitFor({ state: "detached" });
+    await tutorialPage.getByRole("button", { name: "＋ リンク", exact: true }).click();
+    await tutorialPage.getByLabel("リンクラベル").fill("合成リンク");
+    await tutorialPage.getByRole("button", { name: "接続を開始" }).click();
+    await connectTemporary(0, 1, inlineP02 ? "target" : "source");
     assert.equal(await sbZoom.percentage.innerText(), "150%", "SB link handles work after zoom and scroll");
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
     assert.equal(
@@ -1332,8 +1346,102 @@ try {
       "4 / 4 件達成",
       "connecting both endpoints completes the final SB task",
     );
+    const sbLink = activeTutorialPanel.locator(".link-connector:not(.is-temporary)").first();
+    const sbLinkId = await sbLink.getAttribute("data-connector-id");
+    assert.ok(sbLinkId, "the connected SB link has a stable ID");
+    const assertDirection = async (linkId: string, source: string, label: string, target: string) => {
+      const hit = activeTutorialPanel.locator(".concept-edge-hit-target")
+        .and(activeTutorialPanel.getByRole("button", { name: `Link ${linkId}: ${source} → ${label} → ${target}`, exact: true }));
+      // A horizontal SVG path has a zero-height box even when it is drawn.
+      await hit.waitFor({ state: "attached", timeout: 5000 });
+      const targetNode = activeTutorialPanel.locator(".concept-node").filter({
+        has: tutorialPage.getByRole("heading", { name: target, exact: true }),
+      });
+      const targetId = await targetNode.getAttribute("data-concept-id");
+      assert.ok(targetId);
+      const geometry = await hit.locator("..").locator(".concept-edge-path[marker-end]").evaluate((element, targetId) => {
+        const path = element as SVGPathElement;
+        const node = path.closest(".concept-canvas")
+          ?.querySelector<HTMLElement>(`.concept-node[data-concept-id="${CSS.escape(targetId)}"]`);
+        if (!node) throw new Error("Arrow target concept is missing");
+        const end = path.getPointAtLength(path.getTotalLength());
+        const { offsetLeft: left, offsetTop: top, offsetWidth: width, offsetHeight: height } = node;
+        const dx = Math.max(left - end.x, end.x - left - width, 0);
+        const dy = Math.max(top - end.y, end.y - top - height, 0);
+        return { distance: Math.hypot(dx, dy), x: end.x, y: end.y, left, top, width, height };
+      }, targetId);
+      assert.ok(geometry.distance < 3, `arrow must end at ${target}: ${JSON.stringify(geometry)}`);
+    };
+    await assertDirection(sbLinkId, "合成A変更", "合成リンク", "合成B");
+    assert.equal(await sbLink.locator(".link-connector-label").innerText(), "合成リンク");
+    await sbLink.locator(".link-connector-label").dblclick();
+    const sbReconnect = activeTutorialPanel.locator(`.link-connector.is-reconnecting[data-connector-id="${sbLinkId}"]`);
+    await sbReconnect.waitFor({ state: "visible" });
+    assert.equal(await activeTutorialPanel.locator(".map-editor-drawer").count(), 0, "double-click does not leave the label editor open");
+    assert.equal(await sbReconnect.locator(".link-connector-handle.is-source.is-connected").count(), 0, "double-click disconnects the SB link source");
+    assert.equal(await sbReconnect.locator(".link-connector-handle.is-target.is-connected").count(), 0, "double-click disconnects the SB link target");
+    const sbLabelBounds = await sbReconnect.locator(".link-connector-label").boundingBox();
+    assert.ok(sbLabelBounds);
+    const sbPositionBeforeMove = await sbReconnect.getAttribute("style");
+    await tutorialPage.mouse.move(sbLabelBounds.x + sbLabelBounds.width / 2, sbLabelBounds.y + sbLabelBounds.height / 2);
+    await tutorialPage.mouse.down();
+    await tutorialPage.mouse.move(sbLabelBounds.x + sbLabelBounds.width / 2 + 55, sbLabelBounds.y + sbLabelBounds.height / 2 + 28, { steps: 5 });
+    await tutorialPage.mouse.up();
+    assert.notEqual(await sbReconnect.getAttribute("style"), sbPositionBeforeMove, "the disconnected SB link body can be moved");
+    assert.equal(await sbReconnect.locator(".link-connector-label").innerText(), "合成リンク", "moving preserves the SB link label");
+    await sbReconnect.locator(".link-connector-handle.is-source").dragTo(activeTutorialPanel.locator(".concept-node").first());
+    assert.equal(await sbReconnect.locator(".link-connector-handle.is-source.is-connected").count(), 1, "one SB endpoint can be reconnected independently");
+    await sbReconnect.locator(".link-connector-label").dblclick();
+    assert.equal(await sbReconnect.locator(".link-connector-handle.is-source.is-connected").count(), 0, "double-clicking a partially reconnected link disconnects its first end again");
+    assert.equal(await sbReconnect.locator(".link-connector-handle.is-target.is-connected").count(), 0, "double-clicking a partially reconnected link leaves both ends disconnected");
+    await sbReconnect.locator(".link-connector-handle.is-target").dragTo(activeTutorialPanel.locator(".concept-node").nth(1));
+    await sbReconnect.locator(".link-connector-handle.is-source").dragTo(activeTutorialPanel.locator(".concept-node").first());
+    await sbReconnect.waitFor({ state: "detached" });
+    const sbRestoredLink = activeTutorialPanel.locator(`.link-connector:not(.is-temporary):not(.is-reconnecting)[data-connector-id="${sbLinkId}"]`);
+    await sbRestoredLink.waitFor({ state: "visible" });
+    assert.equal(await sbRestoredLink.locator(".link-connector-label").innerText(), "合成リンク", "reconnecting preserves the original SB link and label");
+    await assertDirection(sbLinkId, "合成B", "合成リンク", "合成A変更");
+    await tutorialPage.getByRole("button", { name: "＋ 概念", exact: true }).click();
+    await tutorialPage.getByLabel("概念名").fill("片端確認");
+    await tutorialPage.getByRole("button", { name: "概念を追加" }).click();
+    const sbThird = activeTutorialPanel.locator(".concept-node").filter({ hasText: "片端確認" });
+    await sbRestoredLink.locator(".is-source").dragTo(sbThird);
+    await assertDirection(sbLinkId, "片端確認", "合成リンク", "合成A変更");
+    await sbRestoredLink.locator(".is-target").dragTo(activeTutorialPanel.locator(".concept-node").nth(1), {
+      // The link label overlaps the center of this concept at 150%.
+      targetPosition: { x: 16, y: 16 },
+    });
+    await assertDirection(sbLinkId, "片端確認", "合成リンク", "合成B");
+    if (inlineP02) {
+      const priorKey = `sbkb-practice-progress-v1:${p02SessionId}:${requestDigest(syntheticAccessCode)}:PRIOR`;
+      const savedDirection = await tutorialPage.evaluate(({ key, id }) => {
+        const value = JSON.parse(sessionStorage.getItem(key) ?? "null")?.value;
+        const link = value?.links.find((candidate: { id: string }) => candidate.id === id);
+        return [link?.sourceConceptId, link?.targetConceptId];
+      }, { key: priorKey, id: sbLinkId });
+      assert.deepEqual(savedDirection, [
+        await sbThird.getAttribute("data-concept-id"),
+        await activeTutorialPanel.locator(".concept-node").nth(1).getAttribute("data-concept-id"),
+      ]);
+      await tutorialPage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      await tutorialPage.reload();
+      await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+      await tutorialPage.getByRole("heading", { name: "操作の練習", exact: true }).waitFor();
+      await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).click();
+      const resumedSbLink = activeTutorialPanel.locator(`.link-connector:not(.is-temporary):not(.is-reconnecting)[data-connector-id="${sbLinkId}"]`);
+      await resumedSbLink.waitFor({ state: "visible" });
+      assert.equal(await resumedSbLink.locator(".link-connector-label").innerText(), "合成リンク", "same-tab practice resume restores the saved link ID and label");
+      await assertDirection(sbLinkId, "片端確認", "合成リンク", "合成B");
+      await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).click();
+      practiceRequestIndex = tutorialApiRequests.length;
+      tutorialClaimsBeforePractice = tutorialClaimSecrets.length;
+    }
     assert.equal(await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).isDisabled(), true);
-    await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).click();
+    if (!inlineP02) {
+      await tutorialPage.getByRole("button", { name: "次へ：Kit-Buildの練習", exact: true }).click();
+    }
     await tutorialPage.getByRole("heading", { name: "Kit-Buildの練習" }).waitFor();
     assert.equal(
       await activeTutorialPanel.getByRole("searchbox", { name: "キット一覧を検索" }).count(),
@@ -1350,8 +1458,11 @@ try {
       await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(),
       "0 / 4 件達成",
     );
-    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
-    assert.equal(await activeTutorialPanel.locator(".link-connector:not(.is-temporary)").count(), 1);
+    assert.equal(await activeTutorialPanel.locator(".tutorial-task-progress > p:not([role='status'])").count(), 0, "KB task helper copy is removed");
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 0, "new KB practice starts with an empty canvas");
+    assert.equal(await activeTutorialPanel.locator(".link-connector:not(.is-temporary)").count(), 0, "new KB practice starts without placed links");
+    assert.equal(await activeTutorialPanel.locator(".kit-palette-part.is-concept:not(:disabled)").count(), 3, "all three Kit concepts are available in the palette");
+    assert.equal(await activeTutorialPanel.locator(".kit-palette-part.is-link:not(:disabled)").count(), 2, "both Kit links are available in the palette");
     await captureBeforeAfter(tutorialPage, "tutorial-kit-build", width, directory);
     let kbZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
 
@@ -1369,6 +1480,22 @@ try {
         response.request().method() === "POST",
     );
 
+    await dispatchSyntheticKitPartDrop(tutorialPage, "concept", "植物", { x: 160, y: 150 });
+    await dispatchSyntheticKitPartDrop(tutorialPage, "concept", "光合成", { x: 430, y: 250 });
+    const performLinkPart = activeTutorialPanel.locator(".kit-palette-part.is-link").filter({ hasText: "行う" });
+    assert.equal(await performLinkPart.isEnabled(), true, "the first relation remains available until placed");
+    await dispatchSyntheticKitPartDrop(tutorialPage, "link", "行う", { x: 290, y: 205 });
+    const performTemporaryLink = activeTutorialPanel.locator(".link-connector.is-temporary");
+    await performTemporaryLink.waitFor({ state: "visible" });
+    await performTemporaryLink.locator(".is-target").dragTo(activeTutorialPanel.locator(".concept-node").nth(1));
+    await performTemporaryLink.getByRole("button", { name: "行うをキャンセル" }).click();
+    await performTemporaryLink.waitFor({ state: "detached" });
+    await dispatchSyntheticKitPartDrop(tutorialPage, "link", "行う", { x: 290, y: 205 });
+    await connectTemporary(0, 1);
+    await performTemporaryLink.waitFor({ state: "detached" });
+    assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2, "palette placement adds both selected concepts");
+    assert.equal(await activeTutorialPanel.locator(".link-connector:not(.is-temporary)").count(), 1, "palette placement adds the selected relation");
+
     const initialCheck = checkResponse();
     await checkButton.click();
     assert.equal((await initialCheck).status(), 200, "partial Kit check uses its synthetic fixture");
@@ -1376,11 +1503,70 @@ try {
       await activeTutorialPanel.locator(".kit-feedback-result-heading").innerText(),
       "不一致",
     );
+    assert.equal(
+      await activeTutorialPanel.locator(".kit-feedback-result-heading").getAttribute("class"),
+      "kit-feedback-result-heading is-unmatched",
+      "KB practice distinguishes a mismatch as a result, without changing the judgment copy",
+    );
+    assert.match(
+      await activeTutorialPanel.locator(".kit-feedback-counts").innerText(),
+      /概念 2\/3、関係 1\/2/,
+      "KB practice keeps the same judged counts in a separate readable group",
+    );
     assert.match(
       await activeTutorialPanel.locator(".kit-feedback-dialog-content").innerText(),
       /概念 2\/3、関係 1\/2/,
       "initial partial build reports 2/3 concepts and 1/2 relations",
     );
+
+    const performLinkId = await activeTutorialPanel.locator(".link-connector:not(.is-temporary)").getAttribute("data-connector-id");
+    assert.ok(performLinkId);
+    if (inlineP02) {
+      const returnToGuide = async () => {
+        await tutorialPage.getByRole("button", { name: "案内へ戻る（練習未完了）" }).click();
+        await tutorialPage.getByRole("heading", { name: "活動の案内" }).waitFor();
+      };
+      const reopenKit = async () => {
+        await tutorialPage.getByRole("button", { name: /練習を開く/ }).click();
+        await tutorialPage.getByRole("heading", { name: "Kit-Buildの練習" }).waitFor();
+      };
+      const assertPartialKitRestored = async (linkId: string) => {
+        assert.deepEqual(await activeTutorialPanel.locator(".concept-node h3").allTextContents(), ["植物", "光合成"]);
+        const links = activeTutorialPanel.locator(".link-connector:not(.is-temporary)");
+        assert.equal(await links.count(), 1);
+        assert.equal(await links.getAttribute("data-connector-id"), linkId);
+        assert.equal(await links.locator(".link-connector-label").innerText(), "行う");
+        assert.match(await activeTutorialPanel.locator(".concept-edge-hit-target").getAttribute("aria-label") ?? "", /植物 → 行う → 光合成/);
+        assert.deepEqual(await activeTutorialPanel.locator(".kit-palette-part.is-concept:not(:disabled) > span").allTextContents(), ["二酸化炭素"]);
+        assert.deepEqual(await activeTutorialPanel.locator(".kit-palette-part.is-link:not(:disabled) > span").allTextContents(), ["必要とする"]);
+      };
+      await returnToGuide();
+      await reopenKit();
+      await assertPartialKitRestored(performLinkId);
+      await returnToGuide();
+      const kitKey = `sbkb-practice-progress-v1:${p02SessionId}:${requestDigest(syntheticAccessCode)}:KB`;
+      await tutorialPage.evaluate(({ key, sessionId, conceptItems, linkItems }) => {
+        const legacyProgress = {
+          placedConcepts: [
+            { kitConceptItemId: conceptItems.plant, concept: { id: "practice-kit-plant", label: "植物", positionX: 100, positionY: 120, createdAt: "", updatedAt: "" } },
+            { kitConceptItemId: conceptItems.photosynthesis, concept: { id: "practice-kit-photosynthesis", label: "光合成", positionX: 420, positionY: 220, createdAt: "", updatedAt: "" } },
+          ],
+          placedLinks: [
+            { kitLinkItemId: linkItems.perform, link: { id: "practice-kit-perform", mapId: "tutorial-photosynthesis-kb", sourceConceptId: "practice-kit-plant", targetConceptId: "practice-kit-photosynthesis", label: "行う" } },
+          ],
+          completedTasks: [],
+          hasFullPlacementMismatch: false,
+          correctedAfterMismatch: false,
+          successfulRejudge: false,
+          lastResult: null,
+        };
+        sessionStorage.setItem(key, JSON.stringify({ version: 1, sessionId, step: "KB", value: legacyProgress }));
+      }, { key: kitKey, sessionId: p02SessionId, conceptItems: tutorialKitConceptItems, linkItems: tutorialKitLinkItems });
+      await reopenKit();
+      await assertPartialKitRestored("practice-kit-perform");
+      practiceRequestIndex = tutorialApiRequests.length;
+      tutorialClaimsBeforePractice = tutorialClaimSecrets.length;
+    }
 
     const carbonDioxidePart = activeTutorialPanel
       .locator(".kit-palette-part.is-concept")
@@ -1413,9 +1599,10 @@ try {
     );
     const temporaryLink = activeTutorialPanel.locator(".link-connector.is-temporary");
     await temporaryLink.waitFor({ state: "visible" });
-    await connectTemporary(1, 2);
+    await connectTemporary(1, 2, "target");
     await temporaryLink.waitFor({ state: "detached" });
     assert.equal(await activeTutorialPanel.locator(".link-connector:not(.is-temporary)").count(), 2);
+    assert.equal(await activeTutorialPanel.locator(".kit-palette-part:not(:disabled)").count(), 0, "all concepts and links are placed from the Kit palette");
 
     const initialMatchedCheck = checkResponse();
     await checkButton.click();
@@ -1424,6 +1611,11 @@ try {
       await activeTutorialPanel.locator(".kit-feedback-result-heading").innerText(),
       "一致",
       "the first full placement can already match",
+    );
+    assert.equal(
+      await activeTutorialPanel.locator(".kit-feedback-result-heading").getAttribute("class"),
+      "kit-feedback-result-heading is-matched",
+      "KB practice visually distinguishes a match",
     );
     assert.equal(
       await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(),
@@ -1439,20 +1631,96 @@ try {
     const requiredEdge = activeTutorialPanel
       .locator(".link-connector:not(.is-temporary)")
       .filter({ hasText: "必要とする" });
+    await kbZoom.controls.getByRole("button", { name: "全体表示", exact: true }).click();
     const photosynthesisNode = activeTutorialPanel
       .locator(".concept-node")
       .filter({ hasText: "光合成" });
     const carbonDioxideNode = activeTutorialPanel
       .locator(".concept-node")
       .filter({ hasText: "二酸化炭素" });
+    const requiredLinkId = await requiredEdge.getAttribute("data-connector-id");
+    assert.ok(requiredLinkId, "the required relation has a stable Kit link ID");
+    await assertDirection(requiredLinkId, "光合成", "必要とする", "二酸化炭素");
+    const placedKitLabel = requiredEdge.locator(".link-connector-label");
+    await placedKitLabel.hover();
+    const placedKitLabelBounds = await placedKitLabel.boundingBox();
+    assert.ok(placedKitLabelBounds);
+    const dragStart = {
+      x: placedKitLabelBounds.x + placedKitLabelBounds.width / 2,
+      y: placedKitLabelBounds.y + placedKitLabelBounds.height / 2,
+    };
+    const dragHitsLabel = await placedKitLabel.evaluate(
+      (label, point) => label.contains(document.elementFromPoint(point.x, point.y)),
+      dragStart,
+    );
+    assert.ok(dragHitsLabel, "the drag starts on the placed Kit link label");
+    const placedKitPositionBeforeMove = await requiredEdge.getAttribute("style");
+    await tutorialPage.mouse.move(dragStart.x, dragStart.y);
+    await tutorialPage.mouse.down();
+    await tutorialPage.mouse.move(placedKitLabelBounds.x + placedKitLabelBounds.width / 2 + 32, placedKitLabelBounds.y + placedKitLabelBounds.height / 2 + 18, { steps: 4 });
+    await tutorialPage.mouse.up();
+    assert.notEqual(await requiredEdge.getAttribute("style"), placedKitPositionBeforeMove, "a placed Kit link body can be dragged while connected");
+    assert.equal(await requiredEdge.locator(".link-connector-label").innerText(), "必要とする", "dragging a placed Kit link preserves its label");
+    while (Number((await kbZoom.percentage.innerText()).replace("%", "")) < 150)
+      await kbZoom.controls.getByRole("button", { name: "マップを拡大" }).click();
+    await activeTutorialPanel.locator(".concept-canvas-viewport").evaluate((element) => {
+      const viewport = element as HTMLElement;
+      viewport.scrollLeft = Math.min(160, viewport.scrollWidth - viewport.clientWidth);
+      viewport.scrollTop = Math.min(100, viewport.scrollHeight - viewport.clientHeight);
+    });
+    await requiredEdge.locator(".link-connector-label").dblclick();
+    const requiredReconnect = activeTutorialPanel.locator(`.link-connector.is-reconnecting[data-connector-id="${requiredLinkId}"]`);
+    await requiredReconnect.waitFor({ state: "visible" });
+    assert.equal(await requiredReconnect.locator(".link-connector-handle.is-source.is-connected").count(), 0, "double-click disconnects a saved Kit link source");
+    assert.equal(await requiredReconnect.locator(".link-connector-handle.is-target.is-connected").count(), 0, "double-click disconnects a saved Kit link target");
+    await requiredReconnect.locator(".link-connector-handle.is-source").dragTo(carbonDioxideNode);
+    assert.equal(await requiredReconnect.locator(".link-connector-handle.is-source.is-connected").count(), 1, "a partially reconnected Kit link keeps its first endpoint");
+    await requiredReconnect.locator(".link-connector-label").dblclick();
+    assert.equal(await requiredReconnect.locator(".link-connector-handle.is-source.is-connected").count(), 0, "repeating the action disconnects an already restored Kit end");
+    assert.equal(await requiredReconnect.locator(".link-connector-handle.is-target.is-connected").count(), 0, "repeating the action clears both Kit ends");
+    const kitLabelBounds = await requiredReconnect.locator(".link-connector-label").boundingBox();
+    assert.ok(kitLabelBounds);
+    const kitPositionBeforeMove = await requiredReconnect.getAttribute("style");
+    await tutorialPage.mouse.move(kitLabelBounds.x + kitLabelBounds.width / 2, kitLabelBounds.y + kitLabelBounds.height / 2);
+    await tutorialPage.mouse.down();
+    await tutorialPage.mouse.move(kitLabelBounds.x + kitLabelBounds.width / 2 + 45, kitLabelBounds.y + kitLabelBounds.height / 2 + 24, { steps: 5 });
+    await tutorialPage.mouse.up();
+    assert.notEqual(await requiredReconnect.getAttribute("style"), kitPositionBeforeMove, "the disconnected Kit link body can be moved");
+    assert.equal(await requiredReconnect.locator(".link-connector-label").innerText(), "必要とする", "moving preserves the Kit link label");
+    await requiredReconnect.locator(".link-connector-handle.is-target").dragTo(photosynthesisNode);
+    await requiredReconnect.locator(".link-connector-handle.is-source").dragTo(carbonDioxideNode);
+    await requiredReconnect.waitFor({ state: "detached" });
+    const restoredRequiredLink = activeTutorialPanel.locator(`.link-connector:not(.is-temporary):not(.is-reconnecting)[data-connector-id="${requiredLinkId}"]`);
+    await restoredRequiredLink.waitFor({ state: "visible" });
+    assert.equal(await restoredRequiredLink.locator(".link-connector-label").innerText(), "必要とする", "reconnecting preserves the original Kit link and label");
+    const requiredLinkAccessibleLabels = await activeTutorialPanel.locator(".concept-edge-hit-target").evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute("aria-label") ?? ""),
+    );
+    assert.match(requiredLinkAccessibleLabels.find((label) => label.includes(requiredLinkId)) ?? "", /光合成 → 必要とする → 二酸化炭素/, "reconnecting restores the intended Kit direction");
+    if (inlineP02) {
+      const kitKey = `sbkb-practice-progress-v1:${p02SessionId}:${requestDigest(syntheticAccessCode)}:KB`;
+      const savedKitLink = await tutorialPage.evaluate(({ key, linkId }) => {
+        const record = JSON.parse(sessionStorage.getItem(key) ?? "null") as { value?: { placedLinks?: Array<{ link: { id: string; label: string; sourceConceptId: string; targetConceptId: string } }> } } | null;
+        return record?.value?.placedLinks?.find(({ link }) => link.id === linkId)?.link ?? null;
+      }, { key: kitKey, linkId: requiredLinkId });
+      assert.equal(savedKitLink?.id, requiredLinkId, "the practice progress keeps the same Kit link ID");
+      assert.equal(savedKitLink?.label, "必要とする", "the practice progress keeps the Kit link label");
+      assert.equal(savedKitLink?.sourceConceptId, await photosynthesisNode.getAttribute("data-concept-id"));
+      assert.equal(savedKitLink?.targetConceptId, await carbonDioxideNode.getAttribute("data-concept-id"));
+    }
     await requiredEdge.locator(".link-connector-handle.is-source").scrollIntoViewIfNeeded();
-    await carbonDioxideNode.scrollIntoViewIfNeeded();
+    const plantNode = activeTutorialPanel.locator(".concept-node").filter({ hasText: "植物" });
+    const conceptDropPoint = { targetPosition: { x: 16, y: 16 } };
     await requiredEdge
       .locator(".link-connector-handle.is-source")
-      .dragTo(carbonDioxideNode);
+      .dragTo(plantNode, conceptDropPoint);
+    await assertDirection(requiredLinkId, "植物", "必要とする", "二酸化炭素");
     await requiredEdge
       .locator(".link-connector-handle.is-target")
-      .dragTo(photosynthesisNode);
+      .dragTo(photosynthesisNode, conceptDropPoint);
+    await assertDirection(requiredLinkId, "植物", "必要とする", "光合成");
+    await requiredEdge.locator(".is-source").dragTo(carbonDioxideNode, conceptDropPoint);
+    await assertDirection(requiredLinkId, "二酸化炭素", "必要とする", "光合成");
 
     const wrongDirectionCheck = checkResponse();
     await checkButton.click();
@@ -1485,10 +1753,10 @@ try {
     await photosynthesisNode.scrollIntoViewIfNeeded();
     await requiredEdge
       .locator(".link-connector-handle.is-source")
-      .dragTo(photosynthesisNode);
+      .dragTo(photosynthesisNode, conceptDropPoint);
     await requiredEdge
       .locator(".link-connector-handle.is-target")
-      .dragTo(carbonDioxideNode);
+      .dragTo(carbonDioxideNode, conceptDropPoint);
     assert.equal(
       await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(),
       "3 / 4 件達成",
@@ -1499,6 +1767,10 @@ try {
     const correctedCheck = checkResponse();
     await checkButton.click();
     assert.equal((await correctedCheck).status(), 200, "corrected Kit check uses its synthetic fixture");
+    await assertDirection(requiredLinkId, "光合成", "必要とする", "二酸化炭素");
+    const checkedDirection = (tutorialPracticeBodies.at(-1) as { links: Array<{ id: string; sourceConceptId: string; targetConceptId: string }> }).links.find(({ id }) => id === requiredLinkId);
+    assert.equal(checkedDirection?.sourceConceptId, await photosynthesisNode.getAttribute("data-concept-id"));
+    assert.equal(checkedDirection?.targetConceptId, await carbonDioxideNode.getAttribute("data-concept-id"));
     assert.equal(
       await activeTutorialPanel.locator(".kit-feedback-result-heading").innerText(),
       "一致",
@@ -1521,7 +1793,16 @@ try {
       assert.equal(await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).getAttribute("aria-pressed"), "true", "P02 resumes the last saved KB mode");
       assert.equal(await activeTutorialPanel.locator(".tutorial-task-progress [role='status']").innerText(), "4 / 4 件達成", "KB achievements survive returning to P02");
       assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 3, "KB placements survive returning to P02");
+      assert.equal(await activeTutorialPanel.locator(".kit-palette-part:not(:disabled)").count(), 0, "all five placed parts remain absent from the palette after resume");
       assert.equal(await activeTutorialPanel.locator(".kit-feedback-result-heading").innerText(), "一致", "the saved KB result is shown only for its unchanged judged map");
+      const resumedKitLink = activeTutorialPanel.locator(`.link-connector:not(.is-temporary):not(.is-reconnecting)[data-connector-id="${requiredLinkId}"]`);
+      await resumedKitLink.waitFor({ state: "visible" });
+      assert.equal(await resumedKitLink.locator(".link-connector-label").innerText(), "必要とする", "same-tab P02 resume restores the saved link label and ID");
+      const resumedLinkAccessibleLabels = await activeTutorialPanel.locator(".concept-edge-hit-target").evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute("aria-label") ?? ""),
+      );
+      assert.match(resumedLinkAccessibleLabels.find((label) => label.includes(requiredLinkId)) ?? "", /光合成 → 必要とする → 二酸化炭素/, "same-tab P02 resume restores both saved Kit endpoints");
+      await assertDirection(requiredLinkId, "光合成", "必要とする", "二酸化炭素");
       kbZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
     }
     assert.equal(await kbZoom.percentage.innerText(), "150%", "KB correction succeeds after zoom and scroll");
@@ -1551,8 +1832,9 @@ try {
     assert.equal(await activeTutorialPanel.locator(".tutorial-task-progress ol li").count(), 3);
     const integrationTasks = await activeTutorialPanel.locator(".tutorial-task-progress ol li").allInnerTexts();
     assert.equal(integrationTasks.length, 3);
-    for (const label of ["同名概念を見分ける", "Mergeする", "練習内で提出する"])
+    for (const label of ["同名概念を見分ける", "マージする", "練習内で提出する"])
       assert.ok(integrationTasks.some((task) => task.includes(label)), `integration practice contains only the required task: ${label}`);
+    assert.equal(await activeTutorialPanel.locator(".tutorial-task-progress > p:not([role='status'])").count(), 0, "integration task helper copy is removed");
     assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
     assert.equal(
       await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(),
@@ -1571,14 +1853,20 @@ try {
       /SB由来：光合成 \(1\).*KB由来：光合成 \(2\)/,
     );
 
-    const practiceMergePanel = tutorialPage.getByRole("region", { name: "Concept Merge" });
-    const practiceMergeButton = practiceMergePanel.getByRole("button", { name: "Merge", exact: true });
+    const practiceMergePanel = tutorialPage.getByRole("region", { name: "概念のマージ" });
+    const practiceMergeButton = practiceMergePanel.getByRole("button", { name: "マージ", exact: true });
     const practiceSubmitButton = tutorialPage.getByRole("button", { name: "練習内で提出", exact: true });
     assert.equal(await practiceMergeButton.isDisabled(), true);
     assert.equal(await practiceSubmitButton.isDisabled(), true);
-    const displayedOptions = await practiceMergePanel.getByLabel("Concept A").locator("option").allTextContents();
+    const displayedOptions = await practiceMergePanel.getByLabel("概念A").locator("option").allTextContents();
     assert.ok(displayedOptions.some((option) => option.includes("光合成 (1)")));
     assert.ok(displayedOptions.some((option) => option.includes("光合成 (2)")));
+    assert.ok(displayedOptions.every((option) => !option.includes("ID末尾")), "merge options hide ID suffixes");
+    assert.deepEqual(
+      await practiceMergePanel.getByLabel("概念A").locator("option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value)),
+      ["", "practice-sb-photosynthesis", "practice-kb-photosynthesis"],
+      "display ordinals preserve the original concept IDs",
+    );
 
     const integrationZoom = await exerciseCanvasZoomControls(activeTutorialPanel);
     await practiceKbNode.scrollIntoViewIfNeeded();
@@ -1604,10 +1892,10 @@ try {
     );
     assert.equal(await integrationZoom.percentage.innerText(), "150%", "integration practice drag works after zoom and scroll");
 
-    await practiceMergePanel.getByLabel("Concept A").selectOption("practice-sb-photosynthesis");
-    await practiceMergePanel.getByLabel("Concept B").selectOption("practice-kb-photosynthesis");
+    await practiceMergePanel.getByLabel("概念A").selectOption("practice-sb-photosynthesis");
+    await practiceMergePanel.getByLabel("概念B").selectOption("practice-kb-photosynthesis");
     assert.equal(
-      await practiceMergePanel.getByLabel("Merge後のlabel").inputValue(),
+      await practiceMergePanel.getByLabel("マージ後の名称").inputValue(),
       "光合成",
       "the display ordinal is not copied into the merge label",
     );
@@ -1618,7 +1906,7 @@ try {
     );
     assert.equal(await practiceSubmitButton.isDisabled(), true);
     tutorialPage.once("dialog", async (dialog) => {
-      assert.match(dialog.message(), /「光合成 \(1\)」と「光合成 \(2\)」をMergeし、「光合成」として表示します/);
+      assert.match(dialog.message(), /「光合成 \(1\)」と「光合成 \(2\)」をマージし、「光合成」として表示します/);
       await dialog.accept();
     });
     await practiceMergeButton.click();
@@ -1699,13 +1987,14 @@ try {
       assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "0 / 3 件達成", "reopening resumes the reset integration practice");
       await tutorialPage.getByRole("button", { name: "Scratch-Buildの練習", exact: true }).click();
       assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "4 / 4 件達成", "reset does not erase completed SB progress");
-      assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 2);
+      assert.deepEqual(await activeTutorialPanel.locator(".concept-node h3").allTextContents(), ["合成A変更", "合成B", "片端確認"]);
+      await assertDirection(sbLinkId, "片端確認", "合成リンク", "合成B");
       await tutorialPage.getByRole("button", { name: "Kit-Buildの練習", exact: true }).click();
       assert.equal(await activeTutorialPanel.locator('.tutorial-task-progress [role="status"]').innerText(), "4 / 4 件達成", "reset does not erase completed KB progress");
       assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 3);
       await tutorialPage.getByRole("button", { name: "統合マップの練習", exact: true }).click();
-      await practiceMergePanel.getByLabel("Concept A").selectOption("practice-sb-photosynthesis");
-      await practiceMergePanel.getByLabel("Concept B").selectOption("practice-kb-photosynthesis");
+      await practiceMergePanel.getByLabel("概念A").selectOption("practice-sb-photosynthesis");
+      await practiceMergePanel.getByLabel("概念B").selectOption("practice-kb-photosynthesis");
       tutorialPage.once("dialog", dialog => dialog.accept());
       await practiceMergeButton.click();
       assert.equal(await activeTutorialPanel.locator(".concept-node").count(), 1);
@@ -2004,12 +2293,16 @@ try {
       assert.equal(await productionSbNode.locator("h3").innerText(), "光合成 (1)");
       assert.equal(await productionKbNode.locator("h3").innerText(), "光合成 (2)");
       const firstOptions = await integrationMapPage
-        .getByRole("region", { name: "Concept Merge" })
-        .getByLabel("Concept A")
+        .getByRole("region", { name: "概念のマージ" })
+        .getByLabel("概念A")
         .locator("option")
         .allTextContents();
       assert.ok(firstOptions.some((option) => option.includes("光合成 (1)")));
       assert.ok(firstOptions.some((option) => option.includes("光合成 (2)")));
+      assert.ok(firstOptions.every((option) => !option.includes("ID末尾")));
+      const productionOptionIds = await integrationMapPage.getByRole("region", { name: "概念のマージ" }).getByLabel("概念A").locator("option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
+      assert.ok(productionOptionIds.includes(productionDuplicateConceptIds.sb));
+      assert.ok(productionOptionIds.includes(productionDuplicateConceptIds.kb));
     };
     await assertProductionDuplicateOrdinals();
     assert.equal(
@@ -2023,19 +2316,19 @@ try {
     await integrationMapPage.getByRole("heading", { name: "統合マップ", exact: true }).waitFor();
     await assertProductionDuplicateOrdinals();
 
-    const productionMergePanel = integrationMapPage.getByRole("region", { name: "Concept Merge" });
-    await productionMergePanel.getByLabel("Concept A").selectOption(productionDuplicateConceptIds.sb);
-    await productionMergePanel.getByLabel("Concept B").selectOption(productionDuplicateConceptIds.kb);
-    assert.equal(await productionMergePanel.getByLabel("Merge後のlabel").inputValue(), "光合成");
+    const productionMergePanel = integrationMapPage.getByRole("region", { name: "概念のマージ" });
+    await productionMergePanel.getByLabel("概念A").selectOption(productionDuplicateConceptIds.sb);
+    await productionMergePanel.getByLabel("概念B").selectOption(productionDuplicateConceptIds.kb);
+    assert.equal(await productionMergePanel.getByLabel("マージ後の名称").inputValue(), "光合成");
     const productionMergeResponsePromise = integrationMapPage.waitForResponse((response) =>
       new URL(response.url()).pathname === `/api/maps/${productionIntegrationMapId}/concepts/merge` &&
       response.request().method() === "POST",
     );
     integrationMapPage.once("dialog", async (dialog) => {
-      assert.match(dialog.message(), /「光合成 \(1\)」と「光合成 \(2\)」をMergeし、「光合成」として表示します/);
+      assert.match(dialog.message(), /「光合成 \(1\)」と「光合成 \(2\)」をマージし、「光合成」として表示します/);
       await dialog.accept();
     });
-    await productionMergePanel.getByRole("button", { name: "Merge", exact: true }).click();
+    await productionMergePanel.getByRole("button", { name: "マージ", exact: true }).click();
     assert.equal((await productionMergeResponsePromise).status(), 201);
     assert.equal(productionMapFixture.mergeRequests.length, 1);
     const productionMergeBody = productionMapFixture.mergeRequests[0] as {
@@ -2332,8 +2625,13 @@ try {
       releaseFirstObservation = resolve;
     });
     let holdObservation = false;
+    const isPauseObservation = (request: Request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === `/api/sessions/${deadlineSessionId}/events` &&
+      request.postDataJSON()?.eventType === "STAGE_PAUSE";
     await countdownPage.route(deadlineEventRoute, async (route) => {
-      if (!holdObservation) return acknowledgeDeadlineEvent(route);
+      if (!holdObservation || !isPauseObservation(route.request()))
+        return acknowledgeDeadlineEvent(route);
       await firstObservationGate;
       return json(route, { error: "synthetic_delivery_failure", logSaved: false }, 503);
     });
@@ -2361,11 +2659,17 @@ try {
     const pendingObservation = countdownPage.getByText(/操作記録：送信待ち/);
     await countdownPage.locator(".map-editor-history-actions").waitFor();
     await waitForDeadlineLayoutToSettle(countdownPage, "countdown-started");
+    const warningText = /一部の操作記録の保存を確認できていません/;
+    const warningSlot = countdownPage.getByText(warningText);
+    assert.equal(await warningSlot.getAttribute("aria-hidden"), "true");
+    assert.equal(await warningSlot.isVisible(), false);
+    const pauseRequested = countdownPage.waitForRequest(isPauseObservation);
     holdObservation = true;
     await countdownPage.evaluate(() => {
       Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
       document.dispatchEvent(new Event("visibilitychange"));
     });
+    await pauseRequested;
     await pendingObservation.waitFor();
     await waitForDeadlineLayoutToSettle(countdownPage, "observation-pending");
     const pendingLayout = await readDeadlineLayout(countdownPage);
@@ -2380,14 +2684,22 @@ try {
       initialCanvasTop,
       "changing countdown digits does not move the canvas",
     );
+    const failedObservation = countdownPage.waitForResponse((response) =>
+      isPauseObservation(response.request()) && response.status() === 503,
+    );
     releaseFirstObservation();
-    const observationWarning = countdownPage.getByText(/一部の操作記録の保存を確認できていません/);
-    await observationWarning.waitFor();
+    assert.deepEqual(await (await failedObservation).json(), {
+      error: "synthetic_delivery_failure",
+      logSaved: false,
+    });
+    const observationWarning = countdownPage.getByRole("status").filter({ hasText: warningText });
+    await observationWarning.waitFor({ state: "visible" });
+    assert.equal(await observationWarning.evaluate((warning) => warning.closest('[aria-hidden="true"]') === null), true);
+    assert.equal(await countdownPage.locator("dialog[open]").count(), 0);
     await waitForDeadlineLayoutToSettle(countdownPage, "observation-failed");
     await assertDeadlineAreasStable(countdownPage, pendingLayout, "observation failure does not move the canvas");
     const retryAcknowledged = countdownPage.waitForResponse((response) =>
-      new URL(response.url()).pathname === `/api/sessions/${deadlineSessionId}/events` &&
-      response.status() === 201,
+      isPauseObservation(response.request()) && response.status() === 201,
     );
     holdObservation = false;
     await countdownPage.evaluate(() => {
@@ -2540,6 +2852,8 @@ try {
     );
 
     allowAutoSubmission = true;
+    // Advance the installed clock past the next Flow poll's throttle window.
+    await submissionPage.clock.fastForward(2000);
     await submissionPage.waitForFunction(
       () =>
         document.querySelector(".integration-deadline-status")?.textContent ===

@@ -280,6 +280,17 @@ async function run(){
         label:"関係する",sourceConceptId:authoredConcept.id,
         targetConceptId:authoredTarget.id,
       });
+    const created=await legacySession("TEST-STAGE1");
+    currentToken=created.learnerAccessToken;
+    await api(`/links/${authoredLink.id}/position`,404,"PATCH",{
+      mapId:authoredGoal.id,labelPositionX:300,labelPositionY:200,
+    });
+    currentToken=researcherToken;
+    const deniedGoalPosition=await pool.query(
+      "SELECT label_position_x, label_position_y FROM links WHERE id=$1",
+      [authoredLink.id],
+    );
+    assert.deepEqual(deniedGoalPosition.rows[0], {label_position_x:null,label_position_y:null});
     const authoredKit=await api<{id:string}>(
       `/maps/${authoredGoal.id}/kits`,201,"POST",{
         name:"作成UI検証Kit",conceptIds:[authoredConcept.id,authoredTarget.id],
@@ -326,7 +337,6 @@ async function run(){
     await api(`/sessions/${retiredSessionId}`,404);
     await api(`/sessions/${retiredSessionId}/flow`,404);
     await api(`/sessions/${retiredSessionId}/start`,404,"POST",{});
-    const created=await legacySession("TEST-STAGE1");
     await api(`/session-stages/${created.stages[0]!.id}/explanation`,404);
     await api(`/session-stages/${created.stages[0]!.id}/tutorial-map`,404,"POST",{});
     const other=await legacySession("TEST-STAGE1-B");

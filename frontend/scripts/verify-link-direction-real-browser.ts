@@ -125,8 +125,9 @@ try {
   }
   async function add() {
     await page.getByRole("button", { name: "＋ リンク", exact: true }).click();
+    const integration = await page.locator(".map-editor-page.is-integration").count();
     await page
-      .getByLabel("リンクラベル", { exact: true })
+      .getByLabel(integration ? "リンク名称" : "リンクラベル", { exact: true })
       .fill("MOCK direction new " + mapId);
     await page.getByRole("button", { name: "接続を開始", exact: true }).click();
   }

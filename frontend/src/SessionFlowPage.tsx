@@ -575,7 +575,7 @@ function SessionDashboard({
                 <div>
                   <h3 id="session-practice-heading">操作の練習</h3>
                   <p>
-                    Scratch-Build、Kit-Build、統合マップの練習をすべて完了するとセッションを開始できます。練習内容はこのタブで再開できるよう保存されますが、実験SessionのMapや研究記録には反映されません。
+                    Scratch-Build、Kit-Build、統合マップの練習をすべて完了するとセッションを開始できます。
                   </p>
                 </div>
                 <button type="button" className="session-secondary-button" onClick={() => {
