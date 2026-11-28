@@ -230,8 +230,11 @@ try {
     },
   ];
   await page.goto(url);
+  const canvas = page.locator(".concept-canvas");
+  const conceptHeading = (name: string) =>
+    canvas.getByRole("heading", { name, exact: true });
   for (const label of ["TEST-ONLY outer N", "TEST-ONLY inner M"]) {
-    await page.getByText(label, { exact: true }).click();
+    await conceptHeading(label).click();
     await page.locator("#map-editor-concept-edit-label").waitFor();
     const deletion = page.getByRole("button", { name: "削除", exact: true });
     assert.equal(await deletion.isEnabled(), true);
@@ -241,17 +244,14 @@ try {
       await dialog.accept();
     });
     await deletion.click();
-    await page
-      .getByText(
-        label === "TEST-ONLY outer N" ? "TEST-ONLY inner M" : "TEST-ONLY A",
-        { exact: true },
-      )
-      .waitFor();
-    assert.equal(await page.getByText(label, { exact: true }).count(), 0);
+    await conceptHeading(
+      label === "TEST-ONLY outer N" ? "TEST-ONLY inner M" : "TEST-ONLY A",
+    ).waitFor();
+    assert.equal(await conceptHeading(label).count(), 0);
   }
   assert.equal(deletes.length, 2);
-  await page.getByText("TEST-ONLY B", { exact: true }).waitFor();
-  await page.getByText("TEST-ONLY C", { exact: true }).waitFor();
+  await conceptHeading("TEST-ONLY B").waitFor();
+  await conceptHeading("TEST-ONLY C").waitFor();
   for (const old of ["STAGE1_4", "STAGE1_6"]) {
     protocol = old;
     concepts = [
@@ -262,7 +262,7 @@ try {
       },
     ];
     await page.goto(url);
-    await page.getByText("TEST-ONLY legacy merged", { exact: true }).click();
+    await conceptHeading("TEST-ONLY legacy merged").click();
     await page.locator("#map-editor-concept-edit-label").waitFor();
     assert.equal(
       await page
